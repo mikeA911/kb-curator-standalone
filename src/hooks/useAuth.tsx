@@ -39,32 +39,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchingProfileFor.current = userId
     
     try {
-      console.log('[Auth] Executing Supabase query for profile (simple)...')
-      // Use a simpler query without .single() to see if it helps
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, full_name, role, is_active, assigned_kbs')
-        .eq('id', userId)
+      console.log('[Auth] Executing direct fetch for profile...')
+      
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
 
-      console.log('[Auth] Profile query result:', { hasData: !!data, count: data?.length, hasError: !!error })
-
-      if (error) {
-        console.error('[Auth] Profile fetch error:', error)
-        // ... creation logic ...
+      if (!token) {
+        console.warn('[Auth] No access token found for direct fetch')
         return null
       }
 
-      if (!data || data.length === 0) {
-        console.log('[Auth] Profile not found, creating...')
-        // ... creation logic ...
+      // Use direct fetch to bypass any potential client library issues
+      const response = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=*`, {
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.pgrst.object+json' // Get single object
+        }
+      })
+
+      if (!response.ok) {
+        console.error('[Auth] Direct fetch failed:', response.status, response.statusText)
         return null
       }
 
-      const profile = data[0] as Profile
-      console.log('[Auth] Profile fetched successfully:', profile)
-      return profile
+      const profile = await response.json()
+      console.log('[Auth] Profile fetched successfully via direct fetch:', profile)
+      return profile as Profile
     } catch (err) {
-      console.error('[Auth] Unexpected error fetching profile:', err)
+      console.error('[Auth] Unexpected error in direct fetch:', err)
       return null
     } finally {
       fetchingProfileFor.current = null
