@@ -20,7 +20,7 @@ interface Props {
 
 export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   const navigate = useNavigate()
-  const { profile } = useAuth()
+  const { profile, signOut, isAdmin, isCurator } = useAuth()
   const { documents } = useDocuments()
   const [queue, setQueue] = useState<CurationQueueItem[]>([])
   const [stats, setStats] = useState<DashboardStats>({
@@ -113,9 +113,28 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Curator Dashboard</h2>
-        <p className="text-gray-600">Monitor and manage knowledge base curation</p>
+      <div className="flex justify-between items-start">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Curator Dashboard</h2>
+          <p className="text-gray-600">Monitor and manage knowledge base curation</p>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${isAdmin ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+              {isAdmin ? 'Admin' : 'Curator'}
+            </span>
+            <span className="text-sm text-gray-600">{profile?.email}</span>
+          </div>
+          <button
+            onClick={() => signOut()}
+            className="text-sm text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Logout
+          </button>
+        </div>
       </div>
 
       {/* Aggregate Statistics */}
@@ -166,7 +185,7 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
       </div>
 
       {/* Quick Actions */}
-      <div className="flex gap-4">
+      <div className="flex flex-wrap gap-4">
         <Link
           to="/upload"
           className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -186,6 +205,31 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
           </svg>
           Upload Document
         </Link>
+
+        {isCurator && (
+          <button
+            onClick={() => alert('Profile update functionality will be implemented soon.')}
+            className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            <svg className="w-5 h-5 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Update Profile
+          </button>
+        )}
+
+        {isAdmin && (
+          <Link
+            to="/admin"
+            className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Admin Settings
+          </Link>
+        )}
       </div>
 
       {/* Curation Queue */}
