@@ -5,12 +5,14 @@ import './index.css'
 import { AuthProvider } from './hooks/useAuth'
 import { ProtectedRoute, AdminRoute } from './components/AuthGuards'
 import LoginPage from './pages/Login'
+import RegisterPage from './pages/Register'
+import ForgotPasswordPage from './pages/ForgotPassword'
+import ResetPasswordPage from './pages/ResetPassword'
 import DashboardPage from './pages/Dashboard'
 import UploadPage from './pages/Upload'
 import ReviewPage from './pages/Review'
 
 // Placeholder components (to be migrated)
-const Register = () => <div>Register Page</div>
 const Admin = () => <div>Admin Page</div>
 const Documents = () => <div>Documents Page</div>
 
@@ -21,7 +23,9 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           
           {/* Protected Routes */}
           <Route path="/" element={
