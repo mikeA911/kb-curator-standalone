@@ -29,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
+    console.log('[Auth] Fetching profile for:', userId)
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -37,7 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single()
 
       if (error) {
+        console.error('[Auth] Profile fetch error:', error)
         if (error.code === 'PGRST116' || error.message.includes('No rows found')) {
+          console.log('[Auth] Profile not found, creating...')
           const { data: { user } } = await supabase.auth.getUser()
           
           if (user && user.id === userId) {
@@ -55,16 +58,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               .select()
               .single()
             
-            if (createError) return null
+            if (createError) {
+              console.error('[Auth] Profile creation error:', createError)
+              return null
+            }
+            console.log('[Auth] Profile created:', newProfile)
             return newProfile as Profile
           }
         }
         return null
       }
 
+      console.log('[Auth] Profile fetched:', data)
       return data as Profile
     } catch (err) {
-      console.error('Unexpected error fetching profile:', err)
+      console.error('[Auth] Unexpected error fetching profile:', err)
       return null
     }
   }, [])
@@ -79,9 +87,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Initialize auth state
   useEffect(() => {
+    console.log('[Auth] Initializing...')
     const initAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession()
+        console.log('[Auth] Session fetched:', !!session)
         setSession(session)
         setUser(session?.user ?? null)
 
@@ -90,9 +100,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfile(profile)
         }
       } catch (err) {
-        console.error('Auth init error:', err)
+        console.error('[Auth] Init error:', err)
         setError('Failed to initialize authentication')
       } finally {
+        console.log('[Auth] Init complete, setting loading to false')
         setLoading(false)
       }
     }
@@ -100,7 +111,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initAuth()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
+        console.log('[Auth] State change:', event, !!session)
         setSession(session)
         setUser(session?.user ?? null)
 

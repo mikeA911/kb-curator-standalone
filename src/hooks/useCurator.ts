@@ -168,6 +168,7 @@ export function useDocuments() {
   const [error, setError] = useState<string | null>(null)
 
   const loadDocuments = useCallback(async () => {
+    console.log('[useDocuments] Loading documents, profile:', profile?.id)
     setLoading(true)
     setError(null)
 
@@ -178,17 +179,19 @@ export function useDocuments() {
         options.kbIds = profile.assigned_kbs
       }
       const docs = await getDocuments(options)
+      console.log('[useDocuments] Documents loaded:', docs.length)
       setDocuments(docs)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load documents'
       setError(message)
-      console.error('useDocuments error:', err)
+      console.error('[useDocuments] Error:', err)
     } finally {
       setLoading(false)
     }
   }, [profile?.id, profile?.assigned_kbs?.join(',')])
 
   useEffect(() => {
+    console.log('[useDocuments] Effect triggered')
     loadDocuments()
   }, [loadDocuments])
 
