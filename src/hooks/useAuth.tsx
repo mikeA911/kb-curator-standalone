@@ -38,19 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('[Auth] Fetching profile for:', userId)
     fetchingProfileFor.current = userId
     
-    // Add a timeout to the profile fetch to prevent hanging
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Profile fetch timeout')), 15000)
-    )
-
     try {
-      const fetchPromise = supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single()
-
-      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any
 
       if (error) {
         console.error('[Auth] Profile fetch error:', error)
@@ -109,6 +102,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     let mounted = true
 
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return
+      console.log('[Auth] Initial session fetched:', !!session)
+      setSession(session)
+      setUser(session?.user ?? null)
+      
+      if (session?.user) {
+        fetchProfile(session.user.id).then(p => {
+          if (mounted) {
+            setProfile(p)
+            setLoading(false)
+          }
+        })
+      } else {
+        setLoading(false)
+      }
+    })
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('[Auth] State change:', event, !!session)
@@ -119,35 +131,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(session)
         setUser(currentUser)
 
-        try {
-          if (currentUser) {
-            // Only fetch profile if we don't have it or if the user changed
-            if (!profile || profile.id !== currentUser.id) {
-              const newProfile = await fetchProfile(currentUser.id)
-              if (mounted) setProfile(newProfile)
-            }
-          } else {
-            if (mounted) setProfile(null)
+        if (currentUser) {
+          // Only fetch profile if we don't have it or if the user changed
+          if (!profile || profile.id !== currentUser.id) {
+            const newProfile = await fetchProfile(currentUser.id)
+            if (mounted) setProfile(newProfile)
           }
-        } catch (err) {
-          console.error('[Auth] Profile fetch error in state change:', err)
-        } finally {
-          if (mounted) setLoading(false)
+        } else {
+          if (mounted) setProfile(null)
         }
+        
+        if (mounted) setLoading(false)
       }
     )
 
-    // Fallback: if onAuthStateChange doesn't fire or resolve within 10 seconds, stop loading
-    const fallbackTimeout = setTimeout(() => {
-      if (mounted && loading && !profile) {
-        console.warn('[Auth] Initialization fallback triggered')
-        setLoading(false)
-      }
-    }, 10000)
-
     return () => {
       mounted = false
-      clearTimeout(fallbackTimeout)
       subscription.unsubscribe()
     }
   }, [fetchProfile])

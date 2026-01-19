@@ -70,17 +70,11 @@ async function ensureAdmin() {
 }
 
 /**
- * Get all profiles (using admin client to bypass RLS)
+ * Get all profiles (using RPC to bypass RLS securely)
  */
 export async function getAllProfiles(): Promise<Profile[]> {
   console.log('[Admin API] getAllProfiles called')
-  await ensureAdmin()
-  const adminClient = createAdminClient()
-  console.log('[Admin API] Fetching profiles with admin client...')
-  const { data, error } = await adminClient
-    .from('profiles')
-    .select('*')
-    .order('email')
+  const { data, error } = await supabase.rpc('get_all_profiles')
 
   if (error) {
     console.error('[Admin API] getAllProfiles error:', error)
@@ -91,29 +85,25 @@ export async function getAllProfiles(): Promise<Profile[]> {
 }
 
 /**
- * Update user role (using admin client to bypass RLS)
+ * Update user role (using RPC to bypass RLS securely)
  */
 export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin'): Promise<void> {
-  await ensureAdmin()
-  const adminClient = createAdminClient()
-  const { error } = await adminClient
-    .from('profiles')
-    .update({ role })
-    .eq('id', userId)
+  const { error } = await supabase.rpc('update_user_role', {
+    target_user_id: userId,
+    new_role: role
+  })
 
   if (error) throw error
 }
 
 /**
- * Assign KBs to a curator (using admin client to bypass RLS)
+ * Assign KBs to a curator (using RPC to bypass RLS securely)
  */
 export async function assignKBsToCurator(userId: string, kbIds: string[]): Promise<void> {
-  await ensureAdmin()
-  const adminClient = createAdminClient()
-  const { error } = await adminClient
-    .from('profiles')
-    .update({ assigned_kbs: kbIds })
-    .eq('id', userId)
+  const { error } = await supabase.rpc('assign_kbs_to_user', {
+    target_user_id: userId,
+    kb_ids: kbIds
+  })
 
   if (error) throw error
 }
