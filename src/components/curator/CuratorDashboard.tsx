@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { Document, ProcessingStatus, CurationQueueItem } from '../../types'
+import type { ProcessingStatus, CurationQueueItem } from '../../types'
 import { getDashboardStats } from '../../lib/api/curator'
 import { getCurationQueue } from '../../lib/api/admin'
 import { useDocuments } from '../../hooks/useCurator'
@@ -21,7 +21,7 @@ interface Props {
 export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   const navigate = useNavigate()
   const { profile } = useAuth()
-  const { documents, loading: docsLoading, error: docsError } = useDocuments()
+  const { documents } = useDocuments()
   const [queue, setQueue] = useState<CurationQueueItem[]>([])
   const [stats, setStats] = useState<DashboardStats>({
     totalDocuments: 0,

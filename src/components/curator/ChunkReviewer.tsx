@@ -55,7 +55,7 @@ export default function ChunkReviewer({ documentId, onComplete }: Props) {
     try {
       await submitForReview()
       alert('Document submitted successfully!')
-      router('/dashboard')
+      navigate('/dashboard')
     } catch (error) {
       console.error('Submit failed:', error)
       alert(error instanceof Error ? error.message : 'Failed to submit document.')
