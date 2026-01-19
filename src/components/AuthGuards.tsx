@@ -6,7 +6,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const location = useLocation()
 
-  if (loading) {
+  // Only show loading spinner if we don't have a user yet and we're still loading
+  // If we have a user (e.g. from localStorage), we can try to render the protected content
+  if (loading && !user) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -14,7 +16,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     )
   }
 
-  if (!user) {
+  if (!user && !loading) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
