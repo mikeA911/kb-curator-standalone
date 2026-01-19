@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, useCallback, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, createContext, useContext, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Profile, UserRole } from '../types'
 import type { User, Session } from '@supabase/supabase-js'
@@ -26,14 +26,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const fetchingProfileFor = useRef<string | null>(null)
 
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
+    if (fetchingProfileFor.current === userId) {
+      console.log('[Auth] Already fetching profile for:', userId)
+      return null
+    }
+
     console.log('[Auth] Fetching profile for:', userId)
+    fetchingProfileFor.current = userId
     
     // Add a timeout to the profile fetch to prevent hanging
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Profile fetch timeout')), 10000)
+      setTimeout(() => reject(new Error('Profile fetch timeout')), 15000)
     )
 
     try {
@@ -83,6 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error('[Auth] Unexpected error fetching profile:', err)
       return null
+    } finally {
+      fetchingProfileFor.current = null
     }
   }, [])
 
@@ -106,13 +115,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         if (!mounted) return
 
+        const currentUser = session?.user ?? null
         setSession(session)
-        setUser(session?.user ?? null)
+        setUser(currentUser)
 
         try {
-          if (session?.user) {
-            const profile = await fetchProfile(session.user.id)
-            if (mounted) setProfile(profile)
+          if (currentUser) {
+            // Only fetch profile if we don't have it or if the user changed
+            if (!profile || profile.id !== currentUser.id) {
+              const newProfile = await fetchProfile(currentUser.id)
+              if (mounted) setProfile(newProfile)
+            }
           } else {
             if (mounted) setProfile(null)
           }
@@ -124,13 +137,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     )
 
-    // Fallback: if onAuthStateChange doesn't fire within 5 seconds, stop loading
+    // Fallback: if onAuthStateChange doesn't fire or resolve within 10 seconds, stop loading
     const fallbackTimeout = setTimeout(() => {
-      if (mounted && loading) {
+      if (mounted && loading && !profile) {
         console.warn('[Auth] Initialization fallback triggered')
         setLoading(false)
       }
-    }, 5000)
+    }, 10000)
 
     return () => {
       mounted = false
