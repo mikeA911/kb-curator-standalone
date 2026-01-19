@@ -704,6 +704,12 @@ export async function getDocument(documentId: string): Promise<Document | null> 
 export async function deleteDocument(documentId: string): Promise<void> {
   const supabase = createClient()
 
+  // Ensure admin
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthorized')
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  if (profile?.role !== 'admin') throw new Error('Admin privileges required')
+
   // Get document to get storage path
   const { data: doc } = await supabase
     .from('documents')

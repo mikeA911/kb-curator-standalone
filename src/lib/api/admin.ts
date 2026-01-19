@@ -18,6 +18,7 @@ export async function getKnowledgeBases(): Promise<KnowledgeBase[]> {
  * Create a new knowledge base
  */
 export async function createKnowledgeBase(kb: { id: string; name: string; description?: string }): Promise<KnowledgeBase> {
+  await ensureAdmin()
   const { data, error } = await supabase
     .from('knowledge_bases')
     .insert(kb)
@@ -32,6 +33,7 @@ export async function createKnowledgeBase(kb: { id: string; name: string; descri
  * Delete a knowledge base
  */
 export async function deleteKnowledgeBase(id: string): Promise<void> {
+  await ensureAdmin()
   const { error } = await supabase
     .from('knowledge_bases')
     .delete()
@@ -41,9 +43,28 @@ export async function deleteKnowledgeBase(id: string): Promise<void> {
 }
 
 /**
+ * Helper to ensure only admins can perform certain operations
+ */
+async function ensureAdmin() {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthorized')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (profile?.role !== 'admin') {
+    throw new Error('Admin privileges required')
+  }
+}
+
+/**
  * Get all profiles (using admin client to bypass RLS)
  */
 export async function getAllProfiles(): Promise<Profile[]> {
+  await ensureAdmin()
   const adminClient = createAdminClient()
   const { data, error } = await adminClient
     .from('profiles')
@@ -58,6 +79,7 @@ export async function getAllProfiles(): Promise<Profile[]> {
  * Update user role (using admin client to bypass RLS)
  */
 export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin'): Promise<void> {
+  await ensureAdmin()
   const adminClient = createAdminClient()
   const { error } = await adminClient
     .from('profiles')
@@ -71,6 +93,7 @@ export async function updateUserRole(userId: string, role: 'user' | 'curator' | 
  * Assign KBs to a curator (using admin client to bypass RLS)
  */
 export async function assignKBsToCurator(userId: string, kbIds: string[]): Promise<void> {
+  await ensureAdmin()
   const adminClient = createAdminClient()
   const { error } = await adminClient
     .from('profiles')
@@ -125,6 +148,7 @@ export async function deleteFromCurationQueue(id: string): Promise<void> {
  * Approve/Process a submitted document
  */
 export async function approveDocument(documentId: string): Promise<void> {
+  await ensureAdmin()
   // Update document status to completed
   const { error } = await supabase
     .from('documents')
