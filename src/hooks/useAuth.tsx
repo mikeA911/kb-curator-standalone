@@ -22,7 +22,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profile, setProfile] = useState<Profile | null>(() => {
+    // Try to load profile from localStorage for immediate access
+    try {
+      const saved = localStorage.getItem('curator_profile')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -31,47 +39,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
     if (fetchingProfileFor.current === userId) {
-      console.log('[Auth] Already fetching profile for:', userId)
       return null
     }
 
-    console.log('[Auth] Fetching profile for:', userId)
     fetchingProfileFor.current = userId
     
     try {
-      console.log('[Auth] Executing direct fetch for profile...')
-      
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-      
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single()
 
-      if (!token) {
-        console.warn('[Auth] No access token found for direct fetch')
-        return null
-      }
-
-      // Use direct fetch to bypass any potential client library issues
-      const response = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=*`, {
-        headers: {
-          'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/vnd.pgrst.object+json' // Get single object
+      if (error) {
+        if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
+          const { data: { session } } = await supabase.auth.getSession()
+          const user = session?.user
+          
+          if (user && user.id === userId) {
+            const profileData = {
+              id: user.id,
+              email: user.email || '',
+              full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+              role: 'user' as const,
+              is_active: true
+            }
+            
+            const { data: newProfile, error: createError } = await supabase
+              .from('profiles')
+              .insert(profileData)
+              .select()
+              .single()
+            
+            if (createError) return null
+            
+            localStorage.setItem('curator_profile', JSON.stringify(newProfile))
+            return newProfile as Profile
+          }
         }
-      })
-
-      if (!response.ok) {
-        console.error('[Auth] Direct fetch failed:', response.status, response.statusText)
         return null
       }
 
-      const profile = await response.json()
-      console.log('[Auth] Profile fetched successfully via direct fetch:', profile)
-      return profile as Profile
+      localStorage.setItem('curator_profile', JSON.stringify(data))
+      return data as Profile
     } catch (err) {
-      console.error('[Auth] Unexpected error in direct fetch:', err)
+      console.error('[Auth] Unexpected error fetching profile:', err)
       return null
     } finally {
       fetchingProfileFor.current = null
@@ -81,58 +93,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Refresh profile
   const refreshProfile = useCallback(async () => {
     if (user) {
-      const profile = await fetchProfile(user.id)
-      setProfile(profile)
+      const p = await fetchProfile(user.id)
+      setProfile(p)
     }
   }, [user, fetchProfile])
 
   // Initialize auth state
   useEffect(() => {
-    console.log('[Auth] useEffect mounting...')
     let mounted = true
 
     async function initialize() {
-      console.log('[Auth] initialize() starting...')
       try {
         const { data: { session } } = await supabase.auth.getSession()
-        console.log('[Auth] initialize() session fetched:', !!session)
         if (!mounted) return
 
         setSession(session)
         setUser(session?.user ?? null)
 
         if (session?.user) {
-          console.log('[Auth] initialize() user found, fetching profile...')
-          // Add a timeout to the profile fetch
-          const profilePromise = fetchProfile(session.user.id)
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 5000))
-          
-          try {
-            const p = await Promise.race([profilePromise, timeoutPromise]) as Profile | null
-            if (mounted) {
-              console.log('[Auth] initialize() profile set')
-              setProfile(p)
-            }
-          } catch (e) {
-            console.error('[Auth] initialize() profile fetch timed out or failed')
+          // If we already have a cached profile for this user, we can stop loading now
+          if (profile && profile.id === session.user.id) {
+            setLoading(false)
+            // Still refresh in background
+            fetchProfile(session.user.id).then(p => {
+              if (mounted && p) setProfile(p)
+            })
+          } else {
+            const p = await fetchProfile(session.user.id)
+            if (mounted) setProfile(p)
+            if (mounted) setLoading(false)
           }
         } else {
-          console.log('[Auth] initialize() no user found')
+          setLoading(false)
         }
       } catch (err) {
         console.error('[Auth] Init error:', err)
-      } finally {
-        if (mounted) {
-          console.log('[Auth] initialize() complete, setting loading to false')
-          setLoading(false)
-        }
+        if (mounted) setLoading(false)
       }
     }
 
     initialize()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Auth] onAuthStateChange event:', event, 'session:', !!session)
       if (!mounted) return
       
       setSession(session)
@@ -140,37 +142,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(newUser)
 
       if (newUser) {
-        console.log('[Auth] onAuthStateChange user found, fetching profile...')
-        // Add a timeout to the profile fetch
-        const profilePromise = fetchProfile(newUser.id)
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 5000))
-        
-        try {
-          const p = await Promise.race([profilePromise, timeoutPromise]) as Profile | null
-          if (mounted) {
-            console.log('[Auth] onAuthStateChange profile set')
-            setProfile(p)
-          }
-        } catch (e) {
-          console.error('[Auth] onAuthStateChange profile fetch timed out or failed')
+        // Only fetch if needed or if it's a sign-in event
+        if (event === 'SIGNED_IN' || !profile || profile.id !== newUser.id) {
+          const p = await fetchProfile(newUser.id)
+          if (mounted) setProfile(p)
         }
       } else {
-        console.log('[Auth] onAuthStateChange no user found')
         if (mounted) setProfile(null)
+        localStorage.removeItem('curator_profile')
       }
       
-      if (mounted) {
-        console.log('[Auth] onAuthStateChange complete, setting loading to false')
-        setLoading(false)
-      }
+      if (mounted) setLoading(false)
     })
 
     return () => {
-      console.log('[Auth] useEffect unmounting')
       mounted = false
       subscription.unsubscribe()
     }
-  }, [fetchProfile])
+  }, [fetchProfile, profile?.id])
 
   // Sign in
   const signIn = async (email: string, password: string) => {
