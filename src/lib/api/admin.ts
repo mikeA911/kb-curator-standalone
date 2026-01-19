@@ -1,4 +1,4 @@
-import { supabase, createAdminClient } from '../supabase'
+import { supabase } from '../supabase'
 import type { KnowledgeBase, Profile, CurationQueueItem } from '../../types'
 
 /**
