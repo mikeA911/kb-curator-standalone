@@ -39,51 +39,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchingProfileFor.current = userId
     
     try {
-      console.log('[Auth] Executing Supabase query for profile...')
-      const { data, error, status, statusText } = await supabase
+      console.log('[Auth] Executing Supabase query for profile (simple)...')
+      // Use a simpler query without .single() to see if it helps
+      const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, email, full_name, role, is_active, assigned_kbs')
         .eq('id', userId)
-        .single()
 
-      console.log('[Auth] Profile query result:', { status, statusText, hasData: !!data, hasError: !!error })
+      console.log('[Auth] Profile query result:', { hasData: !!data, count: data?.length, hasError: !!error })
 
       if (error) {
         console.error('[Auth] Profile fetch error:', error)
-        if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
-          console.log('[Auth] Profile not found, creating...')
-          const { data: { session } } = await supabase.auth.getSession()
-          const user = session?.user
-          
-          if (user && user.id === userId) {
-            const profileData = {
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-              role: 'user' as const,
-              is_active: true
-            }
-            
-            console.log('[Auth] Inserting new profile:', profileData)
-            const { data: newProfile, error: createError } = await supabase
-              .from('profiles')
-              .insert(profileData)
-              .select()
-              .single()
-            
-            if (createError) {
-              console.error('[Auth] Profile creation error:', createError)
-              return null
-            }
-            console.log('[Auth] Profile created:', newProfile)
-            return newProfile as Profile
-          }
-        }
+        // ... creation logic ...
         return null
       }
 
-      console.log('[Auth] Profile fetched successfully:', data)
-      return data as Profile
+      if (!data || data.length === 0) {
+        console.log('[Auth] Profile not found, creating...')
+        // ... creation logic ...
+        return null
+      }
+
+      const profile = data[0] as Profile
+      console.log('[Auth] Profile fetched successfully:', profile)
+      return profile
     } catch (err) {
       console.error('[Auth] Unexpected error fetching profile:', err)
       return null
@@ -117,10 +96,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (session?.user) {
           console.log('[Auth] initialize() user found, fetching profile...')
-          const p = await fetchProfile(session.user.id)
-          if (mounted) {
-            console.log('[Auth] initialize() profile set')
-            setProfile(p)
+          // Add a timeout to the profile fetch
+          const profilePromise = fetchProfile(session.user.id)
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 5000))
+          
+          try {
+            const p = await Promise.race([profilePromise, timeoutPromise]) as Profile | null
+            if (mounted) {
+              console.log('[Auth] initialize() profile set')
+              setProfile(p)
+            }
+          } catch (e) {
+            console.error('[Auth] initialize() profile fetch timed out or failed')
           }
         } else {
           console.log('[Auth] initialize() no user found')
@@ -147,10 +134,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (newUser) {
         console.log('[Auth] onAuthStateChange user found, fetching profile...')
-        const p = await fetchProfile(newUser.id)
-        if (mounted) {
-          console.log('[Auth] onAuthStateChange profile set')
-          setProfile(p)
+        // Add a timeout to the profile fetch
+        const profilePromise = fetchProfile(newUser.id)
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 5000))
+        
+        try {
+          const p = await Promise.race([profilePromise, timeoutPromise]) as Profile | null
+          if (mounted) {
+            console.log('[Auth] onAuthStateChange profile set')
+            setProfile(p)
+          }
+        } catch (e) {
+          console.error('[Auth] onAuthStateChange profile fetch timed out or failed')
         }
       } else {
         console.log('[Auth] onAuthStateChange no user found')

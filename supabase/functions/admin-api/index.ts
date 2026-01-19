@@ -41,6 +41,19 @@ serve(async (req) => {
 
     const { type, ...payload } = await req.json()
 
+    if (type === 'get-profile') {
+      const { userId } = payload
+      const { data, error } = await adminClient
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single()
+      if (error) throw error
+      return new Response(JSON.stringify(data), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (type === 'list-profiles') {
       const { data, error } = await adminClient
         .from('profiles')
