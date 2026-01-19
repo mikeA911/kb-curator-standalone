@@ -30,18 +30,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
     console.log('[Auth] Fetching profile for:', userId)
+    
+    // Add a timeout to the profile fetch to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Profile fetch timeout')), 10000)
+    )
+
     try {
-      const { data, error } = await supabase
+      const fetchPromise = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single()
 
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any
+
       if (error) {
         console.error('[Auth] Profile fetch error:', error)
-        if (error.code === 'PGRST116' || error.message.includes('No rows found')) {
+        if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
           console.log('[Auth] Profile not found, creating...')
-          const { data: { user } } = await supabase.auth.getUser()
+          const { data: { session } } = await supabase.auth.getSession()
+          const user = session?.user
           
           if (user && user.id === userId) {
             const profileData = {
@@ -88,45 +97,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Initialize auth state
   useEffect(() => {
     console.log('[Auth] Initializing...')
-    const initAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log('[Auth] Session fetched:', !!session)
-        setSession(session)
-        setUser(session?.user ?? null)
-
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id)
-          setProfile(profile)
-        }
-      } catch (err) {
-        console.error('[Auth] Init error:', err)
-        setError('Failed to initialize authentication')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    initAuth()
+    
+    let mounted = true
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('[Auth] State change:', event, !!session)
+        
+        if (!mounted) return
+
         setSession(session)
         setUser(session?.user ?? null)
 
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id)
-          setProfile(profile)
-        } else {
-          setProfile(null)
+        try {
+          if (session?.user) {
+            const profile = await fetchProfile(session.user.id)
+            if (mounted) setProfile(profile)
+          } else {
+            if (mounted) setProfile(null)
+          }
+        } catch (err) {
+          console.error('[Auth] Profile fetch error in state change:', err)
+        } finally {
+          if (mounted) setLoading(false)
         }
-
-        setLoading(false)
       }
     )
 
+    // Fallback: if onAuthStateChange doesn't fire within 5 seconds, stop loading
+    const fallbackTimeout = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn('[Auth] Initialization fallback triggered')
+        setLoading(false)
+      }
+    }, 5000)
+
     return () => {
+      mounted = false
+      clearTimeout(fallbackTimeout)
       subscription.unsubscribe()
     }
   }, [fetchProfile])
