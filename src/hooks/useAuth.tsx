@@ -39,11 +39,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchingProfileFor.current = userId
     
     try {
-      const { data, error } = await supabase
+      console.log('[Auth] Executing Supabase query for profile...')
+      const { data, error, status, statusText } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single()
+
+      console.log('[Auth] Profile query result:', { status, statusText, hasData: !!data, hasError: !!error })
 
       if (error) {
         console.error('[Auth] Profile fetch error:', error)
@@ -61,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               is_active: true
             }
             
+            console.log('[Auth] Inserting new profile:', profileData)
             const { data: newProfile, error: createError } = await supabase
               .from('profiles')
               .insert(profileData)
@@ -78,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return null
       }
 
-      console.log('[Auth] Profile fetched:', data)
+      console.log('[Auth] Profile fetched successfully:', data)
       return data as Profile
     } catch (err) {
       console.error('[Auth] Unexpected error fetching profile:', err)
@@ -98,30 +102,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Initialize auth state
   useEffect(() => {
+    console.log('[Auth] useEffect mounting...')
     let mounted = true
 
     async function initialize() {
+      console.log('[Auth] initialize() starting...')
       try {
         const { data: { session } } = await supabase.auth.getSession()
+        console.log('[Auth] initialize() session fetched:', !!session)
         if (!mounted) return
 
         setSession(session)
         setUser(session?.user ?? null)
 
         if (session?.user) {
+          console.log('[Auth] initialize() user found, fetching profile...')
           const p = await fetchProfile(session.user.id)
-          if (mounted) setProfile(p)
+          if (mounted) {
+            console.log('[Auth] initialize() profile set')
+            setProfile(p)
+          }
+        } else {
+          console.log('[Auth] initialize() no user found')
         }
       } catch (err) {
         console.error('[Auth] Init error:', err)
       } finally {
-        if (mounted) setLoading(false)
+        if (mounted) {
+          console.log('[Auth] initialize() complete, setting loading to false')
+          setLoading(false)
+        }
       }
     }
 
     initialize()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Auth] onAuthStateChange event:', event, 'session:', !!session)
       if (!mounted) return
       
       setSession(session)
@@ -129,14 +146,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(newUser)
 
       if (newUser) {
+        console.log('[Auth] onAuthStateChange user found, fetching profile...')
         const p = await fetchProfile(newUser.id)
-        if (mounted) setProfile(p)
+        if (mounted) {
+          console.log('[Auth] onAuthStateChange profile set')
+          setProfile(p)
+        }
       } else {
+        console.log('[Auth] onAuthStateChange no user found')
         if (mounted) setProfile(null)
+      }
+      
+      if (mounted) {
+        console.log('[Auth] onAuthStateChange complete, setting loading to false')
+        setLoading(false)
       }
     })
 
     return () => {
+      console.log('[Auth] useEffect unmounting')
       mounted = false
       subscription.unsubscribe()
     }
