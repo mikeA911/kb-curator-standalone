@@ -1,4 +1,4 @@
-import { supabase } from '../supabase'
+import { supabase, createAdminClient } from '../supabase'
 import type { KnowledgeBase, Profile, CurationQueueItem } from '../../types'
 
 /**
@@ -41,10 +41,11 @@ export async function deleteKnowledgeBase(id: string): Promise<void> {
 }
 
 /**
- * Get all profiles
+ * Get all profiles (using admin client to bypass RLS)
  */
 export async function getAllProfiles(): Promise<Profile[]> {
-  const { data, error } = await supabase
+  const adminClient = createAdminClient()
+  const { data, error } = await adminClient
     .from('profiles')
     .select('*')
     .order('email')
@@ -54,10 +55,11 @@ export async function getAllProfiles(): Promise<Profile[]> {
 }
 
 /**
- * Update user role
+ * Update user role (using admin client to bypass RLS)
  */
 export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin'): Promise<void> {
-  const { error } = await supabase
+  const adminClient = createAdminClient()
+  const { error } = await adminClient
     .from('profiles')
     .update({ role })
     .eq('id', userId)
@@ -66,10 +68,11 @@ export async function updateUserRole(userId: string, role: 'user' | 'curator' | 
 }
 
 /**
- * Assign KBs to a curator
+ * Assign KBs to a curator (using admin client to bypass RLS)
  */
 export async function assignKBsToCurator(userId: string, kbIds: string[]): Promise<void> {
-  const { error } = await supabase
+  const adminClient = createAdminClient()
+  const { error } = await adminClient
     .from('profiles')
     .update({ assigned_kbs: kbIds })
     .eq('id', userId)
