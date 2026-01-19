@@ -124,8 +124,12 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2">
-            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${isAdmin ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-              {isAdmin ? 'Admin' : 'Curator'}
+            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+              isAdmin ? 'bg-purple-100 text-purple-800' : 
+              isCurator ? 'bg-blue-100 text-blue-800' : 
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {isAdmin ? 'Admin' : isCurator ? 'Curator' : 'User'}
             </span>
             <span className="text-sm text-gray-600">{profile?.email}</span>
           </div>

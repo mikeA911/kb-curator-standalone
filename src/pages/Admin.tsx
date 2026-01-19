@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import KBManagement from '../components/admin/KBManagement'
 import CuratorAssignment from '../components/admin/CuratorAssignment'
 import CurationQueueManager from '../components/admin/CurationQueueManager'
@@ -8,6 +9,7 @@ import CurationQueueManager from '../components/admin/CurationQueueManager'
 type Tab = 'stats' | 'kbs' | 'curators' | 'queue' | 'settings'
 
 export default function AdminPage() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('stats')
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
@@ -21,7 +23,18 @@ export default function AdminPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            title="Back to Dashboard"
+          >
+            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </button>
+          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+        </div>
       </div>
 
       {/* Tabs */}

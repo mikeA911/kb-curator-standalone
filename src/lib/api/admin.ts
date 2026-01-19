@@ -73,14 +73,20 @@ async function ensureAdmin() {
  * Get all profiles (using admin client to bypass RLS)
  */
 export async function getAllProfiles(): Promise<Profile[]> {
+  console.log('[Admin API] getAllProfiles called')
   await ensureAdmin()
   const adminClient = createAdminClient()
+  console.log('[Admin API] Fetching profiles with admin client...')
   const { data, error } = await adminClient
     .from('profiles')
     .select('*')
     .order('email')
 
-  if (error) throw error
+  if (error) {
+    console.error('[Admin API] getAllProfiles error:', error)
+    throw error
+  }
+  console.log('[Admin API] getAllProfiles success, count:', data?.length)
   return data || []
 }
 

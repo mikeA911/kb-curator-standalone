@@ -16,15 +16,19 @@ export default function CuratorAssignment() {
 
   async function loadData() {
     setLoading(true)
+    setError(null)
     try {
+      console.log('[CuratorAssignment] Loading data...')
       const [profilesData, kbsData] = await Promise.all([
         getAllProfiles(),
         getKnowledgeBases()
       ])
+      console.log('[CuratorAssignment] Data loaded:', { profiles: profilesData.length, kbs: kbsData.length })
       setProfiles(profilesData)
       setKbs(kbsData)
     } catch (err) {
-      setError('Failed to load data')
+      console.error('[CuratorAssignment] Load error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -73,45 +77,53 @@ export default function CuratorAssignment() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {profiles.map((profile) => (
-                <tr key={profile.id}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{profile.full_name || profile.email}</div>
-                    <div className="text-sm text-gray-500">{profile.email}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <select
-                      value={profile.role}
-                      onChange={(e) => handleRoleChange(profile.id, e.target.value as UserRole)}
-                      className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                      aria-label="Change user role"
-                    >
-                      <option value="user">User</option>
-                      <option value="curator">Curator</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </td>
-                  <td className="px-6 py-4">
-                    {(profile.role === 'curator' || profile.role === 'admin') ? (
-                      <div className="flex flex-wrap gap-2">
-                        {kbs.map((kb) => (
-                          <label key={kb.id} className="inline-flex items-center bg-gray-100 px-3 py-1 rounded-full text-sm cursor-pointer hover:bg-gray-200">
-                            <input
-                              type="checkbox"
-                              className="mr-2"
-                              checked={profile.assigned_kbs?.includes(kb.id)}
-                              onChange={() => handleToggleKB(profile.id, kb.id, profile.assigned_kbs || [])}
-                            />
-                            {kb.name}
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400 text-sm italic">Assign as curator to manage KBs</span>
-                    )}
+              {profiles.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-6 py-4 text-center text-gray-500 italic">
+                    No users found in the profiles table.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                profiles.map((profile) => (
+                  <tr key={profile.id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{profile.full_name || profile.email}</div>
+                      <div className="text-sm text-gray-500">{profile.email}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <select
+                        value={profile.role}
+                        onChange={(e) => handleRoleChange(profile.id, e.target.value as UserRole)}
+                        className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        aria-label="Change user role"
+                      >
+                        <option value="user">User</option>
+                        <option value="curator">Curator</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td className="px-6 py-4">
+                      {(profile.role === 'curator' || profile.role === 'admin') ? (
+                        <div className="flex flex-wrap gap-2">
+                          {kbs.map((kb) => (
+                            <label key={kb.id} className="inline-flex items-center bg-gray-100 px-3 py-1 rounded-full text-sm cursor-pointer hover:bg-gray-200">
+                              <input
+                                type="checkbox"
+                                className="mr-2"
+                                checked={profile.assigned_kbs?.includes(kb.id)}
+                                onChange={() => handleToggleKB(profile.id, kb.id, profile.assigned_kbs || [])}
+                              />
+                              {kb.name}
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-sm italic">Assign as curator to manage KBs</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
