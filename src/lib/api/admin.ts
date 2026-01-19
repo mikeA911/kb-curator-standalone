@@ -41,17 +41,28 @@ export async function deleteKnowledgeBase(id: string): Promise<void> {
 }
 
 /**
- * Get all curators
+ * Get all profiles
  */
-export async function getCurators(): Promise<Profile[]> {
+export async function getAllProfiles(): Promise<Profile[]> {
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
-    .eq('role', 'curator')
     .order('email')
 
   if (error) throw error
   return data || []
+}
+
+/**
+ * Update user role
+ */
+export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin'): Promise<void> {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ role })
+    .eq('id', userId)
+
+  if (error) throw error
 }
 
 /**

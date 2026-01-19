@@ -733,10 +733,19 @@ export async function getDashboardStats(): Promise<{
   totalChunks: number
   approvedChunks: number
   pendingReview: number
+  inQueue: number
+  draftDocuments: number
+  submittedDocuments: number
 }> {
   const supabase = createClient()
 
-  const { data: documents } = await supabase.from('documents').select('*')
+  const [
+    { data: documents },
+    { count: queueCount }
+  ] = await Promise.all([
+    supabase.from('documents').select('*'),
+    supabase.from('curation_queue').select('*', { count: 'exact', head: true }).neq('status', 'completed')
+  ])
 
   const docs = documents || []
 
@@ -746,5 +755,8 @@ export async function getDashboardStats(): Promise<{
     totalChunks: docs.reduce((sum, d) => sum + (d.total_chunks || 0), 0),
     approvedChunks: docs.reduce((sum, d) => sum + (d.approved_chunks || 0), 0),
     pendingReview: docs.filter((d) => d.processing_status === 'review').length,
+    inQueue: queueCount || 0,
+    draftDocuments: docs.filter((d) => d.processing_status === 'pending' || d.processing_status === 'processing').length,
+    submittedDocuments: docs.filter((d) => d.processing_status === 'submitted').length,
   }
 }

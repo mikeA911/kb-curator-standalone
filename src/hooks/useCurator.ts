@@ -175,8 +175,10 @@ export function useDocuments() {
     try {
       const { getDocuments } = await import('../lib/api/curator')
       const options: any = {}
-      if (profile?.role === 'curator') {
-        options.kbIds = profile.assigned_kbs
+      if (profile?.role === 'curator' || profile?.role === 'admin') {
+        if (profile.assigned_kbs && profile.assigned_kbs.length > 0) {
+          options.kbIds = profile.assigned_kbs
+        }
       }
       const docs = await getDocuments(options)
       console.log('[useDocuments] Documents loaded:', docs.length)

@@ -12,6 +12,9 @@ interface DashboardStats {
   totalChunks: number
   approvedChunks: number
   pendingReview: number
+  inQueue: number
+  draftDocuments: number
+  submittedDocuments: number
 }
 
 interface Props {
@@ -29,6 +32,9 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
     totalChunks: 0,
     approvedChunks: 0,
     pendingReview: 0,
+    inQueue: 0,
+    draftDocuments: 0,
+    submittedDocuments: 0,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -142,45 +148,45 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
         <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 uppercase">Total Documents</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalDocuments}</p>
+              <p className="text-sm font-medium text-gray-600 uppercase">In Queue</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{stats.inQueue}</p>
             </div>
-            <div className="text-4xl">📄</div>
+            <div className="text-4xl">📥</div>
           </div>
-          <p className="text-xs text-gray-500 mt-2">{stats.completedDocuments} completed</p>
+          <p className="text-xs text-gray-500 mt-2">Documents awaiting curation</p>
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 uppercase">Total Chunks</p>
-              <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalChunks}</p>
+              <p className="text-sm font-medium text-gray-600 uppercase">Working On</p>
+              <p className="text-3xl font-bold text-blue-600 mt-2">{stats.draftDocuments}</p>
             </div>
-            <div className="text-4xl">📦</div>
+            <div className="text-4xl">📝</div>
           </div>
-          <p className="text-xs text-gray-500 mt-2">Across all documents</p>
+          <p className="text-xs text-gray-500 mt-2">Drafts in progress</p>
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 uppercase">Approved Chunks</p>
-              <p className="text-3xl font-bold text-green-600 mt-2">{stats.approvedChunks}</p>
+              <p className="text-sm font-medium text-gray-600 uppercase">Submitted</p>
+              <p className="text-3xl font-bold text-purple-600 mt-2">{stats.submittedDocuments}</p>
+            </div>
+            <div className="text-4xl">📤</div>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Awaiting admin approval</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 uppercase">Completed</p>
+              <p className="text-3xl font-bold text-green-600 mt-2">{stats.completedDocuments}</p>
             </div>
             <div className="text-4xl">✅</div>
           </div>
-          <p className="text-xs text-gray-500 mt-2">Ready for RAG queries</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 uppercase">Completion Rate</p>
-              <p className="text-3xl font-bold text-blue-600 mt-2">{completionRate}%</p>
-            </div>
-            <div className="text-4xl">📊</div>
-          </div>
-          <p className="text-xs text-gray-500 mt-2">{stats.pendingReview} pending review</p>
+          <p className="text-xs text-gray-500 mt-2">Fully processed documents</p>
         </div>
       </div>
 
@@ -372,6 +378,27 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
                           >
                             Review →
                           </button>
+                        )}
+                        {doc.processing_status === 'submitted' && isAdmin && (
+                          <button
+                            onClick={async () => {
+                              if (confirm('Approve this document? This will mark it as completed.')) {
+                                try {
+                                  const { approveDocument } = await import('../../lib/api/admin')
+                                  await approveDocument(doc.id)
+                                  window.location.reload()
+                                } catch (err) {
+                                  alert('Failed to approve document')
+                                }
+                              }
+                            }}
+                            className="text-green-600 hover:text-green-900 font-medium"
+                          >
+                            Approve ✓
+                          </button>
+                        )}
+                        {doc.processing_status === 'submitted' && !isAdmin && (
+                          <span className="text-purple-600 font-medium">Submitted</span>
                         )}
                         {doc.processing_status === 'completed' && (
                           <span className="text-green-600 font-medium">Complete ✓</span>
