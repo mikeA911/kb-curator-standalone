@@ -11,9 +11,9 @@ import ResetPasswordPage from './pages/ResetPassword'
 import DashboardPage from './pages/Dashboard'
 import UploadPage from './pages/Upload'
 import ReviewPage from './pages/Review'
+import AdminPage from './pages/Admin'
 
 // Placeholder components (to be migrated)
-const Admin = () => <div>Admin Page</div>
 const Documents = () => <div>Documents Page</div>
 
 createRoot(document.getElementById('root')!).render(
@@ -61,7 +61,7 @@ createRoot(document.getElementById('root')!).render(
           {/* Admin Routes */}
           <Route path="/admin" element={
             <AdminRoute>
-              <Admin />
+              <AdminPage />
             </AdminRoute>
           } />
           

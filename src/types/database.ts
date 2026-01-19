@@ -1,9 +1,9 @@
 // Database types for the Curator Module
 
 export type UserRole = 'user' | 'curator' | 'admin'
-export type DocType = 'fhir' | 'vbc' | 'grants' | 'billing'
-export type ProcessingStatus = 'pending' | 'processing' | 'review' | 'completed' | 'failed'
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'filtered' | 'enriching'
+export type DocType = string // Changed from enum to string to support dynamic KBs
+export type ProcessingStatus = 'pending' | 'processing' | 'review' | 'submitted' | 'completed' | 'failed'
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'filtered' | 'enriching' | 'draft'
 
 export interface Profile {
   id: string
@@ -11,8 +11,27 @@ export interface Profile {
   full_name: string | null
   role: UserRole
   is_active: boolean
+  assigned_kbs: string[]
   created_at: string
   updated_at: string
+}
+
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CurationQueueItem {
+  id: string
+  kb_id: string
+  title: string
+  url: string
+  status: 'pending' | 'in_progress' | 'completed'
+  added_by: string | null
+  created_at: string
 }
 
 export interface Document {
@@ -31,6 +50,7 @@ export interface Document {
   rejected_chunks: number
   metadata: DocumentMetadata | null
   error_message: string | null
+  source_url: string | null
 }
 
 export interface DocumentMetadata {
@@ -149,6 +169,12 @@ export type ChunkUpdate = Partial<Omit<DocumentChunk, 'id' | 'document_id' | 'ch
 export type KBVectorInsert = Omit<KBVector, 'id' | 'approved_date'>
 export type KBVectorUpdate = Partial<Omit<KBVector, 'id' | 'chunk_id' | 'document_id' | 'approved_date'>>
 
+export type KnowledgeBaseInsert = Omit<KnowledgeBase, 'created_at' | 'updated_at'>
+export type KnowledgeBaseUpdate = Partial<Omit<KnowledgeBase, 'id' | 'created_at'>>
+
+export type CurationQueueInsert = Omit<CurationQueueItem, 'id' | 'created_at'>
+export type CurationQueueUpdate = Partial<Omit<CurationQueueItem, 'id' | 'created_at'>>
+
 // ============================================
 // Supabase Database Types (for type-safety)
 // ============================================
@@ -160,6 +186,16 @@ export interface Database {
         Row: Profile
         Insert: ProfileInsert
         Update: ProfileUpdate
+      }
+      knowledge_bases: {
+        Row: KnowledgeBase
+        Insert: KnowledgeBaseInsert
+        Update: KnowledgeBaseUpdate
+      }
+      curation_queue: {
+        Row: CurationQueueItem
+        Insert: CurationQueueInsert
+        Update: CurationQueueUpdate
       }
       documents: {
         Row: Document

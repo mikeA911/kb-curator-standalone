@@ -1,25 +1,44 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   uploadDocument,
   processAndStoreDocument,
   enrichDocumentChunks,
 } from '../../lib/api/curator'
-import { DOC_TYPE_OPTIONS, FILTER_OPTIONS, DEFAULT_FILTERS, type DocType } from '../../types'
+import { getKnowledgeBases } from '../../lib/api/admin'
+import { FILTER_OPTIONS, DEFAULT_FILTERS, type KnowledgeBase } from '../../types'
 
 interface Props {
   onSuccess?: (documentId: string) => void
+  initialDocType?: string
+  initialSourceUrl?: string
 }
 
-export default function DocumentUploader({ onSuccess }: Props) {
+export default function DocumentUploader({ onSuccess, initialDocType, initialSourceUrl }: Props) {
   const navigate = useNavigate()
   const [file, setFile] = useState<File | null>(null)
-  const [docType, setDocType] = useState<DocType>('fhir')
+  const [docType, setDocType] = useState<string>(initialDocType || 'fhir')
+  const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedFilters, setSelectedFilters] = useState<string[]>(DEFAULT_FILTERS)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [statusText, setStatusText] = useState('')
   const [dragActive, setDragActive] = useState(false)
+
+  useEffect(() => {
+    async function loadKbs() {
+      try {
+        const data = await getKnowledgeBases()
+        setKbs(data)
+        if (data.length > 0 && !initialDocType) {
+          setDocType(data[0].id)
+        }
+      } catch (err) {
+        console.error('Failed to load KBs:', err)
+      }
+    }
+    loadKbs()
+  }, [initialDocType])
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -87,7 +106,7 @@ export default function DocumentUploader({ onSuccess }: Props) {
       setStatusText('📤 Uploading to storage...')
       setProgress(20)
 
-      const { storageUrl, documentId } = await uploadDocument(file, docType)
+      const { storageUrl, documentId } = await uploadDocument(file, docType, initialSourceUrl)
 
       setStatusText('🔄 Processing and chunking document...')
       setProgress(50)
@@ -138,6 +157,13 @@ export default function DocumentUploader({ onSuccess }: Props) {
   return (
     <div className="max-w-4xl mx-auto">
       <h2 className="text-2xl font-bold mb-6 text-gray-900">Upload Document</h2>
+
+      {initialSourceUrl && (
+        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <p className="text-sm text-yellow-800 font-medium">Curation Queue Item:</p>
+          <p className="text-sm text-yellow-700 truncate">{initialSourceUrl}</p>
+        </div>
+      )}
 
       <div className="mb-6">
         <label className="block text-sm font-medium text-gray-700 mb-2">Choose a file</label>
@@ -203,21 +229,22 @@ export default function DocumentUploader({ onSuccess }: Props) {
       </div>
 
       <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Document Type</label>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Knowledge Base</label>
         <select
+          aria-label="Select Knowledge Base"
           value={docType}
-          onChange={(e) => setDocType(e.target.value as DocType)}
-          disabled={processing}
+          onChange={(e) => setDocType(e.target.value)}
+          disabled={processing || !!initialDocType}
           className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
         >
-          {DOC_TYPE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
+          {kbs.map((kb) => (
+            <option key={kb.id} value={kb.id}>
+              {kb.name}
             </option>
           ))}
         </select>
         <p className="mt-1 text-xs text-gray-500">
-          This helps AI understand the document structure and extract relevant metadata.
+          Select the knowledge base this document belongs to.
         </p>
       </div>
 

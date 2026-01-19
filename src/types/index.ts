@@ -44,7 +44,7 @@ export interface FlowiseEmbedResult {
 // Form types
 export interface UploadFormData {
   file: File
-  docType: 'fhir' | 'vbc' | 'grants' | 'billing'
+  docType: string
   filters: string[]
 }
 
@@ -61,13 +61,6 @@ export const FILTER_OPTIONS = [
   { key: 'boilerplate', label: 'Remove boilerplate legal text' },
   { key: 'code', label: 'Remove code examples' },
   { key: 'appendix', label: 'Remove appendices' },
-] as const
-
-export const DOC_TYPE_OPTIONS = [
-  { value: 'fhir', label: 'FHIR Specification' },
-  { value: 'vbc', label: 'VBC Playbook' },
-  { value: 'grants', label: 'Grant Documentation' },
-  { value: 'billing', label: 'Billing Guide' },
 ] as const
 
 // Constants

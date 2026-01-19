@@ -27,11 +27,42 @@ export default function ChunkReviewer({ documentId, onComplete }: Props) {
     progress,
     refreshChunks,
     isComplete,
+    saveDraft,
+    submitForReview,
   } = useCurator(documentId)
 
   const [curatorNotes, setCuratorNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [enriching, setEnriching] = useState(false)
+
+  const handleSaveDraft = async () => {
+    if (!currentChunk) return
+    setSubmitting(true)
+    try {
+      await saveDraft(curatorNotes, currentChunk.ai_metadata)
+      alert('Draft saved successfully!')
+    } catch (error) {
+      console.error('Save draft failed:', error)
+      alert('Failed to save draft.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleSubmit = async () => {
+    if (!confirm('Are you sure you want to submit this document for admin review?')) return
+    setSubmitting(true)
+    try {
+      await submitForReview()
+      alert('Document submitted successfully!')
+      router('/dashboard')
+    } catch (error) {
+      console.error('Submit failed:', error)
+      alert(error instanceof Error ? error.message : 'Failed to submit document.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const handleApprove = async () => {
     if (!currentChunk) return
@@ -392,21 +423,43 @@ export default function ChunkReviewer({ documentId, onComplete }: Props) {
         </p>
       </div>
 
-      <div className="flex gap-4">
-        <button
-          onClick={handleApprove}
-          disabled={submitting}
-          className="flex-1 bg-green-600 text-white py-4 px-6 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
-        >
-          {submitting ? 'Processing...' : '✅ Approve'}
-        </button>
-        <button
-          onClick={handleReject}
-          disabled={submitting}
-          className="flex-1 bg-red-600 text-white py-4 px-6 rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
-        >
-          {submitting ? 'Processing...' : '❌ Reject'}
-        </button>
+      <div className="flex flex-col gap-4">
+        <div className="flex gap-4">
+          <button
+            onClick={handleApprove}
+            disabled={submitting}
+            className="flex-1 bg-green-600 text-white py-4 px-6 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
+          >
+            {submitting ? 'Processing...' : '✅ Approve'}
+          </button>
+          <button
+            onClick={handleReject}
+            disabled={submitting}
+            className="flex-1 bg-red-600 text-white py-4 px-6 rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
+          >
+            {submitting ? 'Processing...' : '❌ Reject'}
+          </button>
+        </div>
+        
+        <div className="flex gap-4">
+          <button
+            onClick={handleSaveDraft}
+            disabled={submitting}
+            className="flex-1 bg-gray-600 text-white py-2 px-6 rounded-md hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors shadow-sm"
+          >
+            💾 Save Draft
+          </button>
+          
+          {isComplete && (
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex-1 bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors shadow-sm animate-pulse"
+            >
+              🚀 Submit for Admin Review
+            </button>
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-gray-500 mt-4 text-center">

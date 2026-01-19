@@ -46,9 +46,24 @@ interface KBVectorData {
  */
 export async function uploadDocument(
   file: File,
-  docType: DocType
+  docType: DocType,
+  sourceUrl?: string
 ): Promise<{ storageUrl: string; documentId: string }> {
   const supabase = createClient()
+
+  // Check for duplicates if sourceUrl is provided
+  if (sourceUrl) {
+    const { data: existingDoc } = await supabase
+      .from('documents')
+      .select('id')
+      .eq('doc_type', docType)
+      .eq('source_url', sourceUrl)
+      .single()
+
+    if (existingDoc) {
+      throw new Error('This document has already been uploaded for this knowledge base.')
+    }
+  }
 
   // Validate file size
   if (file.size > MAX_FILE_SIZE) {
@@ -104,6 +119,7 @@ export async function uploadDocument(
       mime_type: file.type,
       uploaded_by: user.id,
       processing_status: 'pending',
+      source_url: sourceUrl || null,
     })
     .select()
     .single()
@@ -570,11 +586,69 @@ export async function getDocumentStats(documentId: string): Promise<DocumentStat
 }
 
 /**
+ * Save a chunk as draft
+ */
+export async function saveChunkDraft(
+  chunkId: string,
+  curatorNotes: string,
+  aiMetadata: any,
+  userId: string
+): Promise<void> {
+  const supabase = createClient()
+
+  const { error } = await supabase
+    .from('document_chunks')
+    .update({
+      review_status: 'draft',
+      curator_notes: curatorNotes || null,
+      ai_metadata: aiMetadata,
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq('id', chunkId)
+
+  if (error) {
+    throw new Error(`Failed to save draft: ${error.message}`)
+  }
+}
+
+/**
+ * Submit a document for admin review
+ */
+export async function submitDocument(documentId: string): Promise<void> {
+  const supabase = createClient()
+
+  // Check if all chunks are reviewed (approved, rejected, or filtered)
+  const { data: chunks, error: fetchError } = await supabase
+    .from('document_chunks')
+    .select('review_status')
+    .eq('document_id', documentId)
+
+  if (fetchError) throw fetchError
+
+  const pendingChunks = chunks?.filter(c => c.review_status === 'pending' || c.review_status === 'draft' || c.review_status === 'enriching')
+  
+  if (pendingChunks && pendingChunks.length > 0) {
+    throw new Error(`Cannot submit: ${pendingChunks.length} chunks are still pending or in draft.`)
+  }
+
+  const { error } = await supabase
+    .from('documents')
+    .update({ processing_status: 'submitted' })
+    .eq('id', documentId)
+
+  if (error) {
+    throw new Error(`Failed to submit document: ${error.message}`)
+  }
+}
+
+/**
  * Get all documents (optionally filtered by status or user)
  */
 export async function getDocuments(options?: {
   uploadedBy?: string
   status?: string
+  kbIds?: string[]
 }): Promise<Document[]> {
   const supabase = createClient()
 
@@ -589,6 +663,10 @@ export async function getDocuments(options?: {
 
   if (options?.status) {
     query = query.eq('processing_status', options.status)
+  }
+
+  if (options?.kbIds && options.kbIds.length > 0) {
+    query = query.in('doc_type', options.kbIds)
   }
 
   const { data, error } = await query

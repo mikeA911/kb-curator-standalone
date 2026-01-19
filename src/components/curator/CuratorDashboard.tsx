@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import type { Document, ProcessingStatus } from '../../types'
-import { getDocuments, getDashboardStats } from '../../lib/api/curator'
+import type { Document, ProcessingStatus, CurationQueueItem } from '../../types'
+import { getDashboardStats } from '../../lib/api/curator'
+import { getCurationQueue } from '../../lib/api/admin'
+import { useDocuments } from '../../hooks/useCurator'
+import { useAuth } from '../../hooks/useAuth'
 
 interface DashboardStats {
   totalDocuments: number
@@ -11,9 +14,15 @@ interface DashboardStats {
   pendingReview: number
 }
 
-export default function CuratorDashboard() {
+interface Props {
+  onSelectQueueItem?: (item: CurationQueueItem) => void
+}
+
+export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   const navigate = useNavigate()
-  const [documents, setDocuments] = useState<Document[]>([])
+  const { profile } = useAuth()
+  const { documents, loading: docsLoading, error: docsError } = useDocuments()
+  const [queue, setQueue] = useState<CurationQueueItem[]>([])
   const [stats, setStats] = useState<DashboardStats>({
     totalDocuments: 0,
     completedDocuments: 0,
@@ -27,9 +36,17 @@ export default function CuratorDashboard() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [docs, dashStats] = await Promise.all([getDocuments(), getDashboardStats()])
-        setDocuments(docs)
+        const [dashStats, queueData] = await Promise.all([
+          getDashboardStats(),
+          getCurationQueue()
+        ])
         setStats(dashStats)
+        
+        if (profile?.role === 'curator') {
+          setQueue(queueData.filter(item => profile.assigned_kbs?.includes(item.kb_id)))
+        } else {
+          setQueue(queueData)
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load dashboard')
         console.error('Dashboard load error:', err)
@@ -39,12 +56,14 @@ export default function CuratorDashboard() {
     }
 
     loadData()
-  }, [])
+  }, [profile])
 
   const getStatusColor = (status: ProcessingStatus) => {
     switch (status) {
       case 'completed':
         return 'bg-green-100 text-green-800'
+      case 'submitted':
+        return 'bg-purple-100 text-purple-800'
       case 'review':
         return 'bg-yellow-100 text-yellow-800'
       case 'processing':
@@ -168,6 +187,52 @@ export default function CuratorDashboard() {
           Upload Document
         </Link>
       </div>
+
+      {/* Curation Queue */}
+      {queue.length > 0 && (
+        <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 bg-yellow-50">
+            <h3 className="text-lg font-semibold text-yellow-900">Available for Curation</h3>
+            <p className="text-sm text-yellow-700">Download these documents and upload them to start curating.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">KB</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {queue.filter(item => item.status !== 'completed').map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getDocTypeColor(item.kb_id)}`}>
+                        {item.kb_id.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{item.title}</div>
+                      <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                        Download Source ↗
+                      </a>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        onClick={() => onSelectQueueItem?.(item)}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        Curate →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Documents List */}
       <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">

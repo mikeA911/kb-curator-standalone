@@ -8,9 +8,13 @@ import {
   getDocumentStats,
   getChunksForReview,
   getDocument,
+  saveChunkDraft,
+  submitDocument,
 } from '../lib/api/curator'
+import { useAuth } from './useAuth'
 
 export function useCurator(documentId: string | null) {
+  const { profile } = useAuth()
   const [document, setDocument] = useState<Document | null>(null)
   const [chunks, setChunks] = useState<ChunkForReview[]>([])
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
@@ -81,6 +85,33 @@ export function useCurator(documentId: string | null) {
     }
   }, [documentId, currentChunkIndex])
 
+  const saveDraft = useCallback(async (notes: string, metadata: any) => {
+    if (!profile || !chunks[currentChunkIndex]) return
+    setLoading(true)
+    try {
+      await saveChunkDraft(chunks[currentChunkIndex].id, notes, metadata, profile.id)
+      await refreshChunks()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save draft')
+    } finally {
+      setLoading(false)
+    }
+  }, [profile, chunks, currentChunkIndex, refreshChunks])
+
+  const submitForReview = useCallback(async () => {
+    if (!documentId) return
+    setLoading(true)
+    try {
+      await submitDocument(documentId)
+      const docData = await getDocument(documentId)
+      setDocument(docData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit document')
+    } finally {
+      setLoading(false)
+    }
+  }, [documentId])
+
   const nextChunk = useCallback(() => {
     if (currentChunkIndex < chunks.length - 1) {
       setCurrentChunkIndex((prev) => prev + 1)
@@ -118,9 +149,53 @@ export function useCurator(documentId: string | null) {
     previousChunk,
     goToChunk,
     refreshChunks,
+    saveDraft,
+    submitForReview,
     hasNext: currentChunkIndex < chunks.length - 1,
     hasPrevious: currentChunkIndex > 0,
     isComplete: stats.pending === 0 && stats.total > 0,
     isEmpty: chunks.length === 0,
+  }
+}
+
+/**
+ * Hook for managing document list
+ */
+export function useDocuments() {
+  const { profile } = useAuth()
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadDocuments = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+
+    try {
+      const { getDocuments } = await import('../lib/api/curator')
+      const options: any = {}
+      if (profile?.role === 'curator') {
+        options.kbIds = profile.assigned_kbs
+      }
+      const docs = await getDocuments(options)
+      setDocuments(docs)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load documents'
+      setError(message)
+      console.error('useDocuments error:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [profile])
+
+  useEffect(() => {
+    loadDocuments()
+  }, [loadDocuments])
+
+  return {
+    documents,
+    loading,
+    error,
+    refresh: loadDocuments,
   }
 }
