@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, createContext, useContext, useCallback, useMemo, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Profile, UserRole } from '../types'
 import type { User, Session } from '@supabase/supabase-js'
@@ -201,7 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return false
   }, [profile])
 
-  const value: AuthContextType = {
+  const value = useMemo(() => ({
     user,
     profile,
     session,
@@ -214,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isRole,
     isCurator: isRole('curator'),
     isAdmin: profile?.role === 'admin' && profile?.is_active === true,
-  }
+  }), [user, profile, session, loading, error, signIn, signUp, signOut, refreshProfile, isRole])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

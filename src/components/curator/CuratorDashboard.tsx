@@ -56,7 +56,7 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
     }
 
     loadData()
-  }, [profile])
+  }, [profile?.id, profile?.assigned_kbs?.join(',')])
 
   const getStatusColor = (status: ProcessingStatus) => {
     switch (status) {

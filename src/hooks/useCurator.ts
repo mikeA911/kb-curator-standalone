@@ -186,7 +186,7 @@ export function useDocuments() {
     } finally {
       setLoading(false)
     }
-  }, [profile])
+  }, [profile?.id, profile?.assigned_kbs?.join(',')])
 
   useEffect(() => {
     loadDocuments()
