@@ -21,19 +21,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    // Try to get initial user from localStorage for faster initial render
-    try {
-      const storageKey = Object.keys(localStorage).find(key => key.startsWith('sb-') && key.endsWith('-auth-token'))
-      if (storageKey) {
-        const sessionData = JSON.parse(localStorage.getItem(storageKey) || '')
-        return sessionData?.user || null
-      }
-    } catch (e) {
-      console.warn('[Auth] Failed to parse initial session from localStorage')
-    }
-    return null
-  })
+  const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)

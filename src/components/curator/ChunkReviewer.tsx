@@ -70,15 +70,15 @@ export default function ChunkReviewer({ documentId, onComplete }: Props) {
     setSubmitting(true)
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
 
-      if (!user) {
+      if (!session?.user) {
         alert('You must be logged in')
         return
       }
 
-      await approveChunk(currentChunk.id, curatorNotes, user.id)
+      await approveChunk(currentChunk.id, curatorNotes, session.user.id)
       setCuratorNotes('')
       await refreshChunks()
 
@@ -103,15 +103,15 @@ export default function ChunkReviewer({ documentId, onComplete }: Props) {
     setSubmitting(true)
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
 
-      if (!user) {
+      if (!session?.user) {
         alert('You must be logged in')
         return
       }
 
-      await rejectChunk(currentChunk.id, user.id)
+      await rejectChunk(currentChunk.id, session.user.id)
       setCuratorNotes('')
       await refreshChunks()
 

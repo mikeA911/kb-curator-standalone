@@ -28,11 +28,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           
           {/* Protected Routes */}
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Navigate to="/dashboard" replace />
-            </ProtectedRoute>
-          } />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           
           <Route path="/dashboard" element={
             <ProtectedRoute>

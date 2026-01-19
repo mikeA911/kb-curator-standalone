@@ -46,16 +46,25 @@ export async function deleteKnowledgeBase(id: string): Promise<void> {
  * Helper to ensure only admins can perform certain operations
  */
 async function ensureAdmin() {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthorized')
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.user) {
+    console.error('[Admin API] No session found')
+    throw new Error('Unauthorized')
+  }
 
-  const { data: profile } = await supabase
+  const { data: profile, error } = await supabase
     .from('profiles')
     .select('role')
-    .eq('id', user.id)
+    .eq('id', session.user.id)
     .single()
 
-  if (profile?.role !== 'admin') {
+  if (error || !profile) {
+    console.error('[Admin API] Failed to fetch profile:', error)
+    throw new Error('Failed to verify admin privileges')
+  }
+
+  if (profile.role !== 'admin') {
+    console.error('[Admin API] User is not an admin:', profile.role)
     throw new Error('Admin privileges required')
   }
 }

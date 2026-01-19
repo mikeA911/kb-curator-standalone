@@ -100,10 +100,10 @@ export async function uploadDocument(
 
   // Get current user
   const {
-    data: { user },
-  } = await supabase.auth.getUser()
+    data: { session },
+  } = await supabase.auth.getSession()
 
-  if (!user) {
+  if (!session?.user) {
     throw new Error('User not authenticated')
   }
 
@@ -117,7 +117,7 @@ export async function uploadDocument(
       storage_path: publicUrl,
       file_size: file.size,
       mime_type: file.type,
-      uploaded_by: user.id,
+      uploaded_by: session.user.id,
       processing_status: 'pending',
       source_url: sourceUrl || null,
     })
@@ -705,9 +705,9 @@ export async function deleteDocument(documentId: string): Promise<void> {
   const supabase = createClient()
 
   // Ensure admin
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthorized')
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.user) throw new Error('Unauthorized')
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
   if (profile?.role !== 'admin') throw new Error('Admin privileges required')
 
   // Get document to get storage path
