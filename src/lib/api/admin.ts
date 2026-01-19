@@ -15,97 +15,61 @@ export async function getKnowledgeBases(): Promise<KnowledgeBase[]> {
 }
 
 /**
- * Create a new knowledge base
+ * Create a new knowledge base (using Edge Function)
  */
 export async function createKnowledgeBase(kb: { id: string; name: string; description?: string }): Promise<KnowledgeBase> {
-  await ensureAdmin()
-  const { data, error } = await supabase
-    .from('knowledge_bases')
-    .insert(kb)
-    .select()
-    .single()
+  return await callAdminApi('create-kb', { kb })
+}
+
+/**
+ * Delete a knowledge base (using Edge Function)
+ */
+export async function deleteKnowledgeBase(id: string): Promise<void> {
+  await callAdminApi('delete-kb', { id })
+}
+
+/**
+ * Helper to call admin Edge Function
+ */
+async function callAdminApi(type: string, payload: any = {}) {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Unauthorized')
+
+  const { data, error } = await supabase.functions.invoke('admin-api', {
+    body: { type, ...payload }
+  })
 
   if (error) throw error
   return data
 }
 
 /**
- * Delete a knowledge base
- */
-export async function deleteKnowledgeBase(id: string): Promise<void> {
-  await ensureAdmin()
-  const { error } = await supabase
-    .from('knowledge_bases')
-    .delete()
-    .eq('id', id)
-
-  if (error) throw error
-}
-
-/**
- * Helper to ensure only admins can perform certain operations
- */
-async function ensureAdmin() {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.user) {
-    console.error('[Admin API] No session found')
-    throw new Error('Unauthorized')
-  }
-
-  const { data: profile, error } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', session.user.id)
-    .single()
-
-  if (error || !profile) {
-    console.error('[Admin API] Failed to fetch profile:', error)
-    throw new Error('Failed to verify admin privileges')
-  }
-
-  if (profile.role !== 'admin') {
-    console.error('[Admin API] User is not an admin:', profile.role)
-    throw new Error('Admin privileges required')
-  }
-}
-
-/**
- * Get all profiles (using RPC to bypass RLS securely)
+ * Get all profiles (using Edge Function to bypass RLS securely)
  */
 export async function getAllProfiles(): Promise<Profile[]> {
   console.log('[Admin API] getAllProfiles called')
-  const { data, error } = await supabase.rpc('get_all_profiles')
-
-  if (error) {
+  try {
+    const data = await callAdminApi('list-profiles')
+    console.log('[Admin API] getAllProfiles success, count:', data?.length)
+    return data || []
+  } catch (error) {
     console.error('[Admin API] getAllProfiles error:', error)
     throw error
   }
-  console.log('[Admin API] getAllProfiles success, count:', data?.length)
-  return data || []
 }
 
 /**
- * Update user role (using RPC to bypass RLS securely)
+ * Update user role (using Edge Function to bypass RLS securely)
  */
 export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin'): Promise<void> {
-  const { error } = await supabase.rpc('update_user_role', {
-    target_user_id: userId,
-    new_role: role
-  })
-
-  if (error) throw error
+  await callAdminApi('update-role', { userId, role })
 }
 
 /**
- * Assign KBs to a curator (using RPC to bypass RLS securely)
+ * Assign KBs to a curator (using Edge Function to bypass RLS securely)
  */
 export async function assignKBsToCurator(userId: string, kbIds: string[]): Promise<void> {
-  const { error } = await supabase.rpc('assign_kbs_to_user', {
-    target_user_id: userId,
-    kb_ids: kbIds
-  })
-
-  if (error) throw error
+  await callAdminApi('assign-kbs', { userId, kbIds })
 }
 
 /**
@@ -150,30 +114,8 @@ export async function deleteFromCurationQueue(id: string): Promise<void> {
 }
 
 /**
- * Approve/Process a submitted document
+ * Approve/Process a submitted document (using Edge Function)
  */
 export async function approveDocument(documentId: string): Promise<void> {
-  await ensureAdmin()
-  // Update document status to completed
-  const { error } = await supabase
-    .from('documents')
-    .update({ processing_status: 'completed' })
-    .eq('id', documentId)
-
-  if (error) throw error
-
-  // Update curation queue status if this document was from the queue
-  const { data: doc } = await supabase
-    .from('documents')
-    .select('source_url, doc_type')
-    .eq('id', documentId)
-    .single()
-
-  if (doc?.source_url) {
-    await supabase
-      .from('curation_queue')
-      .update({ status: 'completed' })
-      .eq('url', doc.source_url)
-      .eq('kb_id', doc.doc_type)
-  }
+  await callAdminApi('approve-document', { documentId })
 }

@@ -98,52 +98,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Initialize auth state
   useEffect(() => {
-    console.log('[Auth] Initializing...')
-    
     let mounted = true
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return
-      console.log('[Auth] Initial session fetched:', !!session)
-      setSession(session)
-      setUser(session?.user ?? null)
-      
-      if (session?.user) {
-        fetchProfile(session.user.id).then(p => {
-          if (mounted) {
-            setProfile(p)
-            setLoading(false)
-          }
-        })
-      } else {
-        setLoading(false)
-      }
-    })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('[Auth] State change:', event, !!session)
-        
+    async function initialize() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
         if (!mounted) return
 
-        const currentUser = session?.user ?? null
         setSession(session)
-        setUser(currentUser)
+        setUser(session?.user ?? null)
 
-        if (currentUser) {
-          // Only fetch profile if we don't have it or if the user changed
-          if (!profile || profile.id !== currentUser.id) {
-            const newProfile = await fetchProfile(currentUser.id)
-            if (mounted) setProfile(newProfile)
-          }
-        } else {
-          if (mounted) setProfile(null)
+        if (session?.user) {
+          const p = await fetchProfile(session.user.id)
+          if (mounted) setProfile(p)
         }
-        
+      } catch (err) {
+        console.error('[Auth] Init error:', err)
+      } finally {
         if (mounted) setLoading(false)
       }
-    )
+    }
+
+    initialize()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return
+      
+      setSession(session)
+      const newUser = session?.user ?? null
+      setUser(newUser)
+
+      if (newUser) {
+        const p = await fetchProfile(newUser.id)
+        if (mounted) setProfile(p)
+      } else {
+        if (mounted) setProfile(null)
+      }
+    })
 
     return () => {
       mounted = false
