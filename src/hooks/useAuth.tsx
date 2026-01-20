@@ -26,62 +26,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(false) // Start as not loading
   const [error, setError] = useState<string | null>(null)
-  const fetchingProfileFor = useRef<string | null>(null)
+  const profilePromiseCache = useRef<Record<string, Promise<Profile | null>>>({})
 
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
     console.log('[Auth] Fetching profile for:', userId)
-    if (fetchingProfileFor.current === userId) {
-      console.log('[Auth] Already fetching profile for this user, skipping')
-      return null
-    }
-
-    fetchingProfileFor.current = userId
     
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
-
-      if (error) {
-        if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
-          const { data: { session } } = await supabase.auth.getSession()
-          const user = session?.user
-          
-          if (user && user.id === userId) {
-            const profileData = {
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-              role: 'user' as const,
-              is_active: true
-            }
-            
-            const { data: newProfile, error: createError } = await supabase
-              .from('profiles')
-              .insert(profileData)
-              .select()
-              .single()
-            
-            if (createError) return null
-            
-            localStorage.setItem('curator_profile', JSON.stringify(newProfile))
-            return newProfile as Profile
-          }
-        }
-        return null
-      }
-
-      localStorage.setItem('curator_profile', JSON.stringify(data))
-      return data as Profile
-    } catch (err) {
-      console.error('[Auth] Unexpected error fetching profile:', err)
-      return null
-    } finally {
-      fetchingProfileFor.current = null
+    // If already fetching, return the existing promise
+    if (userId in profilePromiseCache.current) {
+      console.log('[Auth] Already fetching profile for this user, returning existing promise')
+      return profilePromiseCache.current[userId]
     }
+
+    const promise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single()
+
+        if (error) {
+          if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
+            const { data: { session } } = await supabase.auth.getSession()
+            const user = session?.user
+            
+            if (user && user.id === userId) {
+              const profileData = {
+                id: user.id,
+                email: user.email || '',
+                full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+                role: 'user' as const,
+                is_active: true
+              }
+              
+              const { data: newProfile, error: createError } = await supabase
+                .from('profiles')
+                .insert(profileData)
+                .select()
+                .single()
+              
+              if (createError) return null
+              
+              return newProfile as Profile
+            }
+          }
+          return null
+        }
+
+        return data as Profile
+      } catch (err) {
+        console.error('[Auth] Unexpected error fetching profile:', err)
+        return null
+      } finally {
+        // Remove from cache when done
+        delete profilePromiseCache.current[userId]
+      }
+    })()
+
+    profilePromiseCache.current[userId] = promise
+    return promise
   }, [])
 
   // Refresh profile
@@ -174,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data.user) {
         const profile = await fetchProfile(data.user.id)
-        if (!profile?.is_active) {
+        if (profile && !profile.is_active) {
           await supabase.auth.signOut()
           return { success: false, error: 'Account is inactive. Please contact an administrator.' }
         }
