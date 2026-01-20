@@ -1,7 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import type { FlowiseChunk, FlowiseMetadata } from '../../types'
 
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_API_KEY || '')
+// Initialize with v1 API version to ensure compatibility with latest models
+// @ts-ignore - apiVersion is supported in newer versions of the SDK
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_API_KEY || '', { apiVersion: 'v1' })
 
 
 /**
@@ -14,7 +16,8 @@ export async function processDocumentWithGemini(
   filters: string[]
 ): Promise<FlowiseChunk[]> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' })
+    // Use gemini-1.5-flash as requested
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
     // First, extract text from the document
     const extractPrompt = `Extract all the text content from this document URL: ${storageUrl}
@@ -59,7 +62,7 @@ Please provide the complete text content, maintaining the original structure and
  * Intelligent text chunking using Gemini AI
  */
 async function chunkTextWithGemini(text: string, docType: string): Promise<FlowiseChunk[]> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
   const chunkPrompt = `You are an expert document analyzer. Your task is to intelligently chunk the following ${docType} document text into meaningful, self-contained sections.
 
@@ -239,7 +242,7 @@ export async function enrichChunkWithGemini(
   chunkText: string,
   docType: string
 ): Promise<FlowiseMetadata> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
   const enrichPrompt = `You are an expert document analyzer. Analyze the following text chunk from a ${docType} document and extract key metadata.
 
@@ -287,7 +290,8 @@ Return ONLY the JSON object, no additional text.`
  */
 export async function generateEmbeddingWithGemini(text: string): Promise<number[]> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'embedding-001' })
+    // Use text-embedding-004 as requested
+    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' })
     const result = await model.embedContent(text)
     return result.embedding.values
   } catch (error) {
