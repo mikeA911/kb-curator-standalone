@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import KBManagement from '../components/admin/KBManagement'
 import CuratorAssignment from '../components/admin/CuratorAssignment'
 import CurationQueueManager from '../components/admin/CurationQueueManager'
+import AIProviderSettings from '../components/admin/AIProviderSettings'
 
 type Tab = 'stats' | 'kbs' | 'curators' | 'queue' | 'settings'
 
@@ -72,12 +73,7 @@ export default function AdminPage() {
         
         {activeTab === 'queue' && <CurationQueueManager />}
 
-        {activeTab === 'settings' && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">AI Provider Settings</h2>
-            <p className="text-gray-600 italic">Settings component to be migrated...</p>
-          </div>
-        )}
+        {activeTab === 'settings' && <AIProviderSettings />}
       </div>
     </div>
   )

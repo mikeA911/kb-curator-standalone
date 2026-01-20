@@ -5,6 +5,11 @@ import {
   enrichChunkWithGemini, 
   generateEmbeddingWithGemini 
 } from './gemini-processor'
+import {
+  processDocumentWithOpenAI,
+  enrichChunkWithOpenAI,
+  generateEmbeddingWithOpenAI
+} from './openai-processor'
 import type {
   Document,
   DocumentChunk,
@@ -20,7 +25,7 @@ interface AIProviderSetting {
 }
 
 interface DocumentProcessorSetting {
-  processor: 'flowise' | 'direct_gemini'
+  processor: 'flowise' | 'direct_gemini' | 'direct_ai'
 }
 
 interface KBVectorData {
@@ -177,11 +182,16 @@ export async function processAndStoreDocument(
   try {
     // Get active document processor
     const processor = await getActiveDocumentProcessor()
+    const provider = await getActiveProvider()
 
     // Process document using selected provider
     let chunks: FlowiseChunk[]
-    if (processor === 'direct_gemini') {
-      chunks = await processDocumentWithGemini(storageUrl, docType, filters)
+    if (processor === 'direct_gemini' || processor === 'direct_ai') {
+      if (provider === 'openai') {
+        chunks = await processDocumentWithOpenAI(storageUrl, docType, filters)
+      } else {
+        chunks = await processDocumentWithGemini(storageUrl, docType, filters)
+      }
     } else {
       // Default to Flowise for backward compatibility
       chunks = await processDocument(storageUrl, docType, filters)
@@ -299,11 +309,16 @@ export async function enrichChunkMetadata(
 
     // Get active document processor
     const processor = await getActiveDocumentProcessor()
+    const provider = await getActiveProvider()
 
     // Call appropriate enricher
     let aiMetadata
-    if (processor === 'direct_gemini') {
-      aiMetadata = await enrichChunkWithGemini(chunkText, docType)
+    if (processor === 'direct_gemini' || processor === 'direct_ai') {
+      if (provider === 'openai') {
+        aiMetadata = await enrichChunkWithOpenAI(chunkText, docType)
+      } else {
+        aiMetadata = await enrichChunkWithGemini(chunkText, docType)
+      }
     } else {
       // Call Flowise Flow 2 to get AI metadata
       aiMetadata = await enrichChunk(chunkText, docType)
@@ -445,7 +460,7 @@ async function getActiveProvider(): Promise<'gemini' | 'openai'> {
 /**
  * Get active document processor from settings
  */
-async function getActiveDocumentProcessor(): Promise<'flowise' | 'direct_gemini'> {
+async function getActiveDocumentProcessor(): Promise<'flowise' | 'direct_gemini' | 'direct_ai'> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('settings')
@@ -510,11 +525,15 @@ export async function approveChunk(
   // Get active document processor
   const processor = await getActiveDocumentProcessor()
 
-  // Generate embedding if using direct Gemini
+  // Generate embedding if using direct AI
   let embedding: number[] | undefined = undefined
-  if (processor === 'direct_gemini') {
+  if (processor === 'direct_gemini' || processor === 'direct_ai') {
     try {
-      embedding = await generateEmbeddingWithGemini(chunk.chunk_text)
+      if (provider === 'openai') {
+        embedding = await generateEmbeddingWithOpenAI(chunk.chunk_text)
+      } else {
+        embedding = await generateEmbeddingWithGemini(chunk.chunk_text)
+      }
     } catch (error) {
       console.warn('Direct embedding generation failed:', error)
     }
