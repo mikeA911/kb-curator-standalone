@@ -14,7 +14,7 @@ export async function processDocumentWithGemini(
   filters: string[]
 ): Promise<FlowiseChunk[]> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' })
 
     // First, extract text from the document
     const extractPrompt = `Extract all the text content from this document URL: ${storageUrl}
@@ -59,7 +59,7 @@ Please provide the complete text content, maintaining the original structure and
  * Intelligent text chunking using Gemini AI
  */
 async function chunkTextWithGemini(text: string, docType: string): Promise<FlowiseChunk[]> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' })
 
   const chunkPrompt = `You are an expert document analyzer. Your task is to intelligently chunk the following ${docType} document text into meaningful, self-contained sections.
 
@@ -239,7 +239,7 @@ export async function enrichChunkWithGemini(
   chunkText: string,
   docType: string
 ): Promise<FlowiseMetadata> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' })
 
   const enrichPrompt = `You are an expert document analyzer. Analyze the following text chunk from a ${docType} document and extract key metadata.
 
