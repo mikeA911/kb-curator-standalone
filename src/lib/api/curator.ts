@@ -740,27 +740,38 @@ export async function getDocument(documentId: string): Promise<Document | null> 
 }
 
 /**
- * Delete a document (admin only)
+ * Delete a document
  */
 export async function deleteDocument(documentId: string): Promise<void> {
   const supabase = createClient()
 
-  // Ensure admin
+  // Get current user
   const { data: { session } } = await supabase.auth.getSession()
   if (!session?.user) throw new Error('Unauthorized')
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
-  if (profile?.role !== 'admin') throw new Error('Admin privileges required')
 
-  // Get document to get storage path
-  const { data: doc } = await supabase
+  // Get document to check ownership and get storage path
+  const { data: doc, error: fetchError } = await supabase
     .from('documents')
-    .select('filename')
+    .select('filename, uploaded_by')
     .eq('id', documentId)
     .single()
 
-  if (doc) {
-    // Delete from storage
-    await supabase.storage.from('documents').remove([`uploads/${doc.filename}`])
+  if (fetchError || !doc) throw new Error('Document not found')
+
+  // Check permissions: admin or uploader
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
+  const isAdmin = profile?.role === 'admin'
+  const isOwner = doc.uploaded_by === session.user.id
+
+  if (!isAdmin && !isOwner) {
+    throw new Error('You do not have permission to delete this document')
+  }
+
+  // Delete from storage
+  const { error: storageError } = await supabase.storage.from('documents').remove([`uploads/${doc.filename}`])
+  if (storageError) {
+    console.warn('Failed to delete from storage:', storageError)
+    // Continue anyway to clean up DB if storage fails (e.g. file already gone)
   }
 
   // Delete document (cascades to chunks and vectors)

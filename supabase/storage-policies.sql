@@ -73,13 +73,15 @@ USING (
   )
 );
 
--- Allow admins to delete documents
-CREATE POLICY "Admins can delete documents"
+-- Allow curators and admins to delete documents
+CREATE POLICY "Users can delete their own documents"
 ON storage.objects FOR DELETE
 TO authenticated
 USING (
   bucket_id = 'documents'
   AND (
+    auth.uid() = owner
+    OR
     EXISTS (
       SELECT 1 FROM public.profiles
       WHERE id = auth.uid()

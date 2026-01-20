@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { ProcessingStatus, CurationQueueItem } from '../../types'
-import { getDashboardStats } from '../../lib/api/curator'
+import { getDashboardStats, deleteDocument } from '../../lib/api/curator'
 import { getCurationQueue } from '../../lib/api/admin'
 import { useDocuments } from '../../hooks/useCurator'
 import { useAuth } from '../../hooks/useAuth'
@@ -25,7 +25,7 @@ interface Props {
 export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   const navigate = useNavigate()
   const { profile, signOut, isAdmin, isCurator } = useAuth()
-  const { documents } = useDocuments()
+  const { documents, refresh: refreshDocuments } = useDocuments()
   const [queue, setQueue] = useState<CurationQueueItem[]>([])
   const [stats, setStats] = useState<DashboardStats>({
     totalDocuments: 0,
@@ -389,47 +389,68 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
                         {new Date(doc.upload_date).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        {doc.processing_status === 'review' && (
-                          <button
-                            onClick={() => navigate(`/review/${doc.id}`)}
-                            className="text-blue-600 hover:text-blue-900 font-medium"
-                          >
-                            Review →
-                          </button>
-                        )}
-                        {doc.processing_status === 'submitted' && isAdmin && (
+                        <div className="flex items-center justify-end gap-3">
+                          {doc.processing_status === 'review' && (
+                            <button
+                              onClick={() => navigate(`/review/${doc.id}`)}
+                              className="text-blue-600 hover:text-blue-900 font-medium"
+                            >
+                              Review →
+                            </button>
+                          )}
+                          {doc.processing_status === 'submitted' && isAdmin && (
+                            <button
+                              onClick={async () => {
+                                if (confirm('Approve this document? This will mark it as completed.')) {
+                                  try {
+                                    const { approveDocument } = await import('../../lib/api/admin')
+                                    await approveDocument(doc.id)
+                                    refreshDocuments()
+                                  } catch (err) {
+                                    alert('Failed to approve document')
+                                  }
+                                }
+                              }}
+                              className="text-green-600 hover:text-green-900 font-medium"
+                            >
+                              Approve ✓
+                            </button>
+                          )}
+                          {doc.processing_status === 'submitted' && !isAdmin && (
+                            <span className="text-purple-600 font-medium">Submitted</span>
+                          )}
+                          {doc.processing_status === 'completed' && (
+                            <span className="text-green-600 font-medium">Complete ✓</span>
+                          )}
+                          {doc.processing_status === 'processing' && (
+                            <span className="text-gray-500">Processing...</span>
+                          )}
+                          {doc.processing_status === 'pending' && (
+                            <span className="text-gray-500">Pending</span>
+                          )}
+                          {doc.processing_status === 'failed' && (
+                            <span className="text-red-500">Failed</span>
+                          )}
+
                           <button
                             onClick={async () => {
-                              if (confirm('Approve this document? This will mark it as completed.')) {
+                              if (confirm('Are you sure you want to delete this document? This will also delete all associated chunks and vectors. This action cannot be undone.')) {
                                 try {
-                                  const { approveDocument } = await import('../../lib/api/admin')
-                                  await approveDocument(doc.id)
-                                  window.location.reload()
+                                  await deleteDocument(doc.id)
+                                  refreshDocuments()
                                 } catch (err) {
-                                  alert('Failed to approve document')
+                                  alert(err instanceof Error ? err.message : 'Failed to delete document')
                                 }
                               }
                             }}
-                            className="text-green-600 hover:text-green-900 font-medium"
+                            className="text-red-600 hover:text-red-900 p-1 rounded hover:bg-red-50 transition-colors"
+                            title="Delete Document"
                           >
-                            Approve ✓
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
                           </button>
-                        )}
-                        {doc.processing_status === 'submitted' && !isAdmin && (
-                          <span className="text-purple-600 font-medium">Submitted</span>
-                        )}
-                        {doc.processing_status === 'completed' && (
-                          <span className="text-green-600 font-medium">Complete ✓</span>
-                        )}
-                        {doc.processing_status === 'processing' && (
-                          <span className="text-gray-500">Processing...</span>
-                        )}
-                        {doc.processing_status === 'pending' && (
-                          <span className="text-gray-500">Pending</span>
-                        )}
-                        {doc.processing_status === 'failed' && (
-                          <span className="text-red-500">Failed</span>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   )
