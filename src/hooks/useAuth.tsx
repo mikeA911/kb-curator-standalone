@@ -24,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false) // Start as not loading
   const [error, setError] = useState<string | null>(null)
   const fetchingProfileFor = useRef<string | null>(null)
 
@@ -98,6 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function initialize() {
       console.log('[Auth] Initializing auth state...')
+      // Only set loading if we don't have a session yet
+      setLoading(true)
       try {
         const { data: { session } } = await supabase.auth.getSession()
         console.log('[Auth] Session retrieved:', session ? 'Yes' : 'No')
@@ -108,17 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (session?.user) {
           console.log('[Auth] User found in session, fetching profile...')
-          const p = await fetchProfile(session.user.id)
-          if (mounted) {
-            console.log('[Auth] Profile fetched:', p ? 'Success' : 'Failed')
-            setProfile(p)
-          }
+          // Don't await profile fetch to avoid blocking the UI
+          fetchProfile(session.user.id).then(p => {
+            if (mounted && p) setProfile(p)
+          })
         }
         
-        if (mounted) {
-          console.log('[Auth] Initialization complete, setting loading to false')
-          setLoading(false)
-        }
+        console.log('[Auth] Initialization complete, setting loading to false')
+        setLoading(false)
       } catch (err) {
         console.error('[Auth] Init error:', err)
         if (mounted) setLoading(false)
@@ -139,18 +138,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only fetch if needed or if it's a sign-in event
         if (event === 'SIGNED_IN' || !profile || profile.id !== newUser.id) {
           console.log('[Auth] Fetching profile due to state change...')
-          const p = await fetchProfile(newUser.id)
-          if (mounted) setProfile(p)
+          // Don't await profile fetch to avoid blocking the UI
+          fetchProfile(newUser.id).then(p => {
+            if (mounted && p) setProfile(p)
+          })
         }
       } else {
         if (mounted) setProfile(null)
         localStorage.removeItem('curator_profile')
       }
       
-      if (mounted) {
-        console.log('[Auth] Auth state change handled, setting loading to false')
-        setLoading(false)
-      }
+      // Always ensure loading is false after state change
+      setLoading(false)
     })
 
     return () => {
