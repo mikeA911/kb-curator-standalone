@@ -22,15 +22,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(() => {
-    // Try to load profile from localStorage for immediate access
-    try {
-      const saved = localStorage.getItem('curator_profile')
-      return saved ? JSON.parse(saved) : null
-    } catch {
-      return null
-    }
-  })
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -111,21 +103,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(session?.user ?? null)
 
         if (session?.user) {
-          // If we already have a cached profile for this user, we can stop loading now
-          if (profile && profile.id === session.user.id) {
-            setLoading(false)
-            // Still refresh in background
-            fetchProfile(session.user.id).then(p => {
-              if (mounted && p) setProfile(p)
-            })
-          } else {
-            const p = await fetchProfile(session.user.id)
-            if (mounted) setProfile(p)
-            if (mounted) setLoading(false)
-          }
-        } else {
-          setLoading(false)
+          const p = await fetchProfile(session.user.id)
+          if (mounted) setProfile(p)
         }
+        
+        if (mounted) setLoading(false)
       } catch (err) {
         console.error('[Auth] Init error:', err)
         if (mounted) setLoading(false)
