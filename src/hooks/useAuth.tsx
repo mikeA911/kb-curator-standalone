@@ -30,7 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
+    console.log('[Auth] Fetching profile for:', userId)
     if (fetchingProfileFor.current === userId) {
+      console.log('[Auth] Already fetching profile for this user, skipping')
       return null
     }
 
@@ -95,19 +97,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true
 
     async function initialize() {
+      console.log('[Auth] Initializing auth state...')
       try {
         const { data: { session } } = await supabase.auth.getSession()
+        console.log('[Auth] Session retrieved:', session ? 'Yes' : 'No')
         if (!mounted) return
 
         setSession(session)
         setUser(session?.user ?? null)
 
         if (session?.user) {
+          console.log('[Auth] User found in session, fetching profile...')
           const p = await fetchProfile(session.user.id)
-          if (mounted) setProfile(p)
+          if (mounted) {
+            console.log('[Auth] Profile fetched:', p ? 'Success' : 'Failed')
+            setProfile(p)
+          }
         }
         
-        if (mounted) setLoading(false)
+        if (mounted) {
+          console.log('[Auth] Initialization complete, setting loading to false')
+          setLoading(false)
+        }
       } catch (err) {
         console.error('[Auth] Init error:', err)
         if (mounted) setLoading(false)
@@ -117,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initialize()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Auth] Auth state changed:', event, session ? 'Session exists' : 'No session')
       if (!mounted) return
       
       setSession(session)
@@ -126,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (newUser) {
         // Only fetch if needed or if it's a sign-in event
         if (event === 'SIGNED_IN' || !profile || profile.id !== newUser.id) {
+          console.log('[Auth] Fetching profile due to state change...')
           const p = await fetchProfile(newUser.id)
           if (mounted) setProfile(p)
         }
@@ -134,7 +147,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('curator_profile')
       }
       
-      if (mounted) setLoading(false)
+      if (mounted) {
+        console.log('[Auth] Auth state change handled, setting loading to false')
+        setLoading(false)
+      }
     })
 
     return () => {

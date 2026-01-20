@@ -6,6 +6,8 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const location = useLocation()
 
+  console.log('[ProtectedRoute] State:', { loading, user: user?.email })
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
