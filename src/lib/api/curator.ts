@@ -1,6 +1,10 @@
 import { createClient } from '../supabase'
 import { processDocument, enrichChunk, embedChunk } from './flowise'
-import { processDocumentWithGemini } from './gemini-processor'
+import { 
+  processDocumentWithGemini, 
+  enrichChunkWithGemini, 
+  generateEmbeddingWithGemini 
+} from './gemini-processor'
 import type {
   Document,
   DocumentChunk,
@@ -23,6 +27,7 @@ interface KBVectorData {
   chunk_id: string
   document_id: string
   content: string
+  embedding?: number[]
   doc_type: string | null
   topic: string | null
   subtopic: string | null
@@ -80,6 +85,25 @@ export async function uploadDocument(
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
   const filename = `${timestamp}-${sanitizedName}`
 
+  console.log('[uploadDocument] Starting upload:', { filename, size: file.size, type: file.type })
+
+  // Get current user session for debugging
+  const { data: { session } } = await supabase.auth.getSession()
+  console.log('[uploadDocument] Current session:', session ? { 
+    user_id: session.user.id, 
+    email: session.user.email,
+    expires_at: session.expires_at 
+  } : 'No session')
+
+  if (session?.user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+    console.log('[uploadDocument] User profile:', profile)
+  }
+
   // Upload to Supabase Storage
   const { error: uploadError } = await supabase.storage
     .from('documents')
@@ -89,7 +113,7 @@ export async function uploadDocument(
     })
 
   if (uploadError) {
-    console.error('Upload error:', uploadError)
+    console.error('[uploadDocument] Upload error details:', uploadError)
     throw new Error(`Upload failed: ${uploadError.message}`)
   }
 
@@ -97,11 +121,6 @@ export async function uploadDocument(
   const {
     data: { publicUrl },
   } = supabase.storage.from('documents').getPublicUrl(`uploads/${filename}`)
-
-  // Get current user
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
 
   if (!session?.user) {
     throw new Error('User not authenticated')
@@ -278,8 +297,17 @@ export async function enrichChunkMetadata(
       .update({ review_status: 'enriching' })
       .eq('id', chunkId)
 
-    // Call Flowise Flow 2 to get AI metadata
-    const aiMetadata = await enrichChunk(chunkText, docType)
+    // Get active document processor
+    const processor = await getActiveDocumentProcessor()
+
+    // Call appropriate enricher
+    let aiMetadata
+    if (processor === 'direct_gemini') {
+      aiMetadata = await enrichChunkWithGemini(chunkText, docType)
+    } else {
+      // Call Flowise Flow 2 to get AI metadata
+      aiMetadata = await enrichChunk(chunkText, docType)
+    }
 
     // Get existing metadata
     const { data: existingChunk } = await supabase
@@ -426,10 +454,10 @@ async function getActiveDocumentProcessor(): Promise<'flowise' | 'direct_gemini'
     .single();
 
   if (error || !data) {
-    return 'flowise'; // Default to flowise for backward compatibility
+    return 'direct_gemini'; // Default to direct_gemini
   }
 
-  return (data.value as DocumentProcessorSetting).processor || 'flowise';
+  return (data.value as DocumentProcessorSetting).processor || 'direct_gemini';
 }
 
 /**
@@ -479,11 +507,25 @@ export async function approveChunk(
   // Get comprehensive metadata from document_chunks
   const comprehensiveMetadata = chunk.ai_metadata || {}
 
+  // Get active document processor
+  const processor = await getActiveDocumentProcessor()
+
+  // Generate embedding if using direct Gemini
+  let embedding: number[] | undefined = undefined
+  if (processor === 'direct_gemini') {
+    try {
+      embedding = await generateEmbeddingWithGemini(chunk.chunk_text)
+    } catch (error) {
+      console.warn('Direct embedding generation failed:', error)
+    }
+  }
+
   // Insert into kb_vectors with comprehensive metadata
   const vectorData: KBVectorData = {
     chunk_id: chunkId,
     document_id: chunk.document_id,
     content: chunk.chunk_text,
+    embedding,
     doc_type: comprehensiveMetadata.document_type || chunk.document?.doc_type,
     topic: comprehensiveMetadata.topic || null,
     subtopic: comprehensiveMetadata.subtopic || null,
@@ -512,14 +554,13 @@ export async function approveChunk(
   // Increment approved count on document
   await supabase.rpc('increment_approved_chunks', { doc_id: chunk.document_id })
 
-  // Trigger embedding generation (async)
-  // Note: If Flowise Flow 3 is configured, call it here
-  // Otherwise, embeddings can be generated in a background job
-  try {
-    await embedChunk(chunkId, provider, curatorNotes)
-  } catch (error) {
-    console.warn('Embedding generation might have failed:', error)
-    // Don't fail the approval if embedding fails
+  // Trigger embedding generation (async) for Flowise if still using it
+  if (processor === 'flowise') {
+    try {
+      await embedChunk(chunkId, provider, curatorNotes)
+    } catch (error) {
+      console.warn('Flowise embedding generation might have failed:', error)
+    }
   }
 }
 

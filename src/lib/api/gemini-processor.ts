@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import type { FlowiseChunk } from '../../types'
+import type { FlowiseChunk, FlowiseMetadata } from '../../types'
 
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GOOGLE_API_KEY || '')
 
@@ -230,4 +230,68 @@ function removeAppendices(text: string): string {
  */
 export function isDirectGeminiConfigured(): boolean {
   return !!(import.meta.env.VITE_GOOGLE_API_KEY)
+}
+
+/**
+ * Enrich a chunk with metadata using Gemini AI
+ */
+export async function enrichChunkWithGemini(
+  chunkText: string,
+  docType: string
+): Promise<FlowiseMetadata> {
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+
+  const enrichPrompt = `You are an expert document analyzer. Analyze the following text chunk from a ${docType} document and extract key metadata.
+
+Text Chunk:
+${chunkText}
+
+Please provide the following metadata in JSON format:
+{
+  "topic": "Main topic of the chunk",
+  "subtopic": "Specific subtopic if applicable",
+  "relevance_score": 0.0 to 1.0,
+  "use_cases": ["list", "of", "potential", "use", "cases"],
+  "key_concepts": ["list", "of", "key", "concepts", "mentioned"],
+  "confidence": 0.0 to 1.0
+}
+
+Return ONLY the JSON object, no additional text.`
+
+  try {
+    const result = await model.generateContent(enrichPrompt)
+    const response = result.response.text()
+
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      throw new Error('No JSON object found in Gemini response')
+    }
+
+    const metadata = JSON.parse(jsonMatch[0]) as FlowiseMetadata
+    return metadata
+  } catch (error) {
+    console.error('Error enriching chunk with Gemini:', error)
+    return {
+      topic: 'Unknown',
+      subtopic: '',
+      relevance_score: 0.5,
+      use_cases: [],
+      key_concepts: [],
+      confidence: 0.3,
+    }
+  }
+}
+
+/**
+ * Generate vector embedding for text using Gemini AI
+ */
+export async function generateEmbeddingWithGemini(text: string): Promise<number[]> {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' })
+    const result = await model.embedContent(text)
+    return result.embedding.values
+  } catch (error) {
+    console.error('Error generating embedding with Gemini:', error)
+    throw error
+  }
 }
