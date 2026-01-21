@@ -24,17 +24,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(false) // Start as not loading
+  const [loading, setLoading] = useState(true) // Start as loading
   const [error, setError] = useState<string | null>(null)
   const profilePromiseCache = useRef<Record<string, Promise<Profile | null>>>({})
+  const initialized = useRef(false)
 
   // Fetch user profile
   const fetchProfile = useCallback(async (userId: string) => {
+    if (!userId) return null
     console.log('[Auth] Fetching profile for:', userId)
     
     // If already fetching, return the existing promise
     if (userId in profilePromiseCache.current) {
-      console.log('[Auth] Already fetching profile for this user, returning existing promise')
       return profilePromiseCache.current[userId]
     }
 
@@ -48,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (error) {
           if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
+            // Try to get user from session to create profile
             const { data: { session } } = await supabase.auth.getSession()
             const user = session?.user
             
@@ -101,58 +103,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true
 
     async function initialize() {
+      if (initialized.current) return
+      initialized.current = true
+
       console.log('[Auth] Initializing auth state...')
-      // Only set loading if we don't have a session yet
-      setLoading(true)
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log('[Auth] Session retrieved:', session ? 'Yes' : 'No')
+        const { data: { session: initialSession }, error: sessionError } = await supabase.auth.getSession()
+        
+        if (sessionError) {
+          // Handle AbortError or other session errors gracefully
+          if (sessionError.message?.includes('AbortError')) {
+            console.warn('[Auth] Session fetch aborted, will rely on onAuthStateChange')
+          } else {
+            throw sessionError
+          }
+        }
+
         if (!mounted) return
 
-        setSession(session)
-        setUser(session?.user ?? null)
-
-        if (session?.user) {
-          console.log('[Auth] User found in session, fetching profile...')
-          // Don't await profile fetch to avoid blocking the UI
-          fetchProfile(session.user.id).then(p => {
-            if (mounted && p) setProfile(p)
-          })
+        if (initialSession) {
+          setSession(initialSession)
+          setUser(initialSession.user)
+          const p = await fetchProfile(initialSession.user.id)
+          if (mounted && p) setProfile(p)
         }
-        
-        console.log('[Auth] Initialization complete, setting loading to false')
-        setLoading(false)
       } catch (err) {
         console.error('[Auth] Init error:', err)
+        if (mounted) setError(err instanceof Error ? err.message : 'Initialization failed')
+      } finally {
         if (mounted) setLoading(false)
       }
     }
 
     initialize()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Auth] Auth state changed:', event, session ? 'Session exists' : 'No session')
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      console.log('[Auth] Auth state changed:', event, currentSession ? 'Session exists' : 'No session')
+      
       if (!mounted) return
       
-      setSession(session)
-      const newUser = session?.user ?? null
+      setSession(currentSession)
+      const newUser = currentSession?.user ?? null
       setUser(newUser)
 
       if (newUser) {
         // Only fetch if needed or if it's a sign-in event
-        if (event === 'SIGNED_IN' || !profile || profile.id !== newUser.id) {
-          console.log('[Auth] Fetching profile due to state change...')
-          // Don't await profile fetch to avoid blocking the UI
-          fetchProfile(newUser.id).then(p => {
-            if (mounted && p) setProfile(p)
-          })
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || !profile || profile.id !== newUser.id) {
+          const p = await fetchProfile(newUser.id)
+          if (mounted && p) setProfile(p)
         }
       } else {
-        if (mounted) setProfile(null)
-        localStorage.removeItem('curator_profile')
+        setProfile(null)
       }
       
-      // Always ensure loading is false after state change
       setLoading(false)
     })
 

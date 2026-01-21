@@ -41,6 +41,8 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
 
   useEffect(() => {
     async function loadData() {
+      if (!profile) return
+      
       try {
         const [dashStats, queueData] = await Promise.all([
           getDashboardStats(),

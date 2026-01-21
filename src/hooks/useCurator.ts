@@ -168,6 +168,10 @@ export function useDocuments() {
   const [error, setError] = useState<string | null>(null)
 
   const loadDocuments = useCallback(async () => {
+    if (!profile) {
+      setLoading(false)
+      return
+    }
     console.log('[useDocuments] Loading documents, profile:', profile?.id)
     setLoading(true)
     setError(null)
