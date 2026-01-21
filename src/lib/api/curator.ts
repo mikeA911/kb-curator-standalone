@@ -188,7 +188,7 @@ export async function processAndStoreDocument(
     let chunks: FlowiseChunk[]
     if (processor === 'direct_gemini' || processor === 'direct_ai') {
       if (provider === 'openai') {
-        chunks = await processDocumentWithOpenAI(storageUrl, docType, filters)
+        chunks = await processDocumentWithOpenAI(storageUrl, docType)
       } else {
         chunks = await processDocumentWithGemini(storageUrl, docType, filters)
       }

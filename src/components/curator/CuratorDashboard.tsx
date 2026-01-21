@@ -23,7 +23,7 @@ interface Props {
 
 export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   const navigate = useNavigate()
-  const { profile, signOut, isAdmin, isCurator } = useAuth()
+  const { profile, isAdmin, isCurator } = useAuth()
   const { documents, refresh: refreshDocuments } = useDocuments()
   const [queue, setQueue] = useState<CurationQueueItem[]>([])
   const [stats, setStats] = useState<DashboardStats>({

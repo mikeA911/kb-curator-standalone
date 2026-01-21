@@ -12,8 +12,7 @@ const openai = new OpenAI({
  */
 export async function processDocumentWithOpenAI(
   storageUrl: string,
-  docType: string,
-  filters: string[]
+  docType: string
 ): Promise<FlowiseChunk[]> {
   try {
     // Get filename from URL

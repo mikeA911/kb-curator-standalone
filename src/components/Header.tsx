@@ -1,14 +1,13 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { clearBrowserData } from '../lib/utils';
-import { Info, LogOut, Trash2, Settings, LayoutDashboard } from 'lucide-react';
+import { Info, LogOut, Trash2, Settings } from 'lucide-react';
 import AboutModal from './AboutModal';
 
 export default function Header() {
   const { profile, signOut, isAdmin, isCurator } = useAuth();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const navigate = useNavigate();
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
