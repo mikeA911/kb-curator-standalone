@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import './index.css'
 import { AuthProvider } from './hooks/useAuth'
 import { ProtectedRoute, AdminRoute } from './components/AuthGuards'
+import Layout from './components/Layout'
 import LoginPage from './pages/Login'
 import RegisterPage from './pages/Register'
 import ForgotPasswordPage from './pages/ForgotPassword'
@@ -22,42 +23,52 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Routes>
           {/* Public Routes */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/login" element={<Layout><LoginPage /></Layout>} />
+          <Route path="/register" element={<Layout><RegisterPage /></Layout>} />
+          <Route path="/forgot-password" element={<Layout><ForgotPasswordPage /></Layout>} />
+          <Route path="/reset-password" element={<Layout><ResetPasswordPage /></Layout>} />
           
           {/* Protected Routes */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           
           <Route path="/dashboard" element={
             <ProtectedRoute>
-              <DashboardPage />
+              <Layout>
+                <DashboardPage />
+              </Layout>
             </ProtectedRoute>
           } />
           
           <Route path="/upload" element={
             <ProtectedRoute>
-              <UploadPage />
+              <Layout>
+                <UploadPage />
+              </Layout>
             </ProtectedRoute>
           } />
           
           <Route path="/documents" element={
             <ProtectedRoute>
-              <Documents />
+              <Layout>
+                <Documents />
+              </Layout>
             </ProtectedRoute>
           } />
           
           <Route path="/review/:docId" element={
             <ProtectedRoute>
-              <ReviewPage />
+              <Layout>
+                <ReviewPage />
+              </Layout>
             </ProtectedRoute>
           } />
           
           {/* Admin Routes */}
           <Route path="/admin" element={
             <AdminRoute>
-              <AdminPage />
+              <Layout>
+                <AdminPage />
+              </Layout>
             </AdminRoute>
           } />
           
