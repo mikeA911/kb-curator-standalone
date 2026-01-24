@@ -52,7 +52,7 @@ interface KBVectorData {
 }
 
 /**
- * Create document from text input (no file upload)
+ * Create document from text input (upload as file to storage)
  */
 export async function createDocumentFromText(
   text: string,
@@ -89,6 +89,28 @@ export async function createDocumentFromText(
 
   console.log('[createDocumentFromText] Creating document:', { filename, title: originalFilename })
 
+  // Create Blob from text
+  const blob = new Blob([text], { type: 'text/plain' })
+  const file = new File([blob], filename, { type: 'text/plain' })
+
+  // Upload to Supabase Storage
+  const { error: uploadError } = await supabase.storage
+    .from('documents')
+    .upload(`uploads/${filename}`, file, {
+      cacheControl: '3600',
+      upsert: false,
+    })
+
+  if (uploadError) {
+    console.error('[createDocumentFromText] Upload error:', uploadError)
+    throw new Error(`Upload failed: ${uploadError.message}`)
+  }
+
+  // Get public URL
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from('documents').getPublicUrl(`uploads/${filename}`)
+
   // Create document record
   const { data: docData, error: docError } = await supabase
     .from('documents')
@@ -96,7 +118,7 @@ export async function createDocumentFromText(
       filename,
       original_filename: originalFilename,
       doc_type: docType,
-      storage_path: null, // No file storage for text input
+      storage_path: publicUrl, // Now has a valid storage path
       file_size: text.length,
       mime_type: 'text/plain',
       uploaded_by: session.user.id,

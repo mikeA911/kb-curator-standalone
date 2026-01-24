@@ -194,7 +194,7 @@ export default function DocumentUploader({ onSuccess, initialDocType, initialSou
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6 text-gray-900">Upload Document</h2>
+      <h2 className="text-2xl font-bold mb-6 text-gray-900">Document Input</h2>
 
       {initialSourceUrl && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">

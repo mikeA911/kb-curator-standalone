@@ -189,7 +189,7 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
               d="M12 4v16m8-8H4"
             />
           </svg>
-          Upload Document
+          Document Input
         </Link>
 
         {isCurator && (
