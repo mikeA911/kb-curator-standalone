@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .single()
 
         if (error) {
+          console.error('[Auth] Error fetching profile:', error)
           if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
             // Try to get user from session to create profile
             const { data: { session } } = await supabase.auth.getSession()
@@ -68,14 +69,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 .select()
                 .single()
               
-              if (createError) return null
+              if (createError) {
+                console.error('[Auth] Error creating profile:', createError)
+                return null
+              }
               
+              console.log('[Auth] Created new profile:', newProfile)
               return newProfile as Profile
             }
           }
           return null
         }
 
+        console.log('[Auth] Profile fetched successfully:', data)
         return data as Profile
       } catch (err) {
         console.error('[Auth] Unexpected error fetching profile:', err)
@@ -83,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } finally {
         // Remove from cache when done
         delete profilePromiseCache.current[userId]
+        console.log('[Auth] Profile fetch completed for:', userId)
       }
     })()
 
@@ -131,7 +138,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('[Auth] Init error:', err)
         if (mounted) setError(err instanceof Error ? err.message : 'Initialization failed')
       } finally {
-        if (mounted) setLoading(false)
+        if (mounted) {
+          console.log('[Auth] Initialization completed, setting loading to false')
+          setLoading(false)
+        }
       }
     }
 
@@ -156,6 +166,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null)
       }
       
+      // Always set loading to false when auth state changes
+      console.log('[Auth] Auth state change processed, setting loading to false')
       setLoading(false)
     })
 
