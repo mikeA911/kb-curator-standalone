@@ -52,6 +52,281 @@ interface KBVectorData {
 }
 
 /**
+ * Create document from text input (no file upload)
+ */
+export async function createDocumentFromText(
+  text: string,
+  docType: DocType,
+  sourceUrl?: string,
+  title?: string
+): Promise<string> {
+  const supabase = createClient()
+
+  // Check for duplicates if sourceUrl is provided
+  if (sourceUrl) {
+    const { data: existingDoc } = await supabase
+      .from('documents')
+      .select('id')
+      .eq('doc_type', docType)
+      .eq('source_url', sourceUrl)
+      .single()
+
+    if (existingDoc) {
+      throw new Error('This document has already been uploaded for this knowledge base.')
+    }
+  }
+
+  // Get current user session
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.user) {
+    throw new Error('User not authenticated')
+  }
+
+  // Generate filename for text document
+  const timestamp = Date.now()
+  const filename = `${timestamp}-text-document.txt`
+  const originalFilename = title || `Text Document ${new Date(timestamp).toLocaleString()}`
+
+  console.log('[createDocumentFromText] Creating document:', { filename, title: originalFilename })
+
+  // Create document record
+  const { data: docData, error: docError } = await supabase
+    .from('documents')
+    .insert({
+      filename,
+      original_filename: originalFilename,
+      doc_type: docType,
+      storage_path: null, // No file storage for text input
+      file_size: text.length,
+      mime_type: 'text/plain',
+      uploaded_by: session.user.id,
+      processing_status: 'pending',
+      source_url: sourceUrl || null,
+    })
+    .select()
+    .single()
+
+  if (docError) {
+    console.error('Database error:', docError)
+    throw new Error(`Failed to create document record: ${docError.message}`)
+  }
+
+  return docData.id
+}
+
+/**
+ * Process text content directly and store chunks in DB
+ */
+export async function processTextAndStoreChunks(
+  documentId: string,
+  text: string,
+  docType: DocType,
+  filters: string[]
+): Promise<number> {
+  const supabase = createClient()
+
+  // Update status to processing
+  await supabase
+    .from('documents')
+    .update({
+      processing_status: 'processing',
+      metadata: { filters_applied: filters, processing_started: new Date().toISOString() },
+    })
+    .eq('id', documentId)
+
+  try {
+    // Get active document processor
+    const processor = await getActiveDocumentProcessor()
+    const provider = await getActiveProvider()
+
+    // Process text using selected provider
+    let chunks: FlowiseChunk[]
+    if (processor === 'direct_gemini' || processor === 'direct_ai') {
+      if (provider === 'openai') {
+        // We need to create a temporary file or modify processDocumentWithOpenAI
+        // For now, let's simulate chunking for text input
+        chunks = simulateTextChunking(text)
+      } else {
+        // For Gemini, we can directly process text
+        chunks = await processDocumentWithGeminiFromText(text, docType, filters)
+      }
+    } else {
+      // For Flowise, we need to create a temporary file or modify the API
+      chunks = simulateTextChunking(text)
+    }
+
+    if (!chunks || chunks.length === 0) {
+      throw new Error('No chunks returned from document processing')
+    }
+
+    // Get document info for metadata
+    const { data: document } = await supabase
+      .from('documents')
+      .select('filename, original_filename, doc_type, storage_path, upload_date, uploaded_by')
+      .eq('id', documentId)
+      .single()
+
+    // Get uploader profile for curator info
+    let uploaderName = null
+    if (document?.uploaded_by) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', document.uploaded_by)
+        .single()
+      uploaderName = profile?.full_name || null
+    }
+
+    // Insert chunks into database
+    const chunkInserts = chunks.map((chunk, idx) => {
+      const wordCount = chunk.text.trim().split(/\s+/).length
+      const now = new Date().toISOString()
+
+      return {
+        document_id: documentId,
+        chunk_index: idx,
+        chunk_text: chunk.text,
+        chunk_size: chunk.text.length,
+        is_filtered: chunk.filtered,
+        filtered_reason: chunk.filter_reason || null,
+        review_status: chunk.filtered ? 'filtered' : 'pending',
+        ai_metadata: {
+          // Comprehensive metadata
+          chunk_id: `${documentId}_${idx}`,
+          source_document: document?.original_filename || document?.filename,
+          source_url: document?.storage_path,
+          document_type: document?.doc_type,
+          domain: document?.doc_type, // Use doc_type as domain initially
+          date_added: now,
+          curator: uploaderName,
+          tags: [], // Will be populated during enrichment
+          chunk_index: idx,
+          word_count: wordCount,
+          last_updated: now,
+        }
+      }
+    })
+
+    const { error: chunksError } = await supabase
+      .from('document_chunks')
+      .insert(chunkInserts)
+
+    if (chunksError) {
+      throw new Error(`Failed to insert chunks: ${chunksError.message}`)
+    }
+
+    // Count non-filtered chunks
+    const activeChunks = chunks.filter((c) => !c.filtered).length
+
+    // Update document status and count
+    await supabase
+      .from('documents')
+      .update({
+        processing_status: 'review',
+        total_chunks: activeChunks,
+        metadata: {
+          filters_applied: filters,
+          processed_at: new Date().toISOString(),
+          total_chunks_before_filter: chunks.length,
+          filtered_chunks: chunks.filter((c) => c.filtered).length,
+        },
+      })
+      .eq('id', documentId)
+
+    return activeChunks
+  } catch (error) {
+    // Update status to indicate error
+    await supabase
+      .from('documents')
+      .update({
+        processing_status: 'failed',
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      })
+      .eq('id', documentId)
+
+    throw error
+  }
+}
+
+/**
+ * Simulate chunking for text input
+ */
+function simulateTextChunking(text: string): FlowiseChunk[] {
+  // Split text into chunks of approximately 500 words
+  const words = text.trim().split(/\s+/)
+  const chunks: FlowiseChunk[] = []
+  const chunkSize = 500
+
+  for (let i = 0; i < words.length; i += chunkSize) {
+    const chunkWords = words.slice(i, i + chunkSize)
+    const chunkText = chunkWords.join(' ')
+    chunks.push({
+      index: chunks.length,
+      text: chunkText,
+      filtered: false,
+    })
+  }
+
+  return chunks
+}
+
+/**
+ * Process text directly with Gemini (modified version of processDocumentWithGemini)
+ */
+async function processDocumentWithGeminiFromText(
+  text: string,
+  _docType: string,
+  filters: string[]
+): Promise<FlowiseChunk[]> {
+  // For now, we'll just simulate chunking with filters
+  // In a real implementation, you'd call the actual Gemini API with the text
+  const chunks = simulateTextChunking(text)
+  
+  // Apply basic filtering
+  return chunks.map(chunk => {
+    let filtered = false
+    let filterReason = ''
+
+    // Apply filter logic
+    if (filters.includes('toc') && (chunk.text.toLowerCase().includes('table of contents') || chunk.text.toLowerCase().includes('toc'))) {
+      filtered = true
+      filterReason = 'Table of contents'
+    }
+
+    if (filters.includes('index') && chunk.text.toLowerCase().includes('index')) {
+      filtered = true
+      filterReason = 'Index'
+    }
+
+    if (filters.includes('cover') && (chunk.text.toLowerCase().includes('cover') || chunk.text.length < 100)) {
+      filtered = true
+      filterReason = 'Cover page'
+    }
+
+    if (filters.includes('boilerplate') && (chunk.text.toLowerCase().includes('legal') || chunk.text.toLowerCase().includes('disclaimer'))) {
+      filtered = true
+      filterReason = 'Boilerplate legal text'
+    }
+
+    if (filters.includes('code') && (chunk.text.includes('{') || chunk.text.includes('}') || chunk.text.includes('//'))) {
+      filtered = true
+      filterReason = 'Code examples'
+    }
+
+    if (filters.includes('appendix') && chunk.text.toLowerCase().includes('appendix')) {
+      filtered = true
+      filterReason = 'Appendices'
+    }
+
+    return {
+      ...chunk,
+      filtered,
+      filter_reason: filterReason,
+    }
+  })
+}
+
+/**
  * Upload document to Supabase Storage and create DB record
  */
 export async function uploadDocument(

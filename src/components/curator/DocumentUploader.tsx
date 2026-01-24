@@ -4,6 +4,8 @@ import {
   uploadDocument,
   processAndStoreDocument,
   enrichDocumentChunks,
+  createDocumentFromText,
+  processTextAndStoreChunks,
 } from '../../lib/api/curator'
 import { getKnowledgeBases } from '../../lib/api/admin'
 import { FILTER_OPTIONS, DEFAULT_FILTERS, type KnowledgeBase } from '../../types'
@@ -16,7 +18,10 @@ interface Props {
 
 export default function DocumentUploader({ onSuccess, initialDocType, initialSourceUrl }: Props) {
   const navigate = useNavigate()
+  const [uploadMode, setUploadMode] = useState<'file' | 'text'>('file')
   const [file, setFile] = useState<File | null>(null)
+  const [textInput, setTextInput] = useState('')
+  const [textTitle, setTextTitle] = useState('')
   const [docType, setDocType] = useState<string>(initialDocType || 'fhir')
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedFilters, setSelectedFilters] = useState<string[]>(DEFAULT_FILTERS)
@@ -94,8 +99,13 @@ export default function DocumentUploader({ onSuccess, initialDocType, initialSou
   }
 
   const handleProcess = async () => {
-    if (!file) {
+    if (uploadMode === 'file' && !file) {
       alert('Please select a file first')
+      return
+    }
+
+    if (uploadMode === 'text' && !textInput.trim()) {
+      alert('Please enter or paste text first')
       return
     }
 
@@ -103,31 +113,59 @@ export default function DocumentUploader({ onSuccess, initialDocType, initialSou
     setProgress(0)
 
     try {
-      setStatusText('📤 Uploading to storage...')
-      setProgress(20)
+      if (uploadMode === 'file') {
+        setStatusText('📤 Uploading to storage...')
+        setProgress(20)
 
-      const { storageUrl, documentId } = await uploadDocument(file, docType, initialSourceUrl)
+        const { storageUrl, documentId } = await uploadDocument(file!, docType, initialSourceUrl)
 
-      setStatusText('🔄 Processing and chunking document...')
-      setProgress(50)
+        setStatusText('🔄 Processing and chunking document...')
+        setProgress(50)
 
-      const chunkCount = await processAndStoreDocument(documentId, storageUrl, docType, selectedFilters)
+        const chunkCount = await processAndStoreDocument(documentId, storageUrl, docType, selectedFilters)
 
-      setStatusText('✨ Enriching chunks with AI metadata...')
-      setProgress(80)
+        setStatusText('✨ Enriching chunks with AI metadata...')
+        setProgress(80)
 
-      await enrichDocumentChunks(documentId, docType, 10)
+        await enrichDocumentChunks(documentId, docType, 10)
 
-      setProgress(100)
-      setStatusText(`✅ Complete! ${chunkCount} chunks ready for review.`)
+        setProgress(100)
+        setStatusText(`✅ Complete! ${chunkCount} chunks ready for review.`)
 
-      setTimeout(() => {
-        if (onSuccess) {
-          onSuccess(documentId)
-        } else {
-          navigate(`/review/${documentId}`)
-        }
-      }, 1500)
+        setTimeout(() => {
+          if (onSuccess) {
+            onSuccess(documentId)
+          } else {
+            navigate(`/review/${documentId}`)
+          }
+        }, 1500)
+      } else {
+        setStatusText('📝 Creating document from text...')
+        setProgress(20)
+
+        const documentId = await createDocumentFromText(textInput, docType, initialSourceUrl, textTitle)
+
+        setStatusText('🔄 Processing and chunking text...')
+        setProgress(50)
+
+        const chunkCount = await processTextAndStoreChunks(documentId, textInput, docType, selectedFilters)
+
+        setStatusText('✨ Enriching chunks with AI metadata...')
+        setProgress(80)
+
+        await enrichDocumentChunks(documentId, docType, 10)
+
+        setProgress(100)
+        setStatusText(`✅ Complete! ${chunkCount} chunks ready for review.`)
+
+        setTimeout(() => {
+          if (onSuccess) {
+            onSuccess(documentId)
+          } else {
+            navigate(`/review/${documentId}`)
+          }
+        }, 1500)
+      }
     } catch (error) {
       console.error('Processing error:', error)
       let errorMessage = 'Failed to process document. Please try again.'
@@ -165,68 +203,128 @@ export default function DocumentUploader({ onSuccess, initialDocType, initialSou
         </div>
       )}
 
-      <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Choose a file</label>
-        <div
-          className={`mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed rounded-lg transition-colors ${
-            dragActive
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-gray-400'
-          }`}
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
-          onDrop={handleDrop}
-        >
-          <div className="space-y-1 text-center">
-            <svg
-              className="mx-auto h-12 w-12 text-gray-400"
-              stroke="currentColor"
-              fill="none"
-              viewBox="0 0 48 48"
-              aria-hidden="true"
-            >
-              <path
-                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <div className="flex text-sm text-gray-600">
-              <label
-                htmlFor="file-upload"
-                className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500"
+      {/* Upload Mode Tabs */}
+      <div className="mb-6 border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setUploadMode('file')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              uploadMode === 'file'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Upload File
+          </button>
+          <button
+            onClick={() => setUploadMode('text')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              uploadMode === 'text'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Paste Text
+          </button>
+        </nav>
+      </div>
+
+      {/* File Upload Mode */}
+      {uploadMode === 'file' && (
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Choose a file</label>
+          <div
+            className={`mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed rounded-lg transition-colors ${
+              dragActive
+                ? 'border-blue-500 bg-blue-50'
+                : 'border-gray-300 hover:border-gray-400'
+            }`}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+          >
+            <div className="space-y-1 text-center">
+              <svg
+                className="mx-auto h-12 w-12 text-gray-400"
+                stroke="currentColor"
+                fill="none"
+                viewBox="0 0 48 48"
+                aria-hidden="true"
               >
-                <span>Upload a file</span>
-                <input
-                  id="file-upload"
-                  name="file-upload"
-                  type="file"
-                  className="sr-only"
-                  accept=".pdf,.docx,.txt"
-                  onChange={handleFileChange}
-                  disabled={processing}
+                <path
+                  d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
-              </label>
-              <p className="pl-1">or drag and drop</p>
+              </svg>
+              <div className="flex text-sm text-gray-600">
+                <label
+                  htmlFor="file-upload"
+                  className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500"
+                >
+                  <span>Upload a file</span>
+                  <input
+                    id="file-upload"
+                    name="file-upload"
+                    type="file"
+                    className="sr-only"
+                    accept=".pdf,.docx,.txt"
+                    onChange={handleFileChange}
+                    disabled={processing}
+                  />
+                </label>
+                <p className="pl-1">or drag and drop</p>
+              </div>
+              <p className="text-xs text-gray-500">PDF, DOCX, or TXT up to 50MB</p>
             </div>
-            <p className="text-xs text-gray-500">PDF, DOCX, or TXT up to 50MB</p>
+          </div>
+          {file && (
+            <p className="mt-2 text-sm text-green-600 flex items-center">
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Text Input Mode */}
+      {uploadMode === 'text' && (
+        <div className="mb-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Document Title (optional)</label>
+            <input
+              type="text"
+              value={textTitle}
+              onChange={(e) => setTextTitle(e.target.value)}
+              disabled={processing}
+              placeholder="Enter a title for your document"
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Document Content</label>
+            <textarea
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              disabled={processing}
+              placeholder="Paste or type your document content here..."
+              rows={10}
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 font-mono text-sm"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              {textInput.length} characters ({textInput.trim().split(/\s+/).length} words)
+            </p>
           </div>
         </div>
-        {file && (
-          <p className="mt-2 text-sm text-green-600 flex items-center">
-            <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                clipRule="evenodd"
-              />
-            </svg>
-            {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-          </p>
-        )}
-      </div>
+      )}
 
       <div className="mb-6">
         <label className="block text-sm font-medium text-gray-700 mb-2">Knowledge Base</label>
@@ -271,7 +369,7 @@ export default function DocumentUploader({ onSuccess, initialDocType, initialSou
 
       <button
         onClick={handleProcess}
-        disabled={!file || processing}
+        disabled={(uploadMode === 'file' && !file) || (uploadMode === 'text' && !textInput.trim()) || processing}
         className="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium text-sm transition-colors"
       >
         {processing ? 'Processing...' : '🚀 Process Document'}
