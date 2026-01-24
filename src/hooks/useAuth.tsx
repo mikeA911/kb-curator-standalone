@@ -181,8 +181,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('[Auth] Auth state change processed, setting loading to false immediately')
 
       if (newUser) {
-        // Only fetch if needed or if it's a sign-in event
-        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || !profile || profile.id !== newUser.id) {
+        // Only fetch if needed and not already fetching
+        if (event === 'SIGNED_IN' || (event === 'INITIAL_SESSION' && !initialized.current) || (!profile || profile.id !== newUser.id)) {
           const p = await fetchProfile(newUser.id)
           if (mounted && p) setProfile(p)
         }
