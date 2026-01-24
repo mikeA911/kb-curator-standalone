@@ -39,20 +39,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return profilePromiseCache.current[userId]
     }
 
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        console.error('[Auth] Profile fetch timeout for userId:', userId)
+        delete profilePromiseCache.current[userId]
+        reject(new Error('Profile fetch timeout'))
+      }, 10000) // 10 second timeout
+    })
+
     const promise = (async () => {
+      console.log('[Auth] Starting profile query for userId:', userId)
       try {
-        const { data, error } = await supabase
+        const queryPromise = supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .single()
+        
+        const result = await Promise.race([queryPromise, timeoutPromise])
 
-        if (error) {
-          console.error('[Auth] Error fetching profile:', error)
-          if (error.code === 'PGRST116' || error.message?.includes('No rows found')) {
+        if (result.error) {
+          console.error('[Auth] Error fetching profile:', result.error)
+          if (result.error.code === 'PGRST116' || result.error.message?.includes('No rows found')) {
+            console.log('[Auth] Profile not found, attempting to create new profile')
             // Try to get user from session to create profile
-            const { data: { session } } = await supabase.auth.getSession()
-            const user = session?.user
+            const sessionResult = await supabase.auth.getSession()
+            console.log('[Auth] Session result:', sessionResult)
+            const user = sessionResult.data.session?.user
             
             if (user && user.id === userId) {
               const profileData = {
@@ -63,26 +77,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 is_active: true
               }
               
-              const { data: newProfile, error: createError } = await supabase
+              const createResult = await supabase
                 .from('profiles')
                 .insert(profileData)
                 .select()
                 .single()
               
-              if (createError) {
-                console.error('[Auth] Error creating profile:', createError)
+              if (createResult.error) {
+                console.error('[Auth] Error creating profile:', createResult.error)
                 return null
               }
               
-              console.log('[Auth] Created new profile:', newProfile)
-              return newProfile as Profile
+              console.log('[Auth] Created new profile:', createResult.data)
+              return createResult.data as Profile
             }
           }
           return null
         }
 
-        console.log('[Auth] Profile fetched successfully:', data)
-        return data as Profile
+        console.log('[Auth] Profile fetched successfully:', result.data)
+        return result.data as Profile
       } catch (err) {
         console.error('[Auth] Unexpected error fetching profile:', err)
         return null
@@ -108,6 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Initialize auth state
   useEffect(() => {
     let mounted = true
+
+    // Safety timeout to ensure loading state is always cleared
+    const safetyTimeout = setTimeout(() => {
+      console.warn('[Auth] Safety timeout: Setting loading to false')
+      if (mounted) setLoading(false)
+    }, 15000) // 15 second safety timeout
 
     async function initialize() {
       if (initialized.current) return
@@ -156,6 +176,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const newUser = currentSession?.user ?? null
       setUser(newUser)
 
+      // Set loading to false immediately when auth state changes, regardless of profile fetch
+      setLoading(false)
+      console.log('[Auth] Auth state change processed, setting loading to false immediately')
+
       if (newUser) {
         // Only fetch if needed or if it's a sign-in event
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || !profile || profile.id !== newUser.id) {
@@ -165,13 +189,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setProfile(null)
       }
-      
-      // Always set loading to false when auth state changes
-      console.log('[Auth] Auth state change processed, setting loading to false')
-      setLoading(false)
     })
 
     return () => {
+      clearTimeout(safetyTimeout)
       mounted = false
       subscription.unsubscribe()
     }
