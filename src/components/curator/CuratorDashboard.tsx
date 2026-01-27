@@ -38,6 +38,25 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  // Track viewed sources
+  const [viewedSources, setViewedSources] = useState<string[]>([])
+
+  useEffect(() => {
+    // Load viewed sources from localStorage
+    const saved = localStorage.getItem('viewedSources')
+    if (saved) {
+      setViewedSources(JSON.parse(saved))
+    }
+  }, [])
+
+  const markSourceAsViewed = (url: string) => {
+    if (!viewedSources.includes(url)) {
+      const newViewed = [...viewedSources, url]
+      setViewedSources(newViewed)
+      localStorage.setItem('viewedSources', JSON.stringify(newViewed))
+    }
+  }
 
   useEffect(() => {
     async function loadData() {
@@ -114,25 +133,6 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
         <p className="text-sm text-gray-600">{error}</p>
       </div>
     )
-  }
-
-  // Track viewed sources
-  const [viewedSources, setViewedSources] = useState<string[]>([])
-
-  useEffect(() => {
-    // Load viewed sources from localStorage
-    const saved = localStorage.getItem('viewedSources')
-    if (saved) {
-      setViewedSources(JSON.parse(saved))
-    }
-  }, [])
-
-  const markSourceAsViewed = (url: string) => {
-    if (!viewedSources.includes(url)) {
-      const newViewed = [...viewedSources, url]
-      setViewedSources(newViewed)
-      localStorage.setItem('viewedSources', JSON.stringify(newViewed))
-    }
   }
 
   return (
