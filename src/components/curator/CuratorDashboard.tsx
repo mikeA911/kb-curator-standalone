@@ -116,6 +116,25 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
     )
   }
 
+  // Track viewed sources
+  const [viewedSources, setViewedSources] = useState<string[]>([])
+
+  useEffect(() => {
+    // Load viewed sources from localStorage
+    const saved = localStorage.getItem('viewedSources')
+    if (saved) {
+      setViewedSources(JSON.parse(saved))
+    }
+  }, [])
+
+  const markSourceAsViewed = (url: string) => {
+    if (!viewedSources.includes(url)) {
+      const newViewed = [...viewedSources, url]
+      setViewedSources(newViewed)
+      localStorage.setItem('viewedSources', JSON.stringify(newViewed))
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -223,7 +242,7 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
         <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200 bg-yellow-50">
             <h3 className="text-lg font-semibold text-yellow-900">Available for Curation</h3>
-            <p className="text-sm text-yellow-700">Download these documents and upload them to start curating.</p>
+            <p className="text-sm text-yellow-700">View these docs, download or copy and paste then start curating.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -244,9 +263,25 @@ export default function CuratorDashboard({ onSelectQueueItem }: Props) {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{item.title}</div>
-                      <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                        Download Source ↗
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <a 
+                          href={item.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={() => markSourceAsViewed(item.url)}
+                        >
+                          View Source ↗
+                        </a>
+                        {viewedSources.includes(item.url) && (
+                          <span className="text-green-600 text-xs flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Viewed
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
