@@ -1,0 +1,9 @@
+Reranking
+
+Reranking is a second-pass scoring step applied after initial retrieval, using a more expensive but more accurate model to reorder a small candidate set before it is passed to the generation step.
+
+Initial retrieval (vector or hybrid search) is optimized for recall across a large corpus and returns a candidate set, typically 20 to 100 items, that is fast to compute but imprecisely ordered.
+
+A cross-encoder reranker then scores each candidate against the query jointly, which is far more accurate than the bi-encoder similarity used for initial retrieval but too expensive to run over the full corpus.
+
+The result is a small, precisely ordered set of top candidates, which improves the quality of the context assembled for generation without materially increasing latency, since reranking only operates on the already-narrowed candidate set.

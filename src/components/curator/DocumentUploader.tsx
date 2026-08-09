@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { KnowledgeBase } from '@/types/database'
 import { uploadAndProcessDocument } from '@/app/actions/curator'
+import { HelpTip } from '@/components/wiki/HelpTip'
 
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -87,7 +88,10 @@ export function DocumentUploader({
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1" htmlFor="file">File (pdf, docx, txt — max 50MB)</label>
+        <label className="mb-1 flex items-center gap-1.5 text-sm font-medium" htmlFor="file">
+          File (pdf, docx, txt — max 50MB)
+          <HelpTip slug="chunking-strategies" />
+        </label>
         <input
           id="file"
           type="file"

@@ -2,13 +2,17 @@
 
 import { useTransition } from 'react'
 import { updateAIProviderSetting } from '@/app/actions/admin'
+import { HelpTip } from '@/components/wiki/HelpTip'
 
 export function AIProviderSettings({ current }: { current: string }) {
   const [isPending, startTransition] = useTransition()
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">AI provider</h2>
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        AI provider
+        <HelpTip slug="ai-agents" />
+      </h2>
       <div className="flex gap-4 text-sm">
         {(['openai', 'gemini'] as const).map((provider) => (
           <label key={provider} className="flex items-center gap-2">
