@@ -1,125 +1,55 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { getKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase } from '../../lib/api/admin'
-import type { KnowledgeBase } from '../../types'
+import { useState, useTransition } from 'react'
+import type { KnowledgeBase } from '@/types/database'
+import { createKnowledgeBase, deleteKnowledgeBase } from '@/app/actions/admin'
 
-export default function KBManagement() {
-  const [kbs, setKbs] = useState<KnowledgeBase[]>([])
-  const [loading, setLoading] = useState(true)
+export function KBManagement({ knowledgeBases }: { knowledgeBases: KnowledgeBase[] }) {
+  const [id, setId] = useState('')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [newKb, setNewKb] = useState({ id: '', name: '', description: '' })
+  const [isPending, startTransition] = useTransition()
 
-  useEffect(() => {
-    loadKbs()
-  }, [])
-
-  async function loadKbs() {
-    setLoading(true)
-    try {
-      const data = await getKnowledgeBases()
-      setKbs(data)
-    } catch (err) {
-      setError('Failed to load knowledge bases')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleCreate() {
-    if (!newKb.id || !newKb.name) return
-    try {
-      await createKnowledgeBase(newKb)
-      setNewKb({ id: '', name: '', description: '' })
-      loadKbs()
-    } catch (err) {
-      setError('Failed to create knowledge base')
-    }
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this knowledge base?')) return
-    try {
-      await deleteKnowledgeBase(id)
-      loadKbs()
-    } catch (err) {
-      setError('Failed to delete knowledge base')
-    }
+  function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    startTransition(async () => {
+      try {
+        await createKnowledgeBase(id, name, description)
+        setId('')
+        setName('')
+        setDescription('')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to create')
+      }
+    })
   }
 
   return (
-    <div className="space-y-6">
-      {error && <div className="bg-red-100 text-red-700 p-3 rounded">{error}</div>}
-      
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">Create New Knowledge Base</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <input
-            type="text"
-            placeholder="ID (e.g. fhir)"
-            className="border p-2 rounded"
-            value={newKb.id}
-            onChange={(e) => setNewKb({ ...newKb, id: e.target.value })}
-          />
-          <input
-            type="text"
-            placeholder="Name"
-            className="border p-2 rounded"
-            value={newKb.name}
-            onChange={(e) => setNewKb({ ...newKb, name: e.target.value })}
-          />
-          <input
-            type="text"
-            placeholder="Description"
-            className="border p-2 rounded"
-            value={newKb.description}
-            onChange={(e) => setNewKb({ ...newKb, description: e.target.value })}
-          />
-        </div>
-        <button
-          onClick={handleCreate}
-          className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-        >
-          Add Knowledge Base
-        </button>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">Existing Knowledge Bases</h2>
-        {loading ? (
-          <p>Loading...</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {kbs.map((kb) => (
-                  <tr key={kb.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{kb.id}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{kb.name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{kb.description}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <button
-                        onClick={() => handleDelete(kb.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge bases</h2>
+      <ul className="flex flex-col gap-2">
+        {knowledgeBases.map((kb) => (
+          <li key={kb.id} className="flex items-center justify-between rounded border border-zinc-200 bg-white px-4 py-2 text-sm">
+            <span><span className="font-medium">{kb.name}</span> <span className="text-zinc-500">({kb.id})</span></span>
+            <button
+              disabled={isPending}
+              onClick={() => startTransition(() => deleteKnowledgeBase(kb.id))}
+              className="text-xs text-red-600 underline disabled:opacity-50"
+            >
+              Delete
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-2">
+        <input placeholder="id" value={id} onChange={(e) => setId(e.target.value)} required className="rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required className="rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+        <input placeholder="description" value={description} onChange={(e) => setDescription(e.target.value)} className="flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+        <button disabled={isPending} className="rounded bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">Add</button>
+      </form>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </section>
   )
 }

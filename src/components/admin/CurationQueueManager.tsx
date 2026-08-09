@@ -1,148 +1,68 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { getCurationQueue, addToCurationQueue, deleteFromCurationQueue, getKnowledgeBases } from '../../lib/api/admin'
-import type { CurationQueueItem, KnowledgeBase } from '../../types'
+import { useState, useTransition } from 'react'
+import Link from 'next/link'
+import type { CurationQueueItem, KnowledgeBase } from '@/types/database'
+import { addCurationQueueItem, deleteCurationQueueItem } from '@/app/actions/admin'
 
-export default function CurationQueueManager() {
-  const [items, setItems] = useState<CurationQueueItem[]>([])
-  const [kbs, setKbs] = useState<KnowledgeBase[]>([])
-  const [loading, setLoading] = useState(true)
+export function CurationQueueManager({ queue, knowledgeBases }: { queue: CurationQueueItem[]; knowledgeBases: KnowledgeBase[] }) {
+  const [kbId, setKbId] = useState(knowledgeBases[0]?.id ?? '')
+  const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [newItem, setNewItem] = useState({ kb_id: '', title: '', url: '' })
+  const [isPending, startTransition] = useTransition()
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  async function loadData() {
-    setLoading(true)
-    try {
-      const [queueData, kbsData] = await Promise.all([
-        getCurationQueue(),
-        getKnowledgeBases()
-      ])
-      setItems(queueData)
-      setKbs(kbsData)
-      if (kbsData.length > 0) {
-        setNewItem(prev => ({ ...prev, kb_id: kbsData[0].id }))
+  function handleAdd(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    startTransition(async () => {
+      try {
+        await addCurationQueueItem(kbId, title, url)
+        setTitle('')
+        setUrl('')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to add')
       }
-    } catch (err) {
-      setError('Failed to load data')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleAdd() {
-    if (!newItem.kb_id || !newItem.title || !newItem.url) return
-    try {
-      await addToCurationQueue(newItem)
-      setNewItem({ ...newItem, title: '', url: '' })
-      loadData()
-    } catch (err) {
-      setError('Failed to add to queue')
-    }
-  }
-
-  async function handleDelete(id: string) {
-    try {
-      await deleteFromCurationQueue(id)
-      loadData()
-    } catch (err) {
-      setError('Failed to delete item')
-    }
+    })
   }
 
   return (
-    <div className="space-y-6">
-      {error && <div className="bg-red-100 text-red-700 p-3 rounded">{error}</div>}
-
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">Add to Curation Queue</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <select
-            aria-label="Select Knowledge Base"
-            className="border p-2 rounded"
-            value={newItem.kb_id}
-            onChange={(e) => setNewItem({ ...newItem, kb_id: e.target.value })}
-          >
-            {kbs.map(kb => (
-              <option key={kb.id} value={kb.id}>{kb.name}</option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Document Title"
-            className="border p-2 rounded"
-            value={newItem.title}
-            onChange={(e) => setNewItem({ ...newItem, title: e.target.value })}
-          />
-          <input
-            type="text"
-            placeholder="URL"
-            className="border p-2 rounded"
-            value={newItem.url}
-            onChange={(e) => setNewItem({ ...newItem, url: e.target.value })}
-          />
-        </div>
-        <button
-          onClick={handleAdd}
-          className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-        >
-          Add to Queue
-        </button>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">Curation Queue</h2>
-        {loading ? (
-          <p>Loading...</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">KB</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {kbs.find(k => k.id === item.kb_id)?.name || item.kb_id}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                        {item.title}
-                      </a>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        item.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                        item.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Curation queue</h2>
+      <ul className="flex flex-col gap-2">
+        {queue.map((item) => (
+          <li key={item.id} className="flex items-center justify-between rounded border border-zinc-200 bg-white px-4 py-2 text-sm">
+            <span>
+              {item.title} <span className="text-zinc-500">({item.kb_id})</span> — {item.status}
+            </span>
+            <div className="flex items-center gap-3">
+              {item.status !== 'completed' && (
+                <Link href={`/upload?kb=${item.kb_id}&sourceUrl=${encodeURIComponent(item.url)}`} className="text-xs underline">
+                  Curate
+                </Link>
+              )}
+              <button
+                disabled={isPending}
+                onClick={() => startTransition(() => deleteCurationQueueItem(item.id))}
+                className="text-xs text-red-600 underline disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-2">
+        <select value={kbId} onChange={(e) => setKbId(e.target.value)} className="rounded border border-zinc-300 px-2 py-1.5 text-sm">
+          {knowledgeBases.map((kb) => (
+            <option key={kb.id} value={kb.id}>{kb.name}</option>
+          ))}
+        </select>
+        <input placeholder="title" value={title} onChange={(e) => setTitle(e.target.value)} required className="rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+        <input placeholder="url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} required className="flex-1 rounded border border-zinc-300 px-2 py-1.5 text-sm" />
+        <button disabled={isPending} className="rounded bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">Add</button>
+      </form>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </section>
   )
 }

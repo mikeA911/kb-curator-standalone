@@ -1,471 +1,184 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useCurator } from '../../hooks/useCurator'
-import { approveChunk, rejectChunk, enrichChunkMetadata } from '../../lib/api/curator'
-import { supabase } from '../../lib/supabase'
-import type { ChunkAIMetadata } from '../../types'
+'use client'
 
-interface Props {
-  documentId: string
-  onComplete?: () => void
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import type { Document, DocumentChunk } from '@/types/database'
+import {
+  approveChunkAction,
+  rejectChunkAction,
+  saveChunkDraftAction,
+  submitDocumentAction,
+  enrichMoreChunks,
+} from '@/app/actions/curator'
+
+const REVIEW_STYLES: Record<DocumentChunk['review_status'], string> = {
+  pending: 'bg-zinc-100 text-zinc-700',
+  approved: 'bg-green-100 text-green-800',
+  rejected: 'bg-red-100 text-red-800',
+  filtered: 'bg-zinc-200 text-zinc-600',
+  enriching: 'bg-blue-100 text-blue-700',
+  draft: 'bg-amber-100 text-amber-800',
+  failed: 'bg-red-100 text-red-800',
 }
 
-export default function ChunkReviewer({ documentId, onComplete }: Props) {
-  const navigate = useNavigate()
-  const {
-    document,
-    currentChunk,
-    currentChunkIndex,
-    chunks,
-    stats,
-    loading,
-    error,
-    nextChunk,
-    previousChunk,
-    hasNext,
-    hasPrevious,
-    progress,
-    refreshChunks,
-    isComplete,
-    saveDraft,
-    submitForReview,
-  } = useCurator(documentId)
+export function ChunkReviewer({ document, chunks }: { document: Document; chunks: DocumentChunk[] }) {
+  const router = useRouter()
+  const [index, setIndex] = useState(0)
+  const [notes, setNotes] = useState('')
+  const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
 
-  const [curatorNotes, setCuratorNotes] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [enriching, setEnriching] = useState(false)
+  const visible = chunks.filter((c) => !c.is_filtered)
+  const chunk = visible[index]
 
-  const handleSaveDraft = async () => {
-    if (!currentChunk) return
-    setSubmitting(true)
-    try {
-      await saveDraft(curatorNotes, currentChunk.ai_metadata)
-      alert('Draft saved successfully!')
-    } catch (error) {
-      console.error('Save draft failed:', error)
-      alert('Failed to save draft.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const resolvedCount = chunks.filter((c) => ['approved', 'rejected', 'filtered'].includes(c.review_status)).length
+  const isComplete = chunks.length > 0 && resolvedCount === chunks.length
+  const canSubmit = isComplete && document.processing_status === 'review'
 
-  const handleSubmit = async () => {
-    if (!confirm('Are you sure you want to submit this document for admin review?')) return
-    setSubmitting(true)
-    try {
-      await submitForReview()
-      alert('Document submitted successfully!')
-      navigate('/dashboard')
-    } catch (error) {
-      console.error('Submit failed:', error)
-      alert(error instanceof Error ? error.message : 'Failed to submit document.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const handleApprove = async () => {
-    if (!currentChunk) return
-
-    setSubmitting(true)
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      if (!session?.user) {
-        alert('You must be logged in')
-        return
+  function run(action: () => Promise<unknown>) {
+    setError(null)
+    startTransition(async () => {
+      try {
+        await action()
+        setNotes('')
+        router.refresh()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Action failed')
       }
-
-      await approveChunk(currentChunk.id, curatorNotes, session.user.id)
-      setCuratorNotes('')
-      await refreshChunks()
-
-      if (hasNext && chunks.length > 1) {
-        setTimeout(() => nextChunk(), 300)
-      }
-    } catch (error) {
-      console.error('Approve failed:', error)
-      alert('Failed to approve chunk. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
+    })
   }
 
-  const handleReject = async () => {
-    if (!currentChunk) return
-
-    if (!confirm('Are you sure you want to reject this chunk?')) {
-      return
-    }
-
-    setSubmitting(true)
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      if (!session?.user) {
-        alert('You must be logged in')
-        return
-      }
-
-      await rejectChunk(currentChunk.id, session.user.id)
-      setCuratorNotes('')
-      await refreshChunks()
-
-      if (hasNext && chunks.length > 1) {
-        setTimeout(() => nextChunk(), 300)
-      }
-    } catch (error) {
-      console.error('Reject failed:', error)
-      alert('Failed to reject chunk. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const handleEnrichMetadata = async () => {
-    if (!currentChunk || !document) return
-
-    setEnriching(true)
-    try {
-      await enrichChunkMetadata(currentChunk.id, currentChunk.chunk_text, document.doc_type)
-      await refreshChunks()
-    } catch (error) {
-      console.error('Enrich failed:', error)
-      alert('Failed to enrich metadata. Please try again.')
-    } finally {
-      setEnriching(false)
-    }
-  }
-
-  if (loading) {
+  if (document.processing_status === 'failed') {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <span className="ml-3 text-gray-600">Loading chunks...</span>
+      <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+        <p className="font-medium">Processing failed at stage: {document.processing_error?.stage}</p>
+        <p className="mt-1">{document.processing_error?.message}</p>
       </div>
     )
   }
 
-  if (error) {
-    return (
-      <div className="text-center py-12">
-        <div className="text-red-600 font-medium mb-2">Error loading chunks</div>
-        <p className="text-sm text-gray-600">{error}</p>
-      </div>
-    )
+  if (chunks.length === 0) {
+    return <p className="text-zinc-600">No chunks yet — processing may still be in progress.</p>
   }
 
-  if (isComplete || chunks.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <div className="text-6xl mb-4">🎉</div>
-        <h2 className="text-2xl font-bold text-green-600 mb-4">All chunks reviewed!</h2>
-        <p className="text-gray-600 mb-6">Great work! This document is complete.</p>
-        {document && (
-          <div className="bg-gray-50 rounded-lg p-4 max-w-md mx-auto">
-            <div className="text-sm text-gray-600 space-y-1">
-              <p>
-                <strong>Document:</strong> {document.original_filename}
-              </p>
-              <p>
-                <strong>Approved:</strong> {stats.approved} chunks
-              </p>
-              <p>
-                <strong>Rejected:</strong> {stats.rejected} chunks
-              </p>
-            </div>
-          </div>
-        )}
-        <button
-          onClick={() => (onComplete ? onComplete() : navigate('/dashboard'))}
-          className="mt-6 bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700 transition-colors"
-        >
-          Return to Dashboard
-        </button>
-      </div>
-    )
+  if (!chunk) {
+    return <p className="text-zinc-600">All chunks reviewed.</p>
   }
-
-  if (!currentChunk) {
-    return <div className="text-center py-12 text-gray-600">No chunk selected</div>
-  }
-
-  const metadata: ChunkAIMetadata | null = currentChunk.ai_metadata as ChunkAIMetadata | null
 
   return (
-    <div className="max-w-6xl mx-auto">
-      {document && (
-        <div className="mb-6 bg-gray-50 rounded-lg p-4">
-          <h2 className="text-lg font-semibold text-gray-900">{document.original_filename}</h2>
-          <p className="text-sm text-gray-600">{document.doc_type.toUpperCase()} Document</p>
-        </div>
-      )}
-
-      <div className="mb-6 grid grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-          <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-          <div className="text-sm text-gray-500">Total Chunks</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-          <div className="text-2xl font-bold text-green-600">{stats.approved}</div>
-          <div className="text-sm text-gray-500">Approved</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-          <div className="text-2xl font-bold text-red-600">{stats.rejected}</div>
-          <div className="text-sm text-gray-500">Rejected</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-          <div className="text-2xl font-bold text-blue-600">{stats.pending}</div>
-          <div className="text-sm text-gray-500">Pending</div>
-        </div>
-      </div>
-
-      <div className="mb-6">
-        <div className="flex justify-between text-sm text-gray-600 mb-2">
-          <span>Progress</span>
-          <span>{Math.round(progress * 100)}% complete</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-3">
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-xl font-semibold">{document.original_filename}</h1>
+        <p className="text-sm text-zinc-500">
+          {resolvedCount}/{chunks.length} resolved · chunk {index + 1}/{visible.length}
+          {chunk.source_page ? ` · page ${chunk.source_page}` : ''}
+          {chunk.source_section ? ` · ${chunk.source_section}` : ''}
+        </p>
+        <div className="mt-2 h-1.5 w-full rounded-full bg-zinc-200">
           <div
-            className="bg-blue-600 h-3 rounded-full transition-all duration-300"
-            style={{ width: `${progress * 100}%` }}
+            className="h-1.5 rounded-full bg-zinc-900"
+            style={{ width: `${(resolvedCount / chunks.length) * 100}%` }}
           />
         </div>
       </div>
 
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex items-center justify-between">
         <button
-          onClick={previousChunk}
-          disabled={!hasPrevious}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
+          onClick={() => setIndex((i) => Math.max(0, i - 1))}
+          disabled={index === 0}
+          className="text-sm underline disabled:opacity-40"
         >
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Previous
+          ← Previous
         </button>
-
-        <div className="text-center">
-          <span className="font-medium text-gray-900">
-            Chunk {currentChunkIndex + 1} of {chunks.length}
-          </span>
-        </div>
-
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REVIEW_STYLES[chunk.review_status]}`}>
+          {chunk.review_status}
+        </span>
         <button
-          onClick={nextChunk}
-          disabled={!hasNext}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
+          onClick={() => setIndex((i) => Math.min(visible.length - 1, i + 1))}
+          disabled={index === visible.length - 1}
+          className="text-sm underline disabled:opacity-40"
         >
-          Next
-          <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+          Next →
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 mb-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-900">Chunk Content</h3>
-        <div className="bg-gray-50 p-4 rounded-md max-h-96 overflow-y-auto border border-gray-200">
-          <pre className="whitespace-pre-wrap text-sm font-mono text-gray-800 leading-relaxed">
-            {currentChunk.chunk_text}
-          </pre>
-        </div>
-        <div className="mt-2 text-xs text-gray-500">
-          {currentChunk.chunk_size || currentChunk.chunk_text.length} characters
-        </div>
+      <div className="max-h-80 overflow-y-auto rounded border border-zinc-200 bg-white p-4 text-sm whitespace-pre-wrap">
+        {chunk.chunk_text}
       </div>
 
-      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">
-            Chunk Metadata
-            {currentChunk?.metadata_edited && (
-              <span className="ml-2 text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full">
-                Curator Edited
-              </span>
-            )}
-          </h3>
-          <div className="flex gap-2">
-            {!metadata && (
-              <button
-                onClick={handleEnrichMetadata}
-                disabled={enriching}
-                className="text-sm px-3 py-1 bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 disabled:opacity-50"
-              >
-                {enriching ? 'Enriching...' : '✨ Generate Metadata'}
-              </button>
-            )}
-          </div>
-        </div>
+      {chunk.enrichment_error && (
+        <p className="text-sm text-red-600">Enrichment failed: {chunk.enrichment_error.message}</p>
+      )}
 
-        {metadata ? (
-          <>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
-                  Topic
-                </label>
-                <div className="bg-blue-50 px-3 py-2 rounded-md text-sm font-medium text-blue-900">
-                  {metadata.topic || 'N/A'}
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
-                  Subtopic
-                </label>
-                <div className="bg-blue-50 px-3 py-2 rounded-md text-sm font-medium text-blue-900">
-                  {metadata.subtopic || 'N/A'}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
-                  Relevance Score
-                </label>
-                <div className="flex items-baseline">
-                  <span className="text-3xl font-bold text-gray-900">
-                    {metadata.relevance_score?.toFixed(2) || 'N/A'}
-                  </span>
-                  <span className="ml-2 text-sm text-gray-500">/ 1.0</span>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
-                  Confidence
-                </label>
-                <div className="flex items-baseline">
-                  <span className="text-3xl font-bold">
-                    {currentChunk.confidence_score ? (
-                      <>
-                        <span className="mr-2">
-                          {currentChunk.confidence_score > 0.7
-                            ? '🟢'
-                            : currentChunk.confidence_score > 0.4
-                              ? '🟡'
-                              : '🔴'}
-                        </span>
-                        <span className="text-gray-900">
-                          {currentChunk.confidence_score.toFixed(2)}
-                        </span>
-                      </>
-                    ) : (
-                      'N/A'
-                    )}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {metadata.use_cases && metadata.use_cases.length > 0 && (
-              <div className="mb-4">
-                <label className="block text-xs font-medium text-gray-500 mb-2 uppercase">
-                  Use Cases
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {metadata.use_cases.map((uc: string) => (
-                    <span
-                      key={uc}
-                      className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-medium"
-                    >
-                      {uc.replace(/_/g, ' ')}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {metadata.key_concepts && metadata.key_concepts.length > 0 && (
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-2 uppercase">
-                  Key Concepts
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {metadata.key_concepts.map((kc: string) => (
-                    <span
-                      key={kc}
-                      className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-medium"
-                    >
-                      {kc}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            <p>No AI metadata available for this chunk.</p>
-            <p className="text-sm mt-2">Click "Generate Metadata" to enrich this chunk.</p>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Curator Notes (Optional)
-        </label>
-        <textarea
-          value={curatorNotes}
-          onChange={(e) => setCuratorNotes(e.target.value)}
-          placeholder="Add any additional context, corrections, or observations..."
-          rows={4}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-        />
-        <p className="mt-2 text-xs text-gray-500">
-          These notes will be stored with the approved chunk and visible to users querying the
-          knowledge base.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-4">
-        <div className="flex gap-4">
-          <button
-            onClick={handleApprove}
-            disabled={submitting}
-            className="flex-1 bg-green-600 text-white py-4 px-6 rounded-md hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
-          >
-            {submitting ? 'Processing...' : '✅ Approve'}
-          </button>
-          <button
-            onClick={handleReject}
-            disabled={submitting}
-            className="flex-1 bg-red-600 text-white py-4 px-6 rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg transition-colors shadow-sm"
-          >
-            {submitting ? 'Processing...' : '❌ Reject'}
-          </button>
-        </div>
-        
-        <div className="flex gap-4">
-          <button
-            onClick={handleSaveDraft}
-            disabled={submitting}
-            className="flex-1 bg-gray-600 text-white py-2 px-6 rounded-md hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors shadow-sm"
-          >
-            💾 Save Draft
-          </button>
-          
-          {isComplete && (
-            <button
-              onClick={handleSubmit}
-              disabled={submitting}
-              className="flex-1 bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors shadow-sm animate-pulse"
-            >
-              🚀 Submit for Admin Review
-            </button>
+      {chunk.ai_metadata ? (
+        <div className="rounded border border-zinc-200 bg-white p-4 text-sm">
+          <p><span className="font-medium">Topic:</span> {chunk.ai_metadata.topic}</p>
+          {chunk.ai_metadata.subtopic && <p><span className="font-medium">Subtopic:</span> {chunk.ai_metadata.subtopic}</p>}
+          {chunk.ai_metadata.relevance_score !== undefined && (
+            <p><span className="font-medium">Relevance:</span> {chunk.ai_metadata.relevance_score}</p>
+          )}
+          {!!chunk.ai_metadata.key_concepts?.length && (
+            <p className="mt-1"><span className="font-medium">Key concepts:</span> {chunk.ai_metadata.key_concepts.join(', ')}</p>
+          )}
+          {!!chunk.ai_metadata.use_cases?.length && (
+            <p className="mt-1"><span className="font-medium">Use cases:</span> {chunk.ai_metadata.use_cases.join(', ')}</p>
           )}
         </div>
+      ) : (
+        <button
+          onClick={() => run(() => enrichMoreChunks(document.id, document.doc_type))}
+          disabled={isPending}
+          className="self-start rounded border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-50"
+        >
+          {isPending ? 'Generating…' : 'Generate metadata'}
+        </button>
+      )}
+
+      <div>
+        <label className="block text-sm font-medium mb-1" htmlFor="notes">Curator notes</label>
+        <textarea
+          id="notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={2}
+          className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+        />
       </div>
 
-      <p className="text-sm text-gray-500 mt-4 text-center">
-        💡 <strong>Tip:</strong> Review metadata carefully. Your notes will help Members understand
-        the context and application of this content.
-      </p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => run(() => approveChunkAction(chunk.id, document.id, notes || null))}
+          disabled={isPending}
+          className="rounded bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          Approve
+        </button>
+        <button
+          onClick={() => run(() => rejectChunkAction(chunk.id, document.id, notes || null))}
+          disabled={isPending}
+          className="rounded bg-red-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          Reject
+        </button>
+        <button
+          onClick={() => run(() => saveChunkDraftAction(chunk.id, document.id, notes || null))}
+          disabled={isPending}
+          className="rounded border border-zinc-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          Save draft
+        </button>
+        {canSubmit && (
+          <button
+            onClick={() => run(() => submitDocumentAction(document.id))}
+            disabled={isPending}
+            className="ml-auto rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Submit for admin review
+          </button>
+        )}
+      </div>
     </div>
   )
 }
