@@ -179,6 +179,8 @@ export interface AIOperationLog {
   output_tokens: number | null
   success: boolean
   error_message: string | null
+  eval_run_id: string | null
+  eval_case_id: string | null
 }
 
 export interface ChunkForReview extends DocumentChunk {
@@ -285,6 +287,139 @@ export interface WikiSourceWithEvidence extends WikiSource {
   chunk?: Pick<DocumentChunk, 'id' | 'chunk_index' | 'source_page' | 'chunk_text'> | null
 }
 
+// ============================================
+// Evaluation
+// ============================================
+
+export type EvalDatasetStatus = 'draft' | 'active' | 'archived'
+export type EvalDifficulty = 'easy' | 'medium' | 'hard'
+export type EvalRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type EvalResultStatus = 'completed' | 'failed'
+export type EvidenceSource = 'chunks' | 'wiki' | 'both'
+export type EvaluatorType = 'none' | 'llm_judge'
+// Mirrors ProviderName in src/lib/ai/index.ts -- redeclared here rather than
+// imported to avoid a database.ts <-> lib/ai circular import (lib/ai already
+// imports Database from this file).
+export type AIProviderName = 'openai' | 'gemini'
+export type FailureClassification =
+  | 'knowledge_failure'
+  | 'retrieval_failure'
+  | 'reasoning_failure'
+  | 'workflow_failure'
+  | 'tool_failure'
+  | 'behavior_failure'
+  | 'rule_failure'
+  | 'unknown'
+
+export interface EvalDataset {
+  id: string
+  name: string
+  description: string | null
+  version: number
+  status: EvalDatasetStatus
+  knowledge_base_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EvalCase {
+  id: string
+  dataset_id: string
+  question: string
+  expected_answer: string | null
+  expected_concepts: string[] | null
+  expected_article_ids: string[] | null
+  expected_chunk_ids: string[] | null
+  scoring_criteria: string | null
+  tags: string[] | null
+  difficulty: EvalDifficulty | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EvalRunConfig {
+  generation: { provider: AIProviderName; model?: string }
+  embedding: { provider: AIProviderName; model?: string; dimensions?: number }
+  retrieval: { evidence_source: EvidenceSource; top_k: number; threshold?: number }
+  evaluator: { type: EvaluatorType; provider?: AIProviderName; model?: string }
+}
+
+export interface EvalRun {
+  id: string
+  dataset_id: string
+  dataset_version: number
+  name: string | null
+  status: EvalRunStatus
+  config: EvalRunConfig
+  is_baseline: boolean
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+  created_by: string | null
+  created_at: string
+}
+
+export interface EvalError {
+  stage: string
+  code: string
+  message: string
+  occurred_at: string
+}
+
+export interface RetrievedEvidenceItem {
+  type: 'chunk' | 'wiki'
+  id: string
+  rank: number
+  similarity: number
+  title: string
+  content: string
+}
+
+export interface EvaluatorDetails {
+  provider: string
+  model: string
+  reasoning: string
+  missing_concepts: string[]
+  unsupported_claims: string[]
+}
+
+export interface EvalResult {
+  id: string
+  eval_run_id: string
+  eval_case_id: string
+  status: EvalResultStatus
+  error: EvalError | null
+  generated_answer: string | null
+  retrieved_evidence: RetrievedEvidenceItem[] | null
+  retrieval_hit: boolean | null
+  retrieval_recall: number | null
+  retrieval_mrr: number | null
+  generation_score: number | null
+  grounding_score: number | null
+  outcome_score: number | null
+  overall_score: number | null
+  latency_ms: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+  estimated_cost: number | null
+  evaluator_details: EvaluatorDetails | null
+  failure_classification: FailureClassification | null
+  human_reviewed_by: string | null
+  human_reviewed_at: string | null
+  human_accepted: boolean | null
+  human_generation_score: number | null
+  human_grounding_score: number | null
+  human_outcome_score: number | null
+  human_failure_classification: FailureClassification | null
+  human_notes: string | null
+  created_at: string
+}
+
+export interface EvalResultWithCase extends EvalResult {
+  case: Pick<EvalCase, 'question' | 'expected_answer' | 'expected_concepts' | 'expected_article_ids' | 'expected_chunk_ids'>
+}
+
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
 export type ProfileUpdate = Partial<Omit<Profile, 'id' | 'created_at'>>
 
@@ -313,6 +448,18 @@ export type WikiSourceInsert = Omit<WikiSource, 'id' | 'created_at'>
 export type WikiRelationInsert = Omit<WikiRelation, 'id' | 'created_at'>
 
 export type WikiVectorInsert = Omit<WikiVector, 'id' | 'created_at'>
+
+export type EvalDatasetInsert = Omit<EvalDataset, 'id' | 'created_at' | 'updated_at'>
+export type EvalDatasetUpdate = Partial<Omit<EvalDataset, 'id' | 'created_at'>>
+
+export type EvalCaseInsert = Omit<EvalCase, 'id' | 'created_at' | 'updated_at'>
+export type EvalCaseUpdate = Partial<Omit<EvalCase, 'id' | 'dataset_id' | 'created_at'>>
+
+export type EvalRunInsert = Omit<EvalRun, 'id' | 'created_at'>
+export type EvalRunUpdate = Partial<Omit<EvalRun, 'id' | 'dataset_id' | 'created_at'>>
+
+export type EvalResultInsert = Omit<EvalResult, 'id' | 'created_at'>
+export type EvalResultUpdate = Partial<Omit<EvalResult, 'id' | 'eval_run_id' | 'eval_case_id' | 'created_at'>>
 
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
@@ -363,6 +510,10 @@ export interface Database {
         Relationships: []
       }
       wiki_vectors: { Row: WikiVector; Insert: WikiVectorInsert; Update: Partial<WikiVector>; Relationships: [] }
+      eval_datasets: { Row: EvalDataset; Insert: EvalDatasetInsert; Update: EvalDatasetUpdate; Relationships: [] }
+      eval_cases: { Row: EvalCase; Insert: EvalCaseInsert; Update: EvalCaseUpdate; Relationships: [] }
+      eval_runs: { Row: EvalRun; Insert: EvalRunInsert; Update: EvalRunUpdate; Relationships: [] }
+      eval_results: { Row: EvalResult; Insert: EvalResultInsert; Update: EvalResultUpdate; Relationships: [] }
     }
     Views: Record<string, never>
     Functions: {
@@ -378,7 +529,23 @@ export interface Database {
           filter_doc_type?: string
           filter_use_cases?: string[]
         }
-        Returns: { id: string; content: string; similarity: number; metadata: Record<string, unknown> }[]
+        Returns: { id: string; chunk_id: string; content: string; similarity: number; metadata: Record<string, unknown> }[]
+      }
+      match_wiki_vectors: {
+        Args: {
+          query_embedding: number[]
+          match_threshold?: number
+          match_count?: number
+        }
+        Returns: {
+          id: string
+          wiki_version_id: string
+          wiki_article_id: string
+          content: string
+          similarity: number
+          article_slug: string
+          article_title: string
+        }[]
       }
     }
   }

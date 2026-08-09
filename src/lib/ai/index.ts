@@ -36,8 +36,10 @@ function buildProvider(name: ProviderName): AIProvider {
 }
 
 // Reads the active provider name from `settings` and returns a logging-wrapped
-// instance. This is the only place in the app that should construct a
-// provider directly -- everything else calls getActiveProvider().
+// instance. This is the app's default -- everything in the curator/Wiki
+// pipeline calls getActiveProvider(). Evaluation runs are the one place that
+// needs to pick a specific provider *independent* of that global setting (to
+// compare configurations), so they call getProviderByName() directly instead.
 export async function getActiveProvider(
   supabase: SupabaseClient<Database>,
   logContext: LogContext = {}
@@ -45,9 +47,12 @@ export async function getActiveProvider(
   const { data } = await supabase.from('settings').select('value').eq('key', 'ai_provider').single()
 
   const name = (typeof data?.value === 'string' ? data.value : 'openai') as ProviderName
-  if (!KNOWN_PROVIDERS.includes(name)) {
-    throw new AIConfigError(`Unknown ai_provider setting: ${JSON.stringify(data?.value)}`)
-  }
+  return getProviderByName(name, logContext)
+}
 
+export function getProviderByName(name: ProviderName, logContext: LogContext = {}): AIProvider {
+  if (!KNOWN_PROVIDERS.includes(name)) {
+    throw new AIConfigError(`Unknown provider: ${JSON.stringify(name)}`)
+  }
   return withLogging(buildProvider(name), logContext)
 }

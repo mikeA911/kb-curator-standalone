@@ -11,6 +11,8 @@ export interface LogContext {
   documentId?: string
   chunkId?: string
   requestedBy?: string
+  evalRunId?: string
+  evalCaseId?: string
 }
 
 // Wraps any AIProvider so every call is recorded in ai_operation_logs --
@@ -33,6 +35,8 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
       document_id: context.documentId ?? null,
       chunk_id: context.chunkId ?? null,
       requested_by: context.requestedBy ?? null,
+      eval_run_id: context.evalRunId ?? null,
+      eval_case_id: context.evalCaseId ?? null,
       latency_ms: Date.now() - startedAt,
       input_tokens: outcome.success ? outcome.inputTokens : null,
       output_tokens: outcome.success ? outcome.outputTokens : null,

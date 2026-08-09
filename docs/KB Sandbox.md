@@ -494,9 +494,11 @@ Canonical, versioned, source-grounded knowledge and contextual Help.
 
 **One deviation from the original brief:** `wiki_articles.knowledge_base_id` is nullable, not required. The brief's suggested schema assumed every article belongs to one curation knowledge base (like a document does), but the 30-article AI-engineering taxonomy below (Embeddings, RAG, Agent Tools, AI Governance, ...) is cross-cutting reference material, not content scoped to `fhir`/`billing`/etc. Forcing a KB assignment would misrepresent what these articles are; the column stays available for the rarer article that *is* KB-specific.
 
-### Milestone 3 — Evals
+### Milestone 3 — Evals (implemented)
 
 Evaluation datasets, cases, execution, scoring, and results.
+
+**Implemented as:** a versioned `eval_datasets` → `eval_cases` → `eval_runs` → `eval_results` pipeline. A dataset's cases are frozen by RLS the moment it leaves `draft`, so an active benchmark can't be silently invalidated. A run snapshots its full configuration (generation/embedding/retrieval/evaluator) at creation time via `getProviderByName()` rather than the app's global active-provider setting, so historical results stay interpretable after settings change later. Retrieval evaluation is deterministic-first (Hit@K, Recall@K, MRR — no LLM involved) and keeps Wiki evidence and source-chunk evidence explicitly typed throughout, so "Chunks Only / Wiki Only / Wiki + Chunks" is a real run-time configuration rather than something baked into the schema. An optional LLM-as-judge adds qualitative generation/grounding/outcome scoring via `generateStructured()`, but is never the sole evaluator. Human review is preserved in a parallel set of `human_*` columns that never overwrite the automated scores. A per-case pipeline failure produces an explicit `status='failed'` result with a structured error rather than disappearing from the run. The `/evals` UI covers dataset management, run configuration, run summary with baseline comparison, and a per-case drill-down (question / expected / retrieved / answer / scores / failure / human review). Full detail: [CURRENT-ARCHITECTURE.md](./CURRENT-ARCHITECTURE.md#evaluation-engine-milestone-3).
 
 ### Milestone 4 — First Graph
 
