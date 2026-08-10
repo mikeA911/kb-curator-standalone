@@ -14,6 +14,7 @@ export interface GenerationResult {
 // deterministic pipeline the brief asks for.
 export async function generateAnswer(
   provider: AIProvider,
+  model: string,
   question: string,
   evidence: RetrievedEvidenceItem[]
 ): Promise<GenerationResult> {
@@ -22,6 +23,7 @@ export async function generateAnswer(
     .join('\n\n')
 
   const result = await provider.generateText({
+    model,
     system:
       'You are answering a question using only the supplied evidence. Do not use outside knowledge. ' +
       'If the evidence is insufficient to answer confidently, say so explicitly rather than guessing.',

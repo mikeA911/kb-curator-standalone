@@ -1,7 +1,7 @@
 // Mirrors supabase/migrations/*.sql. Keep in sync by hand until this project
 // generates types via `supabase gen types` against the live project.
 
-export type UserRole = 'user' | 'curator' | 'admin'
+export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
 
 export type ProcessingStatus =
@@ -36,7 +36,7 @@ export interface EnrichmentError {
 
 export interface Profile {
   id: string
-  email: string
+  email: string | null
   full_name: string | null
   role: UserRole
   is_active: boolean
@@ -49,6 +49,7 @@ export interface KnowledgeBase {
   id: string
   name: string
   description: string | null
+  project_id: string | null
   created_at: string
   updated_at: string
 }
@@ -223,6 +224,10 @@ export interface WikiArticle {
   short_description: string | null
   current_version_id: string | null
   status: WikiArticleStatus
+  // Separate from status='approved' -- approved means "trusted canonical
+  // knowledge", public means "safe for anonymous disclosure". Set only via
+  // setArticlePublicAction (admin-only).
+  is_public: boolean
   created_by: string | null
   created_at: string
   updated_at: string
@@ -291,16 +296,85 @@ export interface WikiSourceWithEvidence extends WikiSource {
 // Evaluation
 // ============================================
 
+export type ProjectType = 'learning' | 'experiment' | 'consulting' | 'transformation' | 'knowledge'
+export type ProjectStatus = 'draft' | 'active' | 'completed' | 'archived'
+
+// private = members/admin only (default, never auto-changed). internal =
+// any authenticated user can view (editing still gated by project_members).
+// public = a deliberately published presentation, visible with no session
+// at all. Publishing is owner/admin only (see can_manage_project) -- never
+// implied by curator/consultant project access.
+export type ProjectVisibility = 'private' | 'internal' | 'public'
+
+// Hand-authored public presentation content -- deliberately NOT a live
+// rollup of eval_results (see publishProjectAction) and deliberately not
+// one DB column per section. benchmarkSummary is a safe, curated summary
+// table, never raw eval_run/eval_result rows.
+export interface PublicProjectProfile {
+  title?: string
+  summary?: string
+  problem?: string
+  approach?: string
+  findings?: string
+  conclusion?: string
+  benchmarkSummary?: {
+    name: string
+    rows: { metric: string; baseline?: string; variant?: string }[]
+  }
+  relatedWikiSlugs?: string[]
+}
+
+export interface Project {
+  id: string
+  name: string
+  project_type: ProjectType
+  objective: string | null
+  status: ProjectStatus
+  notes: string | null
+  // Type-specific fields (hypothesis, success_criteria, business_problem, ...)
+  // live here rather than as a wide table of nullable columns -- no template
+  // engine, per the Project Model brief's explicit scope limit.
+  details: Record<string, string>
+  owner_id: string | null
+  visibility: ProjectVisibility
+  public_slug: string | null
+  public_profile: PublicProjectProfile | null
+  published_at: string | null
+  published_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Project role (owner/curator/consultant/viewer) is deliberately a separate
+// concept from platform role (UserRole, above) -- one controls what someone
+// can administer across KB Sandbox, the other what they can do inside one
+// specific project. Granting 'consultant' in one project must never imply
+// access to another.
+export type ProjectRole = 'owner' | 'curator' | 'consultant' | 'viewer'
+export type ProjectMemberStatus = 'active' | 'inactive'
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  role: ProjectRole
+  status: ProjectMemberStatus
+  created_at: string
+  updated_at: string
+}
+
 export type EvalDatasetStatus = 'draft' | 'active' | 'archived'
 export type EvalDifficulty = 'easy' | 'medium' | 'hard'
 export type EvalRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type EvalResultStatus = 'completed' | 'failed'
 export type EvidenceSource = 'chunks' | 'wiki' | 'both'
 export type EvaluatorType = 'none' | 'llm_judge'
-// Mirrors ProviderName in src/lib/ai/index.ts -- redeclared here rather than
-// imported to avoid a database.ts <-> lib/ai circular import (lib/ai already
-// imports Database from this file).
-export type AIProviderName = 'openai' | 'gemini'
+// Was a fixed 'openai' | 'gemini' union; providers are now admin-managed rows
+// (see ai_providers/ai_models below) rather than a compile-time enum, so this
+// is just ai_providers.name at the type level. Kept as a named alias (rather
+// than inlining `string` at every call site) so the intent -- "this is a
+// provider name" -- stays legible.
+export type AIProviderName = string
 export type FailureClassification =
   | 'knowledge_failure'
   | 'retrieval_failure'
@@ -311,6 +385,55 @@ export type FailureClassification =
   | 'rule_failure'
   | 'unknown'
 
+// ============================================
+// AI provider/model registry
+// ============================================
+
+export type AIProviderType = 'openai' | 'gemini' | 'groq' | 'openai_compatible'
+export type AIModelType = 'generation' | 'embedding' | 'speech' | 'multimodal'
+export type AIModelStatus = 'active' | 'deprecated' | 'disabled' | 'unavailable'
+
+export interface AIProviderRow {
+  id: string
+  name: string
+  provider_type: AIProviderType
+  display_name: string
+  base_url: string | null
+  // The env var NAME (e.g. 'GROQ_API_KEY'), never the secret value itself.
+  api_key_env_var: string
+  enabled: boolean
+  supports_model_discovery: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AIModelRow {
+  id: string
+  provider_id: string
+  model_id: string
+  display_name: string
+  model_type: AIModelType
+  enabled: boolean
+  is_default: boolean
+  context_window: number | null
+  max_output_tokens: number | null
+  input_cost_per_million: number | null
+  output_cost_per_million: number | null
+  embedding_dimensions: number | null
+  supports_structured_output: boolean
+  supports_tools: boolean
+  supports_reasoning: boolean
+  supports_vision: boolean
+  supports_embeddings: boolean
+  status: AIModelStatus
+  deprecation_date: string | null
+  replacement_model_id: string | null
+  notes: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export interface EvalDataset {
   id: string
   name: string
@@ -318,6 +441,7 @@ export interface EvalDataset {
   version: number
   status: EvalDatasetStatus
   knowledge_base_id: string | null
+  project_id: string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -339,9 +463,14 @@ export interface EvalCase {
 }
 
 export interface EvalRunConfig {
-  generation: { provider: AIProviderName; model?: string }
-  embedding: { provider: AIProviderName; model?: string; dimensions?: number }
+  // model is required, not optional -- a run must snapshot exactly which
+  // model was tested (see the brief this shipped with: "historical eval runs
+  // must continue to record the actual model tested").
+  generation: { provider: AIProviderName; model: string }
+  embedding: { provider: AIProviderName; model: string; dimensions?: number }
   retrieval: { evidence_source: EvidenceSource; top_k: number; threshold?: number }
+  // provider/model stay optional as a pair -- evaluator.type='none' genuinely
+  // has neither.
   evaluator: { type: EvaluatorType; provider?: AIProviderName; model?: string }
 }
 
@@ -436,8 +565,8 @@ export type ChunkUpdate = Partial<Omit<DocumentChunk, 'id' | 'document_id' | 'ch
 export type KBVectorInsert = Omit<KBVector, 'id' | 'approved_date' | 'last_updated'>
 export type KBVectorUpdate = Partial<Omit<KBVector, 'id' | 'chunk_id' | 'document_id' | 'approved_date'>>
 
-export type WikiArticleInsert = Omit<WikiArticle, 'id' | 'created_at' | 'updated_at' | 'current_version_id'> &
-  Partial<Pick<WikiArticle, 'current_version_id'>>
+export type WikiArticleInsert = Omit<WikiArticle, 'id' | 'created_at' | 'updated_at' | 'current_version_id' | 'is_public'> &
+  Partial<Pick<WikiArticle, 'current_version_id' | 'is_public'>>
 export type WikiArticleUpdate = Partial<Omit<WikiArticle, 'id' | 'created_at'>>
 
 export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at'>
@@ -460,6 +589,25 @@ export type EvalRunUpdate = Partial<Omit<EvalRun, 'id' | 'dataset_id' | 'created
 
 export type EvalResultInsert = Omit<EvalResult, 'id' | 'created_at'>
 export type EvalResultUpdate = Partial<Omit<EvalResult, 'id' | 'eval_run_id' | 'eval_case_id' | 'created_at'>>
+
+// visibility/public_slug/public_profile/published_at/published_by are all
+// optional at insert time -- a plain project creation never touches
+// publication state, only publishProjectAction does.
+export type ProjectInsert = Omit<
+  Project,
+  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by'
+> &
+  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by'>>
+export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
+
+export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
+export type ProjectMemberUpdate = Partial<Omit<ProjectMember, 'id' | 'project_id' | 'user_id' | 'created_at'>>
+
+export type AIProviderInsert = Omit<AIProviderRow, 'id' | 'created_at' | 'updated_at'>
+export type AIProviderUpdate = Partial<Omit<AIProviderRow, 'id' | 'created_at'>>
+
+export type AIModelInsert = Omit<AIModelRow, 'id' | 'created_at' | 'updated_at'>
+export type AIModelUpdate = Partial<Omit<AIModelRow, 'id' | 'provider_id' | 'created_at'>>
 
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
@@ -514,6 +662,10 @@ export interface Database {
       eval_cases: { Row: EvalCase; Insert: EvalCaseInsert; Update: EvalCaseUpdate; Relationships: [] }
       eval_runs: { Row: EvalRun; Insert: EvalRunInsert; Update: EvalRunUpdate; Relationships: [] }
       eval_results: { Row: EvalResult; Insert: EvalResultInsert; Update: EvalResultUpdate; Relationships: [] }
+      projects: { Row: Project; Insert: ProjectInsert; Update: ProjectUpdate; Relationships: [] }
+      project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
+      ai_providers: { Row: AIProviderRow; Insert: AIProviderInsert; Update: AIProviderUpdate; Relationships: [] }
+      ai_models: { Row: AIModelRow; Insert: AIModelInsert; Update: AIModelUpdate; Relationships: [] }
     }
     Views: Record<string, never>
     Functions: {

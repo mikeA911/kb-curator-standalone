@@ -3,18 +3,26 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { WikiArticleStatus } from '@/types/database'
-import { submitArticleForReviewAction, approveArticleAction, rejectArticleAction, archiveArticleAction } from '@/app/actions/wiki'
+import {
+  submitArticleForReviewAction,
+  approveArticleAction,
+  rejectArticleAction,
+  archiveArticleAction,
+  setArticlePublicAction,
+} from '@/app/actions/wiki'
 
 export function ArticleReviewActions({
   articleId,
   versionId,
   status,
   isAdmin,
+  isPublic,
 }: {
   articleId: string
   versionId: string
   status: WikiArticleStatus
   isAdmin: boolean
+  isPublic: boolean
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -81,6 +89,23 @@ export function ArticleReviewActions({
       >
         Archive
       </button>
+    )
+  }
+
+  // Only meaningful (and only RLS-visible to anon) once approved -- a
+  // draft/review article being "public" would be a no-op, so don't offer
+  // the toggle before that point.
+  if (status === 'approved' && isAdmin) {
+    actions.push(
+      <label key="public" className="flex items-center gap-1.5 text-sm">
+        <input
+          type="checkbox"
+          checked={isPublic}
+          disabled={isPending}
+          onChange={(e) => run(() => setArticlePublicAction(articleId, e.target.checked))}
+        />
+        Public (visible without sign-in)
+      </label>
     )
   }
 

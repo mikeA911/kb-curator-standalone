@@ -23,11 +23,12 @@ export interface RetrievalResult {
 // vs "Wiki Only" vs "Wiki + Chunks" as different retrieval configurations.
 export async function retrieveEvidence(
   supabase: SupabaseClient<Database>,
-  provider: AIProvider,
+  embeddingProvider: AIProvider,
+  embeddingModel: string,
   question: string,
   config: RetrievalConfig
 ): Promise<RetrievalResult> {
-  const embedding = await provider.embed({ text: question })
+  const embedding = await embeddingProvider.embed({ text: question, model: embeddingModel })
   const threshold = config.threshold ?? 0
 
   const [chunkItems, wikiItems] = await Promise.all([

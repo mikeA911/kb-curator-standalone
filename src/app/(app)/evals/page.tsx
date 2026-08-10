@@ -18,6 +18,14 @@ const RUN_STATUS_STYLES: Record<string, string> = {
 export default async function EvalsPage() {
   const supabase = await createClient()
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const { data: viewerProfile } = user
+    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
+    : { data: null }
+  const canAuthor = viewerProfile?.role === 'curator' || viewerProfile?.role === 'admin'
+
   const [{ data: datasets }, { data: runs }] = await Promise.all([
     supabase.from('eval_datasets').select('*').order('created_at', { ascending: false }),
     supabase
@@ -33,9 +41,11 @@ export default async function EvalsPage() {
     <div className="flex flex-col gap-8">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Evals</h1>
-        <Link href="/evals/datasets/new" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
-          New dataset
-        </Link>
+        {canAuthor && (
+          <Link href="/evals/datasets/new" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
+            New dataset
+          </Link>
+        )}
       </div>
 
       <section className="flex flex-col gap-3">

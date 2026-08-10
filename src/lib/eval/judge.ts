@@ -26,13 +26,15 @@ export interface JudgeResult {
 // reviewer's human_* columns on eval_results are the last word, not this.
 export async function judgeAnswer(
   provider: AIProvider,
+  model: string,
   evalCase: Pick<EvalCase, 'question' | 'expected_answer' | 'expected_concepts' | 'scoring_criteria'>,
   evidence: RetrievedEvidenceItem[],
   generatedAnswer: string
 ): Promise<JudgeResult> {
   const evidenceBlock = evidence.map((item, i) => `[${i + 1}] (${item.type}: ${item.title})\n${item.content}`).join('\n\n')
 
-  const { data } = await provider.generateStructured({
+  const { data, model: resolvedModel } = await provider.generateStructured({
+    model,
     system:
       'You are an evaluator scoring an AI-generated answer against retrieved evidence and expected criteria. ' +
       'Be precise and skeptical -- do not give credit for claims the evidence does not actually support.',
@@ -60,7 +62,7 @@ export async function judgeAnswer(
     outcomeScore: data.outcome_score,
     details: {
       provider: provider.name,
-      model: 'active-provider-default',
+      model: resolvedModel,
       reasoning: data.reasoning,
       missing_concepts: data.missing_concepts,
       unsupported_claims: data.unsupported_claims,

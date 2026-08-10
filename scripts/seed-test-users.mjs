@@ -11,7 +11,7 @@ function randomPassword() {
   return crypto.randomBytes(12).toString('base64url') + 'aA1!'
 }
 
-const ROLES = ['user', 'curator', 'admin']
+const ROLES = ['consultant', 'curator', 'admin']
 const ALL_KBS = ['fhir', 'vbc', 'grants', 'billing']
 
 async function findUserByEmail(email) {
@@ -56,7 +56,7 @@ for (const role of ROLES) {
     full_name: `Test ${role[0].toUpperCase()}${role.slice(1)}`,
     role,
     is_active: true,
-    assigned_kbs: role === 'user' ? [] : ALL_KBS,
+    assigned_kbs: role === 'consultant' ? [] : ALL_KBS,
   })
   if (profileError) throw profileError
 

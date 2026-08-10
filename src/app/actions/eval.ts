@@ -86,14 +86,22 @@ export async function createAndRunEvalAction(input: {
   name: string
   config: EvalRunConfig
 }) {
-  const { user, supabase } = await requireRole('curator')
+  const { user, profile, supabase } = await requireRole('consultant')
 
   const { data: dataset, error: datasetError } = await supabase
     .from('eval_datasets')
-    .select('version')
+    .select('version, status')
     .eq('id', input.datasetId)
     .single()
   if (datasetError || !dataset) throw datasetError ?? new Error('Dataset not found')
+
+  // Consultants may only run against a published benchmark, never a draft
+  // still being authored -- curator/admin keep the ability to test-run
+  // against a draft before activating it. RLS enforces the same boundary
+  // independently (20260810100004_eval_consultant_access.sql).
+  if (profile.role === 'consultant' && dataset.status !== 'active') {
+    throw new EvalValidationError('This benchmark is not active yet')
+  }
 
   const { data: run, error: runError } = await supabase
     .from('eval_runs')

@@ -22,15 +22,22 @@ export function Header({ profile }: { profile: Profile }) {
           <Link href="/dashboard" className="font-semibold tracking-tight">KB Sandbox</Link>
           <nav className="flex gap-4 text-sm text-zinc-600">
             <Link href="/dashboard" className="hover:text-zinc-900">Dashboard</Link>
-            <Link href="/upload" className="hover:text-zinc-900">Upload</Link>
+            <Link href="/projects" className="hover:text-zinc-900">Projects</Link>
             <Link href="/wiki" className="hover:text-zinc-900">Wiki</Link>
+            <Link href="/evals" className="hover:text-zinc-900">Evals</Link>
             {(profile.role === 'curator' || profile.role === 'admin') && (
-              <Link href="/admin" className="hover:text-zinc-900">Admin</Link>
+              <Link href="/upload" className="hover:text-zinc-900">Upload</Link>
             )}
+            {profile.role === 'admin' && (
+              <Link href="/admin" className="hover:text-zinc-900">Administration</Link>
+            )}
+            <Link href="/about" className="hover:text-zinc-900">About</Link>
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-600">
-          <span>{profile.email} · {profile.role}</span>
+          <Link href="/profile" className="hover:text-zinc-900">
+            {profile.email ?? 'anonymous'} · {profile.role}
+          </Link>
           <button onClick={handleSignOut} className="underline">Sign out</button>
         </div>
       </div>

@@ -1,0 +1,127 @@
+-- ==== supabase/migrations/20260810110001_ai_providers_and_models.sql ====
+-- Provider/model registry, replacing the old single settings.ai_provider
+-- key. Providers and models are now admin-managed rows rather than a
+-- hard-coded TS union -- this is what lets a cheap/free provider (Groq) or a
+-- future local/enterprise OpenAI-compatible gateway be added without
+-- touching application code.
+create table ai_providers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  provider_type text not null check (provider_type in ('openai', 'gemini', 'groq', 'openai_compatible')),
+  display_name text not null,
+  base_url text,
+  -- The env var NAME, never the secret value itself -- see the RLS/action
+  -- layer, which only ever reports Configured/Missing by checking
+  -- process.env[api_key_env_var] server-side.
+  api_key_env_var text not null,
+  enabled boolean not null default true,
+  supports_model_discovery boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists ai_providers_set_updated_at on ai_providers;
+create trigger ai_providers_set_updated_at before update on ai_providers
+  for each row execute function set_updated_at();
+
+create table ai_models (
+  id uuid primary key default gen_random_uuid(),
+  provider_id uuid not null references ai_providers(id) on delete cascade,
+  model_id text not null,
+  display_name text not null,
+  model_type text not null check (model_type in ('generation', 'embedding', 'speech', 'multimodal')),
+  enabled boolean not null default true,
+  is_default boolean not null default false,
+  context_window integer,
+  max_output_tokens integer,
+  input_cost_per_million numeric,
+  output_cost_per_million numeric,
+  embedding_dimensions integer,
+  supports_structured_output boolean not null default false,
+  supports_tools boolean not null default false,
+  supports_reasoning boolean not null default false,
+  supports_vision boolean not null default false,
+  supports_embeddings boolean not null default false,
+  status text not null default 'active' check (status in ('active', 'deprecated', 'disabled', 'unavailable')),
+  deprecation_date date,
+  replacement_model_id uuid references ai_models(id) on delete set null,
+  notes text,
+  metadata jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (provider_id, model_id)
+);
+
+drop trigger if exists ai_models_set_updated_at on ai_models;
+create trigger ai_models_set_updated_at before update on ai_models
+  for each row execute function set_updated_at();
+
+-- At most one default per model_type across the whole registry (a partial
+-- unique index, not a boolean pair) -- "the default generation model" and
+-- "the default embedding model" fall out naturally from model_type without
+-- a separate is_default_generation/is_default_embedding column pair.
+create unique index ai_models_one_default_per_type on ai_models(model_type) where is_default;
+
+-- RLS -------------------------------------------------------------------------
+-- Any authenticated, active, non-anonymous session can read enabled
+-- providers/models (curators and consultants both need to *choose* a model
+-- in the Eval UI); only admin can register or change providers/models --
+-- "Model/provider configuration is admin-only" per the brief.
+alter table ai_providers enable row level security;
+
+create policy "ai_providers_select_staff_or_consultant" on ai_providers
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "ai_providers_admin_manage" on ai_providers
+  for all using (is_admin(auth.uid())) with check (is_admin(auth.uid()));
+
+alter table ai_models enable row level security;
+
+create policy "ai_models_select_staff_or_consultant" on ai_models
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "ai_models_admin_manage" on ai_models
+  for all using (is_admin(auth.uid())) with check (is_admin(auth.uid()));
+
+
+-- ==== supabase/migrations/20260810110002_seed_ai_providers.sql ====
+-- Seed the registry with what the app already had (openai, gemini) plus the
+-- new Groq provider. Embedding stays on Gemini (matches vector(1536) in
+-- kb_vectors/wiki_vectors -- "do not change the vector schema merely to add
+-- generation providers"). Generation default moves to Groq's smallest/
+-- fastest suggested model since OpenAI credits are exhausted and Gemini
+-- quota is limited -- exactly the brief's own "Suggested Immediate
+-- Configuration".
+insert into ai_providers (name, provider_type, display_name, base_url, api_key_env_var, enabled, supports_model_discovery) values
+  ('openai', 'openai', 'OpenAI', null, 'OPENAI_API_KEY', true, true),
+  ('gemini', 'gemini', 'Gemini', null, 'GOOGLE_API_KEY', true, false),
+  ('groq', 'groq', 'Groq', 'https://api.groq.com/openai/v1', 'GROQ_API_KEY', true, true);
+
+-- openai models -- not default (credits exhausted, per the brief's own
+-- motivation for this whole feature), but registered and enabled so they
+-- work again the moment credits return.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'gpt-4o-mini', 'GPT-4o mini', 'generation', false, true, true from ai_providers where name = 'openai';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, embedding_dimensions)
+select id, 'text-embedding-3-small', 'text-embedding-3-small', 'embedding', false, 1536 from ai_providers where name = 'openai';
+
+-- gemini models -- embedding default.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_reasoning)
+select id, 'gemini-3.5-flash', 'Gemini 3.5 Flash', 'generation', false, true, true from ai_providers where name = 'gemini';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, embedding_dimensions)
+select id, 'gemini-embedding-001', 'gemini-embedding-001', 'embedding', true, 1536 from ai_providers where name = 'gemini';
+
+-- groq models -- generation default. Development-candidate models named in
+-- the brief; none flagged as already-deprecated at the time of writing.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'openai/gpt-oss-20b', 'GPT-OSS 20B', 'generation', true, true, true from ai_providers where name = 'groq';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'openai/gpt-oss-120b', 'GPT-OSS 120B', 'generation', false, true, true from ai_providers where name = 'groq';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'qwen/qwen3.6-27b', 'Qwen 3.6 27B', 'generation', false, true, true from ai_providers where name = 'groq';
+
+

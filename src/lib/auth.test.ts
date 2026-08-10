@@ -18,7 +18,11 @@ describe('hasRequiredRole', () => {
     expect(hasRequiredRole('curator', 'curator')).toBe(true)
   })
 
-  it('rejects a plain user against a curator-only gate', () => {
-    expect(hasRequiredRole('user', 'curator')).toBe(false)
+  it('rejects a consultant against a curator-only gate', () => {
+    expect(hasRequiredRole('consultant', 'curator')).toBe(false)
+  })
+
+  it('rejects an anonymous session against a consultant-only gate', () => {
+    expect(hasRequiredRole('anonymous', 'consultant')).toBe(false)
   })
 })

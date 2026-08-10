@@ -12,21 +12,23 @@ import type {
 import { AIProviderError } from './provider'
 import { extractJsonObject } from './json-extract'
 
-const TEXT_MODEL = 'gpt-4o-mini'
-const EMBED_MODEL = 'text-embedding-3-small'
-
 export class OpenAIProvider implements AIProvider {
   readonly name = 'openai'
   private client: OpenAI
 
-  constructor(apiKey: string) {
+  constructor(
+    apiKey: string,
+    private defaultTextModel: string = 'gpt-4o-mini',
+    private defaultEmbedModel: string = 'text-embedding-3-small'
+  ) {
     this.client = new OpenAI({ apiKey })
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextResult> {
+    const model = input.model ?? this.defaultTextModel
     try {
       const res = await this.client.chat.completions.create({
-        model: TEXT_MODEL,
+        model,
         messages: [
           ...(input.system ? [{ role: 'system' as const, content: input.system }] : []),
           { role: 'user' as const, content: input.prompt },
@@ -35,7 +37,7 @@ export class OpenAIProvider implements AIProvider {
       })
       return {
         text: res.choices[0]?.message?.content ?? '',
-        model: TEXT_MODEL,
+        model,
         usage: {
           inputTokens: res.usage?.prompt_tokens ?? null,
           outputTokens: res.usage?.completion_tokens ?? null,
@@ -47,10 +49,11 @@ export class OpenAIProvider implements AIProvider {
   }
 
   async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<GenerateStructuredResult<T>> {
+    const model = input.model ?? this.defaultTextModel
     let raw = '{}'
     try {
       const res = await this.client.chat.completions.create({
-        model: TEXT_MODEL,
+        model,
         messages: [
           ...(input.system ? [{ role: 'system' as const, content: input.system }] : []),
           { role: 'user' as const, content: `${input.prompt}\n\nRespond with a single JSON object only, no prose, no markdown fences.` },
@@ -62,7 +65,7 @@ export class OpenAIProvider implements AIProvider {
       const data = input.schema.parse(extractJsonObject(raw))
       return {
         data,
-        model: TEXT_MODEL,
+        model,
         usage: {
           inputTokens: res.usage?.prompt_tokens ?? null,
           outputTokens: res.usage?.completion_tokens ?? null,
@@ -74,12 +77,13 @@ export class OpenAIProvider implements AIProvider {
   }
 
   async embed(input: EmbedInput): Promise<EmbedResult> {
+    const model = input.model ?? this.defaultEmbedModel
     try {
-      const res = await this.client.embeddings.create({ model: EMBED_MODEL, input: input.text })
+      const res = await this.client.embeddings.create({ model, input: input.text })
       const embedding = res.data[0]?.embedding ?? []
       return {
         embedding,
-        model: EMBED_MODEL,
+        model,
         dimensions: embedding.length,
         usage: { inputTokens: res.usage?.prompt_tokens ?? null, outputTokens: null },
       }

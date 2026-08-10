@@ -1,6 +1,6 @@
 -- GENERATED CONVENIENCE FILE -- not itself a migration, not maintained by hand.
--- This is supabase/migrations/*.sql concatenated in order (Milestones 1-3 + seeds),
--- for pasting into the Supabase SQL Editor in one shot on a fresh project.
+-- This is supabase/migrations/*.sql concatenated in order, for pasting into the
+-- Supabase SQL Editor in one shot on a fresh project.
 -- The individual files in supabase/migrations/ are the source of truth.
 
 -- ==== supabase/migrations/20260808190001_extensions.sql ====
@@ -1014,3 +1014,677 @@ language sql stable as $$
 $$;
 
 
+-- ==== supabase/migrations/20260810100001_role_consultant_anonymous.sql ====
+-- Renames the 'user' role to 'consultant' (matching the UI/Roles brief's own
+-- language -- "user may function as CONSULTANT" becomes literal) and adds a
+-- new 'anonymous' role for unauthenticated visitors (real Supabase anonymous
+-- auth sessions, wired up separately). Only two places in the schema ever
+-- referenced the literal 'user' string -- the check constraint below and the
+-- self-insert RLS policy in 20260808190010_rls_policies.sql -- both updated
+-- together here.
+
+-- Drop the constraint entirely before the backfill: the old constraint
+-- rejects 'consultant', and adding the new constraint before the backfill
+-- would immediately reject the still-present 'user' rows (Postgres validates
+-- existing rows against a new CHECK constraint at ADD time). So: drop, then
+-- backfill data, then add the new constraint once every row already
+-- satisfies it.
+alter table profiles drop constraint profiles_role_check;
+
+update profiles set role = 'consultant' where role = 'user';
+
+alter table profiles add constraint profiles_role_check
+  check (role in ('anonymous', 'consultant', 'curator', 'admin'));
+alter table profiles alter column role set default 'consultant';
+
+-- Anonymous auth.users rows have no email; nullable so ensureProfile() can
+-- insert an anonymous profile without a placeholder value.
+alter table profiles alter column email drop not null;
+
+-- Replace the single self-insert policy with two, split on whether the
+-- session is a real Supabase anonymous session (auth.users.is_anonymous) --
+-- this is what actually prevents an anonymous session from self-inserting as
+-- 'consultant' (privilege escalation blocked at the RLS layer, not just in
+-- application code).
+drop policy "profiles_insert_self" on profiles;
+
+create policy "profiles_insert_self_consultant" on profiles
+  for insert with check (
+    auth.uid() = id and role = 'consultant' and is_active = true
+    and not exists (select 1 from auth.users u where u.id = auth.uid() and u.is_anonymous)
+  );
+
+create policy "profiles_insert_self_anonymous" on profiles
+  for insert with check (
+    auth.uid() = id and role = 'anonymous' and is_active = true
+    and exists (select 1 from auth.users u where u.id = auth.uid() and u.is_anonymous)
+  );
+
+
+-- ==== supabase/migrations/20260810100002_projects.sql ====
+-- `projects` -- new top-level container per the Project Model brief. Deliberately
+-- separate from `knowledge_bases` (a project is broader than a knowledge base;
+-- knowledge_bases/eval_datasets link into a project via a nullable FK, added
+-- in the next migration, rather than renaming knowledge_bases into projects).
+-- `create table if not exists` since this table may already have been created
+-- manually against the live project while this migration file was in progress.
+create table if not exists projects (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  project_type text not null check (project_type in ('learning', 'experiment', 'consulting', 'transformation', 'knowledge')),
+  objective text,
+  status text not null default 'draft' check (status in ('draft', 'active', 'completed', 'archived')),
+  notes text,
+  -- Type-specific fields (hypothesis, success_criteria, business_problem, ...)
+  -- live here rather than as a wide table of nullable columns -- no template
+  -- engine per the brief's explicit scope limit; the UI renders a few fields
+  -- based on project_type and reads/writes them into this bag.
+  details jsonb not null default '{}',
+  owner_id uuid references profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists projects_set_updated_at on projects;
+create trigger projects_set_updated_at before update on projects
+  for each row execute function set_updated_at();
+
+
+-- ==== supabase/migrations/20260810100003_projects_fks_and_rls.sql ====
+-- Nullable project_id links from existing entities -- direct FK rather than
+-- a join table, per the brief's "choose the simplest clean architecture"
+-- guidance (project_knowledge_bases/project_eval_datasets join tables would
+-- only earn their keep once a KB or dataset needs to belong to more than one
+-- project, which isn't a requirement yet).
+alter table knowledge_bases add column if not exists project_id uuid references projects(id) on delete set null;
+alter table eval_datasets add column if not exists project_id uuid references projects(id) on delete set null;
+
+-- projects RLS ----------------------------------------------------------------
+-- No project-membership model yet (owner/curator/consultant/viewer *within* a
+-- project) -- deferred per the brief's explicit allowance until justified by
+-- real multi-project use. For now: any non-anonymous staff/consultant can see
+-- every project (mirrors how documents/knowledge_bases aren't per-user siloed
+-- elsewhere in this app either); only the owner or curator/admin can update;
+-- anonymous sessions get no access at all.
+alter table projects enable row level security;
+
+create policy "projects_select_staff_or_consultant" on projects
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "projects_insert_self" on projects
+  for insert with check (
+    owner_id = auth.uid()
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "projects_update_owner_or_staff" on projects
+  for update using (owner_id = auth.uid() or is_curator_or_admin(auth.uid()))
+  with check (owner_id = auth.uid() or is_curator_or_admin(auth.uid()));
+
+
+-- ==== supabase/migrations/20260810100004_eval_consultant_access.sql ====
+-- Additive consultant access to Evals, per the UI/Roles brief's permission
+-- matrix: consultants may view active benchmarks, run evaluations against
+-- them, and view results -- but never author/edit cases, activate/archive
+-- datasets, or mark baselines (those stay curator/admin, unchanged in
+-- 20260809110004_eval_rls.sql). Every policy here is scoped to datasets with
+-- status = 'active' -- a consultant can never see or run against a draft
+-- benchmark still being authored. Anonymous sessions get nothing (not
+-- referenced by any of these policies).
+
+create policy "eval_datasets_select_active_consultant" on eval_datasets
+  for select using (
+    status = 'active'
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "eval_cases_select_active_consultant" on eval_cases
+  for select using (
+    exists (select 1 from eval_datasets d where d.id = eval_cases.dataset_id and d.status = 'active')
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "eval_runs_select_active_consultant" on eval_runs
+  for select using (
+    exists (select 1 from eval_datasets d where d.id = eval_runs.dataset_id and d.status = 'active')
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "eval_runs_insert_active_consultant" on eval_runs
+  for insert with check (
+    created_by = auth.uid()
+    and exists (select 1 from eval_datasets d where d.id = eval_runs.dataset_id and d.status = 'active')
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "eval_results_select_active_consultant" on eval_results
+  for select using (
+    exists (
+      select 1 from eval_runs r join eval_datasets d on d.id = r.dataset_id
+      where r.id = eval_results.eval_run_id and d.status = 'active'
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "eval_results_insert_active_consultant" on eval_results
+  for insert with check (
+    exists (
+      select 1 from eval_runs r join eval_datasets d on d.id = r.dataset_id
+      where r.id = eval_results.eval_run_id and d.status = 'active'
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+
+-- ==== supabase/migrations/20260810100005_eval_runs_update_consultant.sql ====
+-- Missed in 20260810100004: executeEvalRun's own status transitions
+-- (pending -> running -> completed/failed) run as UPDATE statements using the
+-- caller's session -- when the caller is a consultant, those updates were
+-- silently blocked by RLS (no matching UPDATE policy on eval_runs), leaving
+-- every consultant-run evaluation permanently stuck at status='pending' even
+-- though its results were inserted successfully (confirmed live: a
+-- consultant test run showed real scores in the UI but status never left
+-- 'pending'). Scoped to the consultant's own run (created_by = auth.uid()),
+-- matching the ownership check already used by
+-- eval_runs_insert_active_consultant.
+create policy "eval_runs_update_own_consultant" on eval_runs
+  for update using (
+    created_by = auth.uid()
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  )
+  with check (
+    created_by = auth.uid()
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+
+-- ==== supabase/migrations/20260810100006_consultant_vector_read_access.sql ====
+-- Second half of the same bug class as 20260810100005: match_documents and
+-- match_wiki_vectors are plain `language sql stable` functions (not
+-- SECURITY DEFINER), so they run under RLS with the *caller's* permissions.
+-- kb_vectors and wiki_vectors were both curator/admin-only, so a consultant
+-- running an eval got zero evidence back from either RPC no matter the
+-- retrieval config -- confirmed live: a consultant-run "wiki only"
+-- evaluation showed 0% Hit@K on a benchmark that scores ~100% for the same
+-- config run as curator/admin, because retrieval silently returned nothing.
+--
+-- Safe to open up broadly: kb_vectors only ever contains chunks that were
+-- already curator-approved (see 20260808190006_kb_vectors.sql's write path),
+-- and wiki_vectors only ever contains content embedded at Wiki *approval*
+-- time (embedApprovedVersion in src/lib/wiki/review.ts) -- both tables are
+-- already "approved knowledge only" by construction, matching the UI/Roles
+-- brief's "Consultant: query approved RAG sources, inspect retrieved
+-- evidence" capability.
+create policy "kb_vectors_select_consultant" on kb_vectors
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+create policy "wiki_vectors_select_consultant" on wiki_vectors
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+
+-- ==== supabase/migrations/20260810110001_ai_providers_and_models.sql ====
+-- Provider/model registry, replacing the old single settings.ai_provider
+-- key. Providers and models are now admin-managed rows rather than a
+-- hard-coded TS union -- this is what lets a cheap/free provider (Groq) or a
+-- future local/enterprise OpenAI-compatible gateway be added without
+-- touching application code.
+create table ai_providers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  provider_type text not null check (provider_type in ('openai', 'gemini', 'groq', 'openai_compatible')),
+  display_name text not null,
+  base_url text,
+  -- The env var NAME, never the secret value itself -- see the RLS/action
+  -- layer, which only ever reports Configured/Missing by checking
+  -- process.env[api_key_env_var] server-side.
+  api_key_env_var text not null,
+  enabled boolean not null default true,
+  supports_model_discovery boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists ai_providers_set_updated_at on ai_providers;
+create trigger ai_providers_set_updated_at before update on ai_providers
+  for each row execute function set_updated_at();
+
+create table ai_models (
+  id uuid primary key default gen_random_uuid(),
+  provider_id uuid not null references ai_providers(id) on delete cascade,
+  model_id text not null,
+  display_name text not null,
+  model_type text not null check (model_type in ('generation', 'embedding', 'speech', 'multimodal')),
+  enabled boolean not null default true,
+  is_default boolean not null default false,
+  context_window integer,
+  max_output_tokens integer,
+  input_cost_per_million numeric,
+  output_cost_per_million numeric,
+  embedding_dimensions integer,
+  supports_structured_output boolean not null default false,
+  supports_tools boolean not null default false,
+  supports_reasoning boolean not null default false,
+  supports_vision boolean not null default false,
+  supports_embeddings boolean not null default false,
+  status text not null default 'active' check (status in ('active', 'deprecated', 'disabled', 'unavailable')),
+  deprecation_date date,
+  replacement_model_id uuid references ai_models(id) on delete set null,
+  notes text,
+  metadata jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (provider_id, model_id)
+);
+
+drop trigger if exists ai_models_set_updated_at on ai_models;
+create trigger ai_models_set_updated_at before update on ai_models
+  for each row execute function set_updated_at();
+
+-- At most one default per model_type across the whole registry (a partial
+-- unique index, not a boolean pair) -- "the default generation model" and
+-- "the default embedding model" fall out naturally from model_type without
+-- a separate is_default_generation/is_default_embedding column pair.
+create unique index ai_models_one_default_per_type on ai_models(model_type) where is_default;
+
+-- RLS -------------------------------------------------------------------------
+-- Any authenticated, active, non-anonymous session can read enabled
+-- providers/models (curators and consultants both need to *choose* a model
+-- in the Eval UI); only admin can register or change providers/models --
+-- "Model/provider configuration is admin-only" per the brief.
+alter table ai_providers enable row level security;
+
+create policy "ai_providers_select_staff_or_consultant" on ai_providers
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "ai_providers_admin_manage" on ai_providers
+  for all using (is_admin(auth.uid())) with check (is_admin(auth.uid()));
+
+alter table ai_models enable row level security;
+
+create policy "ai_models_select_staff_or_consultant" on ai_models
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role != 'anonymous' and p.is_active)
+  );
+
+create policy "ai_models_admin_manage" on ai_models
+  for all using (is_admin(auth.uid())) with check (is_admin(auth.uid()));
+
+
+-- ==== supabase/migrations/20260810110002_seed_ai_providers.sql ====
+-- Seed the registry with what the app already had (openai, gemini) plus the
+-- new Groq provider. Embedding stays on Gemini (matches vector(1536) in
+-- kb_vectors/wiki_vectors -- "do not change the vector schema merely to add
+-- generation providers"). Generation default moves to Groq's smallest/
+-- fastest suggested model since OpenAI credits are exhausted and Gemini
+-- quota is limited -- exactly the brief's own "Suggested Immediate
+-- Configuration".
+insert into ai_providers (name, provider_type, display_name, base_url, api_key_env_var, enabled, supports_model_discovery) values
+  ('openai', 'openai', 'OpenAI', null, 'OPENAI_API_KEY', true, true),
+  ('gemini', 'gemini', 'Gemini', null, 'GOOGLE_API_KEY', true, false),
+  ('groq', 'groq', 'Groq', 'https://api.groq.com/openai/v1', 'GROQ_API_KEY', true, true);
+
+-- openai models -- not default (credits exhausted, per the brief's own
+-- motivation for this whole feature), but registered and enabled so they
+-- work again the moment credits return.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'gpt-4o-mini', 'GPT-4o mini', 'generation', false, true, true from ai_providers where name = 'openai';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, embedding_dimensions)
+select id, 'text-embedding-3-small', 'text-embedding-3-small', 'embedding', false, 1536 from ai_providers where name = 'openai';
+
+-- gemini models -- embedding default.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_reasoning)
+select id, 'gemini-3.5-flash', 'Gemini 3.5 Flash', 'generation', false, true, true from ai_providers where name = 'gemini';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, embedding_dimensions)
+select id, 'gemini-embedding-001', 'gemini-embedding-001', 'embedding', true, 1536 from ai_providers where name = 'gemini';
+
+-- groq models -- generation default. Development-candidate models named in
+-- the brief; none flagged as already-deprecated at the time of writing.
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'openai/gpt-oss-20b', 'GPT-OSS 20B', 'generation', true, true, true from ai_providers where name = 'groq';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'openai/gpt-oss-120b', 'GPT-OSS 120B', 'generation', false, true, true from ai_providers where name = 'groq';
+insert into ai_models (provider_id, model_id, display_name, model_type, is_default, supports_structured_output, supports_tools)
+select id, 'qwen/qwen3.6-27b', 'Qwen 3.6 27B', 'generation', false, true, true from ai_providers where name = 'groq';
+
+
+
+-- ==== supabase/migrations/20260810120001_project_members.sql ====
+-- Project membership & isolation (M3.6). Two authorization levels now exist
+-- side by side: platform role (profiles.role -- admin/curator/consultant)
+-- controls what someone can administer across KB Sandbox; project role
+-- (project_members.role -- owner/curator/consultant/viewer) controls what
+-- they can do inside one specific project. Giving someone 'consultant'
+-- access to one project must never grant access to another.
+create table project_members (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid not null references profiles(id) on delete cascade,
+  role text not null check (role in ('owner', 'curator', 'consultant', 'viewer')),
+  status text not null default 'active' check (status in ('active', 'inactive')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id, user_id)
+);
+
+drop trigger if exists project_members_set_updated_at on project_members;
+create trigger project_members_set_updated_at before update on project_members
+  for each row execute function set_updated_at();
+
+-- The project's owner_id always has a matching 'owner' membership row --
+-- enforced by trigger, not by every call site remembering to insert one.
+create or replace function create_owner_membership()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.owner_id is not null then
+    insert into project_members (project_id, user_id, role, status)
+    values (new.id, new.owner_id, 'owner', 'active')
+    on conflict (project_id, user_id) do nothing;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists projects_create_owner_membership on projects;
+create trigger projects_create_owner_membership
+  after insert on projects
+  for each row execute function create_owner_membership();
+
+-- One-time backfill for any project created before this migration.
+insert into project_members (project_id, user_id, role, status)
+select id, owner_id, 'owner', 'active' from projects where owner_id is not null
+on conflict (project_id, user_id) do nothing;
+
+-- Reusable authorization helpers -----------------------------------------------
+-- Every one of these has a platform-admin bypass built in ("Platform Admin ->
+-- all projects"), so it never has to be repeated in a policy body. Only
+-- 'active' membership rows count -- a deactivated membership grants nothing.
+create or replace function is_project_member(pid uuid, uid uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin(uid) or exists (
+    select 1 from project_members pm where pm.project_id = pid and pm.user_id = uid and pm.status = 'active'
+  );
+$$;
+
+create or replace function can_manage_project(pid uuid, uid uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin(uid) or exists (
+    select 1 from project_members pm
+    where pm.project_id = pid and pm.user_id = uid and pm.status = 'active' and pm.role = 'owner'
+  );
+$$;
+
+create or replace function can_curate_project(pid uuid, uid uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin(uid) or exists (
+    select 1 from project_members pm
+    where pm.project_id = pid and pm.user_id = uid and pm.status = 'active' and pm.role in ('owner', 'curator')
+  );
+$$;
+
+create or replace function can_run_project_evals(pid uuid, uid uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin(uid) or exists (
+    select 1 from project_members pm
+    where pm.project_id = pid and pm.user_id = uid and pm.status = 'active' and pm.role in ('owner', 'curator', 'consultant')
+  );
+$$;
+
+-- Consistency guard: an eval_datasets row that has both a project and a
+-- knowledge base must not point at a KB belonging to a *different* project.
+-- Enforced here, not just in the attach actions, per the explicit gap this
+-- milestone was asked to close.
+create or replace function validate_eval_dataset_project_kb_consistency()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  kb_project_id uuid;
+begin
+  if new.knowledge_base_id is not null and new.project_id is not null then
+    select project_id into kb_project_id from knowledge_bases where id = new.knowledge_base_id;
+    if kb_project_id is not null and kb_project_id != new.project_id then
+      raise exception 'eval_datasets.knowledge_base_id (project %) does not belong to eval_datasets.project_id (%)', kb_project_id, new.project_id;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists eval_datasets_validate_project_kb_consistency on eval_datasets;
+create trigger eval_datasets_validate_project_kb_consistency
+  before insert or update on eval_datasets
+  for each row execute function validate_eval_dataset_project_kb_consistency();
+
+-- project_members RLS -----------------------------------------------------------
+alter table project_members enable row level security;
+
+create policy "project_members_select_member" on project_members
+  for select using (is_project_member(project_id, auth.uid()));
+
+create policy "project_members_manage_owner" on project_members
+  for all using (can_manage_project(project_id, auth.uid()))
+  with check (can_manage_project(project_id, auth.uid()));
+
+-- projects RLS: replace the "every non-anonymous user sees every project"
+-- policy from 20260810100003 with real membership scoping.
+drop policy "projects_select_staff_or_consultant" on projects;
+create policy "projects_select_members" on projects
+  for select using (is_project_member(id, auth.uid()));
+
+drop policy "projects_update_owner_or_staff" on projects;
+create policy "projects_update_managers" on projects
+  for update using (can_manage_project(id, auth.uid()))
+  with check (can_manage_project(id, auth.uid()));
+
+-- knowledge_bases RLS: close the actual gap -- today ANY authenticated user
+-- sees every KB, including ones scoped to a project they're not a member of.
+-- Global KBs (project_id is null, e.g. fhir/vbc/grants/billing) stay visible
+-- to everyone, unchanged. kb_admin_manage (platform admin, full access) is
+-- untouched -- this only replaces the overly-broad select policy and adds
+-- manage rights for a project's own curator/owner.
+drop policy "kb_select_authenticated" on knowledge_bases;
+create policy "kb_select_global_or_member" on knowledge_bases
+  for select using (project_id is null or is_project_member(project_id, auth.uid()));
+
+create policy "kb_manage_project_curator" on knowledge_bases
+  for all using (project_id is not null and can_curate_project(project_id, auth.uid()))
+  with check (project_id is not null and can_curate_project(project_id, auth.uid()));
+
+-- eval_datasets / eval_cases / eval_runs / eval_results ------------------------
+-- The existing platform-wide curator/admin policies from Milestone 3
+-- (is_curator_or_admin-based) are intentionally left untouched -- a platform
+-- curator/admin can still manage any dataset, which is what keeps the
+-- platform-level "AI Engineering Wiki Benchmark" (project_id is null)
+-- working exactly as before. What changes is the *consultant* policies added
+-- in 20260810100004: they let ANY platform consultant see/run ANY active
+-- dataset regardless of project, which is precisely what "users who are not
+-- members should not see the project" (this milestone's brief) asks to
+-- close. Each is dropped and recreated with a project-membership condition
+-- added alongside the existing status='active' + platform-role check.
+--
+-- SELECT policies use is_project_member (any active role, including
+-- 'viewer' -- viewers are explicitly read-only, not excluded from viewing).
+-- INSERT policies (running an eval) use can_run_project_evals, which
+-- excludes 'viewer' -- a viewer must never be able to trigger a run.
+drop policy "eval_datasets_select_active_consultant" on eval_datasets;
+create policy "eval_datasets_select_active_consultant" on eval_datasets
+  for select using (
+    status = 'active'
+    and (project_id is null or is_project_member(project_id, auth.uid()))
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+drop policy "eval_cases_select_active_consultant" on eval_cases;
+create policy "eval_cases_select_active_consultant" on eval_cases
+  for select using (
+    exists (
+      select 1 from eval_datasets d where d.id = eval_cases.dataset_id and d.status = 'active'
+      and (d.project_id is null or is_project_member(d.project_id, auth.uid()))
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+drop policy "eval_runs_select_active_consultant" on eval_runs;
+create policy "eval_runs_select_active_consultant" on eval_runs
+  for select using (
+    exists (
+      select 1 from eval_datasets d where d.id = eval_runs.dataset_id and d.status = 'active'
+      and (d.project_id is null or is_project_member(d.project_id, auth.uid()))
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+drop policy "eval_runs_insert_active_consultant" on eval_runs;
+create policy "eval_runs_insert_active_consultant" on eval_runs
+  for insert with check (
+    created_by = auth.uid()
+    and exists (
+      select 1 from eval_datasets d where d.id = eval_runs.dataset_id and d.status = 'active'
+      and (d.project_id is null or can_run_project_evals(d.project_id, auth.uid()))
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+drop policy "eval_results_select_active_consultant" on eval_results;
+create policy "eval_results_select_active_consultant" on eval_results
+  for select using (
+    exists (
+      select 1 from eval_runs r join eval_datasets d on d.id = r.dataset_id
+      where r.id = eval_results.eval_run_id and d.status = 'active'
+      and (d.project_id is null or is_project_member(d.project_id, auth.uid()))
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+drop policy "eval_results_insert_active_consultant" on eval_results;
+create policy "eval_results_insert_active_consultant" on eval_results
+  for insert with check (
+    exists (
+      select 1 from eval_runs r join eval_datasets d on d.id = r.dataset_id
+      where r.id = eval_results.eval_run_id and d.status = 'active'
+      and (d.project_id is null or can_run_project_evals(d.project_id, auth.uid()))
+    )
+    and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'consultant' and p.is_active)
+  );
+
+-- New, additive: project curator/owner can fully manage their own project's
+-- dataset/cases even when their *platform* role is merely 'consultant' --
+-- e.g. the "Senior AI Consultant" project Owner in the brief's Example 1.
+create policy "eval_datasets_manage_project_curator" on eval_datasets
+  for all using (project_id is not null and can_curate_project(project_id, auth.uid()))
+  with check (project_id is not null and can_curate_project(project_id, auth.uid()));
+
+create policy "eval_cases_manage_project_curator" on eval_cases
+  for all using (
+    exists (select 1 from eval_datasets d where d.id = eval_cases.dataset_id and d.project_id is not null and can_curate_project(d.project_id, auth.uid()))
+  )
+  with check (
+    exists (select 1 from eval_datasets d where d.id = eval_cases.dataset_id and d.project_id is not null and can_curate_project(d.project_id, auth.uid()))
+  );
+
+-- ==== supabase/migrations/20260810120002_fix_projects_select_returning.sql ====
+-- Fixes a real bug hit live: createProjectAction does
+-- `.insert(...).select().single()`, and Postgres re-checks a table's SELECT
+-- RLS policy against INSERT ... RETURNING output. Row-level AFTER INSERT
+-- triggers (here, projects_create_owner_membership, which creates the
+-- owner's project_members row) fire at the end of the statement -- AFTER the
+-- RETURNING row has already been checked against the SELECT policy. So
+-- is_project_member(id, auth.uid()) saw no membership row yet and rejected
+-- the RETURNING of the project the caller had just created themselves.
+-- owner_id = auth.uid() is checked directly against the row being inserted,
+-- not through project_members, so it has no such timing dependency.
+drop policy "projects_select_members" on projects;
+create policy "projects_select_members" on projects
+  for select using (owner_id = auth.uid() or is_project_member(id, auth.uid()));
+
+-- ==== supabase/migrations/20260810130001_public_visibility.sql ====
+-- Public/anonymous visitor experience. A visitor here is simply `auth.uid()
+-- is null` -- no session, no profile row, using Supabase's plain anon API
+-- key. This is a different concept from profiles.role = 'anonymous' (a real
+-- Supabase Auth anonymous session, wired up in an earlier migration but
+-- never actually reachable from any UI) -- that machinery is left untouched
+-- and dormant; nothing here creates or depends on an 'anonymous' profile.
+--
+-- Governing principle: publish a curated VIEW of a project, never the
+-- internal project itself. Every new RLS policy below is purely additive
+-- (multiple permissive policies on one table OR together in Postgres) --
+-- nothing here narrows or replaces an existing policy. Column-level safety
+-- (never leaking owner_id/notes/details/published_by on projects, or
+-- source_chunk_ids/created_by/approved_by on wiki_versions) is NOT
+-- enforced by RLS, which is row-level only -- it's enforced by the
+-- dedicated narrow-select query functions in src/lib/projects/public.ts and
+-- src/lib/wiki/public.ts, which must never select('*').
+
+-- projects: publication fields --------------------------------------------------
+alter table projects add column if not exists visibility text not null default 'private'
+  check (visibility in ('private', 'internal', 'public'));
+alter table projects add column if not exists public_slug text unique;
+alter table projects add column if not exists public_profile jsonb;
+alter table projects add column if not exists published_at timestamptz;
+alter table projects add column if not exists published_by uuid references profiles(id) on delete set null;
+
+-- projects_update_managers (20260810120001, can_manage_project-gated) already
+-- covers UPDATEs to these new columns since they're on the same row -- no new
+-- UPDATE policy needed for publish/unpublish/save-draft.
+create policy "projects_select_public" on projects
+  for select using (visibility = 'public' and published_at is not null);
+
+-- wiki_articles: separate publication flag ---------------------------------------
+-- Deliberately distinct from status='approved' -- approved means "trusted
+-- canonical knowledge", public means "safe for anonymous disclosure". An
+-- article can be approved and still never marked public.
+alter table wiki_articles add column if not exists is_public boolean not null default false;
+
+create policy "wiki_articles_select_public" on wiki_articles
+  for select using (status = 'approved' and is_public = true);
+
+-- Reusable helper so "is this article's current version safe to show
+-- anonymously" has one source of truth instead of being duplicated across
+-- policies that would otherwise need to re-derive it independently.
+create or replace function is_public_wiki_article(article_id uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from wiki_articles a where a.id = article_id and a.status = 'approved' and a.is_public = true
+  );
+$$;
+
+-- Scoped to exactly the article's CURRENT version -- never a draft, a
+-- pending review revision, or an old superseded-but-once-approved version
+-- (tighter than wiki_versions_select_approved_or_staff, which the original
+-- Wiki RLS migration's own comment already flags as allowing any
+-- historically-approved version; that policy is untouched, staff behavior
+-- doesn't change).
+create policy "wiki_versions_select_public" on wiki_versions
+  for select using (
+    id = (select current_version_id from wiki_articles where id = wiki_versions.wiki_article_id)
+    and is_public_wiki_article(wiki_article_id)
+  );
+
+-- wiki_categories: category names are non-sensitive and already visible to
+-- every authenticated user regardless of role -- widen the same read to
+-- anon too. No behavior change for anyone already authenticated.
+drop policy "wiki_categories_select_authenticated" on wiki_categories;
+create policy "wiki_categories_select_public" on wiki_categories
+  for select using (true);
+
+-- Deliberately no new RLS on wiki_sources, wiki_relations, project_members,
+-- eval_datasets/eval_cases/eval_runs/eval_results, ai_operation_logs,
+-- documents, or document_chunks -- none of them already leak to anon (every
+-- existing policy on those tables depends on auth.uid(), which is null for
+-- a sessionless request), and this milestone's public pages don't need
+-- direct read access to any of them: the public project page skips a Wiki
+-- cross-link/Sources section, and the public eval summary is hand-authored
+-- JSON on projects.public_profile, never a live query against eval_results.

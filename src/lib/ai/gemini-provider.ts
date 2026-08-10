@@ -12,34 +12,29 @@ import type {
 import { AIProviderError } from './provider'
 import { extractJsonObject } from './json-extract'
 
-// gemini-2.0-flash was shut down 2026-06-01 (confirmed against a live 404,
-// not assumed). gemini-2.5-flash is valid but itself scheduled to shut down
-// 2026-10-16; gemini-3.5-flash (released 2026-05-19) has no announced
-// shutdown date as of this writing, so it's the more durable pick rather
-// than trading one near-term deprecation for another.
-const TEXT_MODEL = 'gemini-3.5-flash'
-// text-embedding-004 was shut down by Google on 2026-01-14; gemini-embedding-001
-// is the replacement (confirmed against a live 404 from the API, not assumed --
-// see the AGENTS.md warning that library APIs in this repo's environment may
-// have moved past this model's training-data knowledge).
-const EMBED_MODEL = 'gemini-embedding-001'
-// gemini-embedding-001's native output is much larger than the old model's;
-// pin it down to match kb_vectors/wiki_vectors' vector(1536) column instead of
-// letting it default to a size Postgres would reject on insert.
-const EMBED_DIMENSIONS = 1536
+// gemini-embedding-001's native output is much larger than older models';
+// pin it down to match kb_vectors/wiki_vectors' vector(1536) column instead
+// of letting it default to a size Postgres would reject on insert.
+const DEFAULT_EMBED_DIMENSIONS = 1536
 
 export class GeminiProvider implements AIProvider {
   readonly name = 'gemini'
   private client: GoogleGenAI
 
-  constructor(apiKey: string) {
+  constructor(
+    apiKey: string,
+    private defaultTextModel: string = 'gemini-3.5-flash',
+    private defaultEmbedModel: string = 'gemini-embedding-001',
+    private embedDimensions: number = DEFAULT_EMBED_DIMENSIONS
+  ) {
     this.client = new GoogleGenAI({ apiKey })
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextResult> {
+    const model = input.model ?? this.defaultTextModel
     try {
       const res = await this.client.models.generateContent({
-        model: TEXT_MODEL,
+        model,
         contents: input.prompt,
         config: {
           systemInstruction: input.system,
@@ -53,7 +48,7 @@ export class GeminiProvider implements AIProvider {
       })
       return {
         text: res.text ?? '',
-        model: TEXT_MODEL,
+        model,
         usage: {
           inputTokens: res.usageMetadata?.promptTokenCount ?? null,
           outputTokens: res.usageMetadata?.candidatesTokenCount ?? null,
@@ -65,10 +60,11 @@ export class GeminiProvider implements AIProvider {
   }
 
   async generateStructured<T>(input: GenerateStructuredInput<T>): Promise<GenerateStructuredResult<T>> {
+    const model = input.model ?? this.defaultTextModel
     let raw = '{}'
     try {
       const res = await this.client.models.generateContent({
-        model: TEXT_MODEL,
+        model,
         contents: `${input.prompt}\n\nRespond with a single JSON object only, no prose, no markdown fences.`,
         config: {
           systemInstruction: input.system,
@@ -83,7 +79,7 @@ export class GeminiProvider implements AIProvider {
       const data = input.schema.parse(extractJsonObject(raw))
       return {
         data,
-        model: TEXT_MODEL,
+        model,
         usage: {
           inputTokens: res.usageMetadata?.promptTokenCount ?? null,
           outputTokens: res.usageMetadata?.candidatesTokenCount ?? null,
@@ -95,16 +91,17 @@ export class GeminiProvider implements AIProvider {
   }
 
   async embed(input: EmbedInput): Promise<EmbedResult> {
+    const model = input.model ?? this.defaultEmbedModel
     try {
       const res = await this.client.models.embedContent({
-        model: EMBED_MODEL,
+        model,
         contents: [input.text],
-        config: { outputDimensionality: EMBED_DIMENSIONS },
+        config: { outputDimensionality: this.embedDimensions },
       })
       const embedding = res.embeddings?.[0]?.values ?? []
       return {
         embedding,
-        model: EMBED_MODEL,
+        model,
         dimensions: embedding.length,
         usage: { inputTokens: null, outputTokens: null },
       }

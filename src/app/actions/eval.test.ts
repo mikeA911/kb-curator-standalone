@@ -62,16 +62,16 @@ describe('createCaseAction', () => {
 describe('createAndRunEvalAction', () => {
   it('snapshots the full run configuration onto the eval_runs row', async () => {
     const config = {
-      generation: { provider: 'gemini' as const },
-      embedding: { provider: 'gemini' as const },
+      generation: { provider: 'gemini' as const, model: 'gemini-3.5-flash' },
+      embedding: { provider: 'gemini' as const, model: 'gemini-embedding-001' },
       retrieval: { evidence_source: 'wiki' as const, top_k: 5 },
-      evaluator: { type: 'llm_judge' as const, provider: 'openai' as const },
+      evaluator: { type: 'llm_judge' as const, provider: 'openai' as const, model: 'gpt-4o-mini' },
     }
     const supabase = createFakeSupabase({
-      eval_datasets: [{ data: { version: 3 }, error: null }],
+      eval_datasets: [{ data: { version: 3, status: 'draft' }, error: null }],
       eval_runs: [{ data: { id: 'run-1' }, error: null }],
     })
-    requireRoleMock.mockResolvedValue({ user: { id: 'user-1' }, supabase })
+    requireRoleMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'curator' }, supabase })
     executeEvalRunMock.mockResolvedValue(undefined)
 
     const result = await createAndRunEvalAction({ datasetId: 'dataset-1', name: 'gemini + wiki', config })
@@ -80,6 +80,42 @@ describe('createAndRunEvalAction', () => {
     const insert = supabase._calls.find((c) => c.table === 'eval_runs' && c.method === 'insert')
     expect(insert?.args).toMatchObject({ dataset_version: 3, config })
     expect(executeEvalRunMock).toHaveBeenCalledWith(supabase, 'run-1', 'user-1')
+  })
+
+  it('rejects a consultant running against a draft (unpublished) dataset', async () => {
+    const config = {
+      generation: { provider: 'gemini' as const, model: 'gemini-3.5-flash' },
+      embedding: { provider: 'gemini' as const, model: 'gemini-embedding-001' },
+      retrieval: { evidence_source: 'wiki' as const, top_k: 5 },
+      evaluator: { type: 'none' as const },
+    }
+    const supabase = createFakeSupabase({
+      eval_datasets: [{ data: { version: 1, status: 'draft' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'consultant-1' }, profile: { role: 'consultant' }, supabase })
+
+    await expect(createAndRunEvalAction({ datasetId: 'dataset-1', name: '', config })).rejects.toThrow(
+      'not active yet'
+    )
+    expect(executeEvalRunMock).not.toHaveBeenCalled()
+  })
+
+  it('allows a consultant to run against an active dataset', async () => {
+    const config = {
+      generation: { provider: 'gemini' as const, model: 'gemini-3.5-flash' },
+      embedding: { provider: 'gemini' as const, model: 'gemini-embedding-001' },
+      retrieval: { evidence_source: 'wiki' as const, top_k: 5 },
+      evaluator: { type: 'none' as const },
+    }
+    const supabase = createFakeSupabase({
+      eval_datasets: [{ data: { version: 1, status: 'active' }, error: null }],
+      eval_runs: [{ data: { id: 'run-2' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'consultant-1' }, profile: { role: 'consultant' }, supabase })
+    executeEvalRunMock.mockResolvedValue(undefined)
+
+    const result = await createAndRunEvalAction({ datasetId: 'dataset-1', name: '', config })
+    expect(result).toEqual({ runId: 'run-2' })
   })
 })
 

@@ -67,7 +67,7 @@ export async function submitDocumentAction(documentId: string) {
 }
 
 export async function deleteDocumentAction(documentId: string) {
-  const { user, profile, supabase } = await requireRole('user')
+  const { user, profile, supabase } = await requireRole('consultant')
   await deleteDocumentById(supabase, documentId, { id: user.id, role: profile.role })
   revalidatePath('/dashboard')
 }

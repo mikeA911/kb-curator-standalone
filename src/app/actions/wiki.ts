@@ -116,7 +116,7 @@ export async function createAIAssistedDraftAction(input: {
     implementationNotes: draft.implementation_notes ?? null,
     limitations: draft.limitations ?? null,
     aiProvider: provider.name,
-    aiModel: 'active-provider-default',
+    aiModel: draft.model,
     sourceChunkIds: input.chunkIds,
     createdBy: user.id,
   })
@@ -237,4 +237,19 @@ export async function rejectArticleAction(articleId: string) {
   const admin = createAdminClient()
   await rejectWikiVersionToDraft(admin, articleId)
   revalidatePath('/wiki')
+}
+
+// Separate from approval -- approved means "trusted canonical knowledge",
+// public means "safe for anonymous disclosure" (see the migration comment
+// in 20260810130001_public_visibility.sql). Admin-only, same bar as
+// approve/archive. Uses the regular RLS-scoped client, unlike
+// approveArticleAction/rejectArticleAction -- wiki_articles already has a
+// client-side UPDATE policy (wiki_articles_update_staff), the service-role
+// requirement only applies to wiki_versions.
+export async function setArticlePublicAction(articleId: string, isPublic: boolean) {
+  const { supabase } = await requireRole('admin')
+  const { error } = await supabase.from('wiki_articles').update({ is_public: isPublic }).eq('id', articleId)
+  if (error) throw error
+  revalidatePath('/wiki')
+  revalidatePath('/knowledge')
 }

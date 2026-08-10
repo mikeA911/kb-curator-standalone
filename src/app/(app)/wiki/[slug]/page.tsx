@@ -134,6 +134,7 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
               versionId={version.id}
               status={article.status}
               isAdmin={isAdmin}
+              isPublic={article.is_public}
             />
           )}
 

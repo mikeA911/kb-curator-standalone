@@ -6,7 +6,7 @@
 // Requires .env.local to be loaded, e.g. via `node --env-file=.env.local
 // $(npm bin)/vitest run scripts/live-e2e.test.ts` or an env-aware shell.
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
@@ -186,5 +186,106 @@ describe.sequential('live E2E against the real Supabase project', () => {
     // RLS silently filters rather than erroring: the update matches zero rows.
     expect(error).toBeNull()
     expect(updated).toHaveLength(0)
+  })
+})
+
+// A true public visitor: no signIn() call at all, so this client is exactly
+// what an anonymous browser request looks like at the RLS layer (the anon
+// API key, zero session). This is what the "publish a curated view, never
+// the internal project" guarantee actually rests on.
+describe.sequential('public visitor (anon key, no session) -- 20260810130001_public_visibility.sql', () => {
+  const anon = createSupabaseClient<Database>(url, anonKey, { auth: { persistSession: false } })
+  let publishedProjectId: string
+  let publicArticleId: string
+
+  beforeAll(async () => {
+    const admin = createAdminClient()
+
+    const { data: project } = await admin
+      .from('projects')
+      .insert({ name: 'anon-verification-project', project_type: 'experiment', status: 'draft', notes: null, details: {} })
+      .select('id')
+      .single()
+    publishedProjectId = project!.id
+    await admin
+      .from('projects')
+      .update({
+        visibility: 'public',
+        published_at: new Date().toISOString(),
+        public_slug: `anon-verification-${Date.now()}`,
+        public_profile: { title: 'Anon Verification', summary: 'live e2e check' },
+      })
+      .eq('id', publishedProjectId)
+
+    const { data: article } = await admin
+      .from('wiki_articles')
+      .select('id')
+      .eq('status', 'approved')
+      .limit(1)
+      .single()
+    publicArticleId = article!.id
+    await admin.from('wiki_articles').update({ is_public: true }).eq('id', publicArticleId)
+  })
+
+  afterAll(async () => {
+    const admin = createAdminClient()
+    await admin.from('projects').delete().eq('id', publishedProjectId)
+    await admin.from('wiki_articles').update({ is_public: false }).eq('id', publicArticleId)
+  })
+
+  it('reads a published project, and only the safe columns', async () => {
+    const { data, error } = await anon
+      .from('projects')
+      .select('id, public_slug, name, project_type, public_profile, published_at')
+      .eq('id', publishedProjectId)
+      .single()
+    expect(error).toBeNull()
+    expect(data!.public_profile).toMatchObject({ title: 'Anon Verification' })
+  })
+
+  it('does not see a private project it created a moment ago being made internal-only', async () => {
+    const admin = createAdminClient()
+    const { data: internalProject } = await admin
+      .from('projects')
+      .insert({ name: 'anon-verification-internal', project_type: 'experiment', status: 'draft', notes: 'internal only', details: {} })
+      .select('id')
+      .single()
+    try {
+      const { data } = await anon.from('projects').select('id').eq('id', internalProject!.id)
+      expect(data).toHaveLength(0)
+    } finally {
+      await admin.from('projects').delete().eq('id', internalProject!.id)
+    }
+  })
+
+  it('reads the current version of a public approved article', async () => {
+    const { data: article } = await anon
+      .from('wiki_articles')
+      .select('id, current_version_id')
+      .eq('id', publicArticleId)
+      .single()
+    expect(article).not.toBeNull()
+    const { data: version, error } = await anon
+      .from('wiki_versions')
+      .select('id, quick_help, content')
+      .eq('id', article!.current_version_id!)
+      .single()
+    expect(error).toBeNull()
+    expect(version!.content).toBeTruthy()
+  })
+
+  it('regression: still cannot read project_members, eval_runs, eval_results, or ai_operation_logs', async () => {
+    for (const table of ['project_members', 'eval_runs', 'eval_results', 'ai_operation_logs'] as const) {
+      const { data } = await anon.from(table).select('id').limit(5)
+      expect(data).toHaveLength(0)
+    }
+  })
+
+  it('regression: still cannot read a draft/unapproved wiki article, even by id', async () => {
+    const admin = createAdminClient()
+    const { data: draftArticle } = await admin.from('wiki_articles').select('id').eq('status', 'draft').limit(1).maybeSingle()
+    if (!draftArticle) return // nothing to check against in this environment right now
+    const { data } = await anon.from('wiki_articles').select('id').eq('id', draftArticle.id)
+    expect(data).toHaveLength(0)
   })
 })

@@ -1,7 +1,8 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, EvalCase, EvalRunConfig, FailureClassification } from '@/types/database'
-import { getProviderByName } from '@/lib/ai'
+import type { AIProvider } from '@/lib/ai/provider'
+import { getProviderByName, resolveModel, assertModelCapability } from '@/lib/ai'
 import { retrieveEvidence } from './retrieval'
 import { computeRetrievalMetrics } from './scoring'
 import { generateAnswer } from './generation'
@@ -20,6 +21,20 @@ export async function executeEvalRun(supabase: SupabaseClient<Database>, runId: 
 
   const config = run.config as EvalRunConfig
 
+  // Validated once, before any API call is made -- not scattered
+  // provider-name checks throughout the pipeline (see assertModelCapability).
+  const { model: generationModelRow } = await resolveModel(supabase, config.generation.provider, config.generation.model)
+  assertModelCapability(generationModelRow, 'generation')
+  const { model: embeddingModelRow } = await resolveModel(supabase, config.embedding.provider, config.embedding.model)
+  assertModelCapability(embeddingModelRow, 'embedding')
+  let evaluatorModelRow = null
+  if (config.evaluator.type === 'llm_judge' && config.evaluator.provider && config.evaluator.model) {
+    const { model } = await resolveModel(supabase, config.evaluator.provider, config.evaluator.model)
+    assertModelCapability(model, 'generation')
+    assertModelCapability(model, 'structured_output')
+    evaluatorModelRow = model
+  }
+
   await supabase.from('eval_runs').update({ status: 'running', started_at: new Date().toISOString() }).eq('id', runId)
 
   try {
@@ -30,14 +45,21 @@ export async function executeEvalRun(supabase: SupabaseClient<Database>, runId: 
       .order('created_at', { ascending: true })
     if (casesError) throw casesError
 
-    const generationProvider = getProviderByName(config.generation.provider, { evalRunId: runId, requestedBy })
-    const evaluatorProvider =
-      config.evaluator.type === 'llm_judge' && config.evaluator.provider
-        ? getProviderByName(config.evaluator.provider, { evalRunId: runId, requestedBy })
-        : null
+    const generationProvider = await getProviderByName(supabase, config.generation.provider, { evalRunId: runId, requestedBy })
+    const embeddingProvider =
+      config.embedding.provider === config.generation.provider
+        ? generationProvider
+        : await getProviderByName(supabase, config.embedding.provider, { evalRunId: runId, requestedBy })
 
     for (const evalCase of cases ?? []) {
-      await runCase(supabase, runId, evalCase, config, generationProvider, evaluatorProvider, requestedBy)
+      await runCase(supabase, runId, evalCase, config, {
+        generationProvider,
+        generationModel: config.generation.model,
+        embeddingProvider,
+        embeddingModel: config.embedding.model,
+        evaluatorModelId: evaluatorModelRow ? config.evaluator.model! : null,
+        requestedBy,
+      })
     }
 
     await supabase.from('eval_runs').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', runId)
@@ -54,19 +76,26 @@ export async function executeEvalRun(supabase: SupabaseClient<Database>, runId: 
   }
 }
 
+interface RunCaseModels {
+  generationProvider: AIProvider
+  generationModel: string
+  embeddingProvider: AIProvider
+  embeddingModel: string
+  evaluatorModelId: string | null
+  requestedBy: string
+}
+
 async function runCase(
   supabase: SupabaseClient<Database>,
   runId: string,
   evalCase: EvalCase,
   config: EvalRunConfig,
-  generationProvider: ReturnType<typeof getProviderByName>,
-  evaluatorProvider: ReturnType<typeof getProviderByName> | null,
-  requestedBy: string
+  models: RunCaseModels
 ) {
   const startedAt = Date.now()
 
   try {
-    const retrieval = await retrieveEvidence(supabase, generationProvider, evalCase.question, {
+    const retrieval = await retrieveEvidence(supabase, models.embeddingProvider, models.embeddingModel, evalCase.question, {
       evidenceSource: config.retrieval.evidence_source,
       topK: config.retrieval.top_k,
       threshold: config.retrieval.threshold,
@@ -74,16 +103,16 @@ async function runCase(
 
     const metrics = computeRetrievalMetrics(retrieval.evidence, evalCase.expected_article_ids ?? [], evalCase.expected_chunk_ids ?? [])
 
-    const generation = await generateAnswer(generationProvider, evalCase.question, retrieval.evidence)
+    const generation = await generateAnswer(models.generationProvider, models.generationModel, evalCase.question, retrieval.evidence)
 
     let judge: Awaited<ReturnType<typeof judgeAnswer>> | null = null
-    if (evaluatorProvider) {
-      const evalProviderWithContext = getProviderByName(config.evaluator.provider!, {
+    if (models.evaluatorModelId && config.evaluator.provider) {
+      const evalProviderWithContext = await getProviderByName(supabase, config.evaluator.provider, {
         evalRunId: runId,
         evalCaseId: evalCase.id,
-        requestedBy,
+        requestedBy: models.requestedBy,
       })
-      judge = await judgeAnswer(evalProviderWithContext, evalCase, retrieval.evidence, generation.answer)
+      judge = await judgeAnswer(evalProviderWithContext, models.evaluatorModelId, evalCase, retrieval.evidence, generation.answer)
     }
 
     const failureClassification: FailureClassification | null =

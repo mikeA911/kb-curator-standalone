@@ -11,7 +11,7 @@ const WikiDraftSchema = z.object({
   limitations: z.string().optional(),
 })
 
-export type WikiDraftProposal = z.infer<typeof WikiDraftSchema>
+export type WikiDraftProposal = z.infer<typeof WikiDraftSchema> & { model: string }
 
 export interface SourceChunkInput {
   id: string
@@ -33,7 +33,7 @@ export async function synthesizeWikiDraft(
     .map((c, i) => `[Source ${i + 1}${c.documentName ? ` -- ${c.documentName}` : ''}${c.sourcePage ? `, page ${c.sourcePage}` : ''}]\n${c.text}`)
     .join('\n\n')
 
-  const { data } = await provider.generateStructured({
+  const { data, model } = await provider.generateStructured({
     system:
       'You are an AI-engineering technical writer producing a draft Wiki article for a knowledge curation platform. ' +
       'Write only from the provided source evidence -- do not invent facts, and note when the evidence is incomplete. ' +
@@ -52,5 +52,5 @@ export async function synthesizeWikiDraft(
     schema: WikiDraftSchema,
   })
 
-  return data
+  return { ...data, model }
 }

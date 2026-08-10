@@ -17,6 +17,11 @@ export interface GenerateTextInput {
   prompt: string
   system?: string
   maxOutputTokens?: number
+  // Overrides the provider instance's constructor-supplied default model --
+  // this is what lets an Eval run pick a specific model per call while every
+  // other caller (chunk enrichment, Wiki synthesis) keeps using whatever the
+  // provider was built with.
+  model?: string
 }
 
 export interface GenerateTextResult {
@@ -30,6 +35,7 @@ export interface GenerateStructuredInput<T> {
   system?: string
   schema: z.ZodType<T>
   maxOutputTokens?: number
+  model?: string
 }
 
 export interface GenerateStructuredResult<T> {
@@ -40,6 +46,7 @@ export interface GenerateStructuredResult<T> {
 
 export interface EmbedInput {
   text: string
+  model?: string
 }
 
 export interface EmbedResult {
@@ -49,16 +56,52 @@ export interface EmbedResult {
   usage: TokenUsage
 }
 
+export type ProviderErrorCode =
+  | 'rate_limit'
+  | 'quota_exceeded'
+  | 'model_unavailable'
+  | 'authentication'
+  | 'invalid_request'
+  | 'unknown'
+
 export class AIProviderError extends Error {
   constructor(
     public readonly provider: string,
     public readonly operation: 'generate_text' | 'generate_structured' | 'embed',
     message: string,
-    public readonly cause?: unknown
+    public readonly cause?: unknown,
+    public readonly errorCode: ProviderErrorCode = classifyProviderError(cause)
   ) {
     super(message)
     this.name = 'AIProviderError'
   }
+}
+
+// Distinguishes *why* a provider call failed from the caught SDK error's
+// status/message, so callers (eval failure classification in particular)
+// don't have to re-derive this from a generic "request failed" string. Not
+// full quota-header telemetry -- just enough to tell "we're rate limited"
+// from "this model doesn't exist" from "the API key is wrong".
+export function classifyProviderError(err: unknown): ProviderErrorCode {
+  const status = (err as { status?: number })?.status
+  const message = String((err as { message?: string })?.message ?? err ?? '').toLowerCase()
+
+  if (status === 401 || status === 403 || message.includes('api key') || message.includes('unauthorized')) {
+    return 'authentication'
+  }
+  if (status === 404 || message.includes('does not exist') || message.includes('not found') || message.includes('no longer available')) {
+    return 'model_unavailable'
+  }
+  if (status === 429 || message.includes('rate limit')) {
+    return message.includes('quota') || message.includes('credit') ? 'quota_exceeded' : 'rate_limit'
+  }
+  if (message.includes('quota') || message.includes('insufficient_quota') || message.includes('credit')) {
+    return 'quota_exceeded'
+  }
+  if (status === 400 || message.includes('invalid')) {
+    return 'invalid_request'
+  }
+  return 'unknown'
 }
 
 export interface AIProvider {

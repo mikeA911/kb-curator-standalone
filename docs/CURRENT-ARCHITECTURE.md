@@ -1,6 +1,28 @@
 # KB Sandbox — Current Architecture
 
-Living documentation of what's actually implemented, as of Milestone 3 (Evaluation Engine). Where this differs from `KB Sandbox.md`'s original brief, that's called out explicitly with a reason — this file describes reality, not intent.
+Living documentation of what's actually implemented, as of Milestone 3.7 (Public / Anonymous Experience). Where this differs from `KB Sandbox.md`'s original brief, that's called out explicitly with a reason — this file describes reality, not intent.
+
+## Milestone roadmap
+
+The project follows a revised milestone sequence (superseding any earlier "Milestone 4/5..." numbering implied by the original brief). Everything through **M3.7 is built**; M4 onward is planned, not started.
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| M1 | Curator Foundation — auth, projects/KB basics, upload, parsing, chunking, enrichment, review, embeddings, pgvector, RLS, AI provider abstraction | Built |
+| M2 | LLM Wiki & Provenance — versioned Wiki lifecycle, AI-assisted synthesis, source provenance, Quick Help | Built |
+| M3 | Evaluation Engine — datasets/cases/runs/results, retrieval metrics, LLM judge, human review, baseline comparison | Built |
+| M3.5 | Multi-Provider / Multi-Model AI Registry — `ai_providers`/`ai_models`, Groq + generic OpenAI-compatible gateway, capability validation | Built |
+| M3.6 | Projects, Membership & Isolation — `project_members`, project roles, project-scoped RLS, client/training isolation | Built |
+| M3.7 | Public / Anonymous Experience — public About/Examples/Knowledge, explicit publish/unpublish, anon-safe RLS | Built |
+| M4 | Graph Runtime / Controlled Agent Loop — Retrieve → Generate → Evaluate → Retry/End, persistent state, graph versioning | Planned |
+| M5 | First Formal Agents — model + instructions + state + sources + tools + graph + guardrails + eval suite, starting with a RAG Answer Agent | Planned |
+| M6 | Runs, Tracing & Experiments — full execution traces, experiment definitions, configuration leaderboard | Planned |
+| M7 | Governance Foundation — AI system inventory, risk tier, controls, evaluation gates, approval records, audit evidence | Planned |
+| M8 | Research & Knowledge-Maintenance Agents — bounded research agent, claim extraction, proposed Wiki updates with human approval | Planned |
+| M9 | Learning & Model Adaptation — structured corrections, validated training datasets, LoRA/QLoRA/DoRA experiments, governed promotion | Planned |
+| M10 | Training / Consultant Enablement Layer — guided learning projects, reusable templates, curated examples for junior consultants | Planned |
+
+The sections below describe M1–M3.7 as actually implemented. See each section heading for which milestone introduced it.
 
 ## Stack
 
@@ -91,18 +113,60 @@ Supabase Auth, session cookie refreshed by `src/proxy.ts` on every request. Actu
 1. **Server Actions/layouts** call `requireUser()`/`requireRole()` (`src/lib/auth.ts`) against the caller's own session before doing anything.
 2. **RLS** is the backstop that holds even if an action forgot to check — e.g. `wiki_versions` has no `UPDATE` policy for `authenticated` at all, so even a bug in a Server Action's role check couldn't let a non-admin set `approved_by`/`approved_at`; only the service-role client (used exclusively inside the admin-gated `approveArticleAction`) can write those columns.
 
+As of Milestone 3.6/3.7, authorization is really three tiers layered on top of each other: **platform role** (`profiles.role`, this section), **project role** (`project_members.role`, scoped to one project — see [Projects, Membership & Isolation](#projects-membership--isolation-milestone-36)), and **public/anon** (no role at all, read-only, scoped to explicitly published content only — see [Public / Anonymous Experience](#public--anonymous-experience-milestone-37)).
+
 Approval-type actions (`approveDocument`, `approveArticleAction`) use a service-role Supabase client, mirroring what the old app's `admin-api` Edge Function did — except that logic now lives in this app's own server runtime instead of a separate Supabase Edge Function, since Next.js Server Actions cover the same "run with elevated privilege, server-side" need.
 
-## AI provider abstraction
+## AI provider abstraction (registry: Milestone 3.5)
 
-`src/lib/ai/provider.ts` defines `generateText` / `generateStructured` / `embed`; `OpenAIProvider` and `GeminiProvider` implement it. `getActiveProvider()` (`src/lib/ai/index.ts`) reads the active choice from the `settings` table and wraps whichever provider in a logging decorator (`src/lib/ai/logging.ts`) that writes every call — operation, provider, model, latency, token counts, success/failure — to `ai_operation_logs`. Wiki synthesis and chunk enrichment are both just callers of this same interface; neither knows or cares which vendor is behind it.
+`src/lib/ai/provider.ts` defines `generateText` / `generateStructured` / `embed`, each accepting an optional `model` to override whatever default the provider instance was built with. `OpenAIProvider`, `GeminiProvider`, and `OpenAICompatibleProvider` implement it — the last one is a single reusable class (constructor: name, API key, base URL, optional default model) that covers Groq and any future OpenAI-API-shaped gateway (local vLLM, an enterprise gateway, etc.) via the already-installed `openai` npm package with a custom `baseURL`, rather than one class per vendor.
 
-`getProviderByName(name, logContext)` (also `src/lib/ai/index.ts`) is the one place that picks a specific provider independent of the global `settings` row — evaluation runs need this so a run can compare "openai vs. gemini" as a variable under test rather than inheriting whatever the app is currently defaulting to. `ai_operation_logs` gained `eval_run_id`/`eval_case_id` columns (`LogContext`, `src/lib/ai/logging.ts`) so an AI call made during an eval run — embedding, generation, or judge — can be traced back to the specific run and case that triggered it, without building the full Runs/Tracing subsystem that's planned for a later milestone.
+Providers and models are no longer a hard-coded TS union — they're admin-managed rows in `ai_providers`/`ai_models` (`src/lib/ai/registry.ts`), seeded with OpenAI, Gemini, and Groq. `ai_providers.api_key_env_var` stores only the env var *name* (`'GROQ_API_KEY'`), never a secret value — the admin UI reports `Configured`/`Missing` by checking `process.env[...]` server-side. `ai_models` carries per-model capability flags (`supports_structured_output`/`tools`/`reasoning`/`vision`/`embeddings`), a `status` lifecycle (`active`/`deprecated`/`disabled`/`unavailable`) with optional `deprecation_date`, and `is_default` — a partial unique index (`ai_models_one_default_per_type`) enforces at most one default per `model_type`, which is what makes "the default generation model" and "the default embedding model" genuinely independent (e.g. Groq for generation, Gemini for embedding) rather than one universal "active provider" setting.
 
-The initial embedding profile is `vector(1536)` (OpenAI `text-embedding-3-small`), recorded per-row via `embedding_model`/`embedding_dim` rather than assumed — see the column comment on `kb_vectors.embedding` in `supabase/migrations/20260808190006_kb_vectors.sql`. Changing the default embedding model later is an additive migration (new column + re-embed job), not a silent dimension mismatch.
+`getActiveProvider()` (`src/lib/ai/registry.ts`, re-exported from `src/lib/ai/index.ts`) resolves to whichever provider/model the registry currently marks as the default generation model — this replaced the old `settings.ai_provider` key entirely; Wiki synthesis and chunk enrichment call it unchanged. `getProviderByName(supabase, name, logContext)` is the one place that picks a specific provider independent of the platform default — evaluation runs use this, now `async` since it's a DB lookup rather than a switch over a hard-coded union. `assertModelCapability(model, need)` is called once at the top of `executeEvalRun` (not scattered provider-name checks) to reject a disabled model, an embedding model in a generation slot, or a non-structured-output model selected as an LLM judge, before any API call is made. `classifyProviderError()` (`src/lib/ai/provider.ts`) turns a caught SDK error into one of `rate_limit`/`quota_exceeded`/`model_unavailable`/`authentication`/`invalid_request`/`unknown`, attached to `AIProviderError.errorCode`.
+
+Every field of an eval run's `generation`/`embedding`/`evaluator` config (`EvalRunConfig`) is a plain string (provider name + model id), not a foreign key into `ai_models` — a run's stored config is a value snapshot, so a model being disabled or deleted from the registry later never changes what a historical run says it tested. `getProviderByName`/`resolveModel` are only ever called at run-creation time; reading back a completed run never re-resolves or re-validates against the current registry state.
+
+`ai_operation_logs` carries `eval_run_id`/`eval_case_id` columns (`LogContext`, `src/lib/ai/logging.ts`) so an AI call made during an eval run — embedding, generation, or judge — can be traced back to the specific run and case that triggered it, without building the full Runs/Tracing subsystem that's planned for a later milestone.
+
+The initial embedding profile is `vector(1536)`, recorded per-row via `embedding_model`/`embedding_dim` rather than assumed — see the column comment on `kb_vectors.embedding` in `supabase/migrations/20260808190006_kb_vectors.sql`. Changing the default embedding model later is an additive migration (new column + re-embed job), not a silent dimension mismatch; adding a new *generation* provider (as Groq's addition demonstrated) requires no schema change to the vector tables at all.
+
+### What's explicitly not built yet (provider/model registry)
+
+No quota/rate-limit header telemetry beyond the basic error-code classification above; no model discovery for Gemini (the `@google/genai` SDK isn't wired up for it — Gemini models stay manually configured, `supports_model_discovery=false`); no Project-level model allowlists or preferred-model settings; no Agent model configuration (no Agents exist yet). All four are explicitly deferred, not oversights.
+
+## Projects, Membership & Isolation (Milestone 3.6)
+
+A **project** (`projects`) scopes a piece of AI engineering work — one of five `project_type`s (`learning`/`experiment`/`consulting`/`transformation`/`knowledge`) — and can own a project-specific knowledge base and/or eval dataset (nullable `project_id` FK on `knowledge_bases`/`eval_datasets`; `null` means "platform-global," e.g. the AI Engineering Wiki Benchmark).
+
+Authorization is deliberately **two-tier**, tracked as two entirely separate concepts:
+
+- **Platform role** (`profiles.role`: `anonymous`/`consultant`/`curator`/`admin`) — what someone can administer across KB Sandbox as a whole.
+- **Project role** (`project_members.role`: `owner`/`curator`/`consultant`/`viewer`) — what they can do inside *one specific project*. Granting `consultant` on one project never implies access to another. A project's `owner_id` always has a matching `owner` membership row, enforced by an `after insert on projects` trigger (`create_owner_membership`), not by every call site remembering to insert one.
+
+Four `SECURITY DEFINER` SQL helpers (`supabase/migrations/20260810120001_project_members.sql`, same pattern as `is_admin`/`is_curator_or_admin`) back every project-scoped RLS policy, each with a **platform-admin bypass** built in so "admin sees/manages everything" never has to be repeated in a policy body: `is_project_member`, `can_manage_project` (owner-only — this is also the M3.7 publish gate), `can_curate_project` (owner/curator), `can_run_project_evals` (owner/curator/consultant, excludes `viewer`).
+
+Existing platform-wide curator/admin policies from Milestone 3 are **intentionally untouched** — a platform curator/admin still manages any dataset regardless of project, which is what keeps the platform-level AI Engineering Wiki Benchmark working for every consultant. What's new is scoping: a project's own `knowledge_bases`/`eval_datasets`/`eval_runs` are only visible to that project's members (RLS on `knowledge_bases`/`eval_datasets`/`eval_cases`/`eval_runs`/`eval_results`, each policy re-checking `project_id is null or is_project_member(...)`), and a `before insert or update on eval_datasets` trigger (`validate_eval_dataset_project_kb_consistency`) rejects attaching a knowledge base that belongs to a *different* project.
+
+UI: a Team step in the project-creation wizard (stage members by email, resolved via a narrow service-role lookup that only ever returns `id`+`email`) and a full Members page (`/projects/[id]/members`) for role changes, activation/deactivation, and ownership transfer — all mutations go through the caller's own RLS-scoped client, matching every other Server Action in this codebase; `requireUser()`'s anonymous-role rejection is defense-in-depth on top of RLS, not the real gate.
+
+## Public / Anonymous Experience (Milestone 3.7)
+
+A **public visitor** here means literally `auth.uid() is null` — no session, no profile row, Supabase's plain `anon` API key. This is a different concept from `profiles.role = 'anonymous'` (a real Supabase Auth anonymous sign-in session, built in an earlier migration but never wired up to any UI) — that machinery is left dormant on purpose; nothing in this milestone creates or depends on an `'anonymous'`-role profile.
+
+Governing principle: **publish a curated view of a project, never the internal project itself.** Nothing became public by weakening an existing RLS policy — every public read path is a new, additive policy (`supabase/migrations/20260810130001_public_visibility.sql`) plus a dedicated narrow-`select()` query function, since RLS is row-level only and several tables (`projects`, `wiki_versions`) carry columns (`owner_id`, `notes`, `details`, `published_by`, `source_chunk_ids`, `created_by`, `approved_by`) that must never reach a public reader even on an otherwise-visible row.
+
+- **`projects`** gains `visibility` (`private`/`internal`/`public`, default `private` — never auto-changed), `public_slug` (unique), `public_profile` (jsonb — hand-authored title/summary/problem/approach/findings/conclusion/`benchmarkSummary`/`relatedWikiSlugs`, deliberately **not** a live rollup of `eval_results`), `published_at`, `published_by`. `projects_select_public` (additive) requires both `visibility = 'public'` and a non-null `published_at`. Publishing is gated to `can_manage_project` (owner or platform admin) — reuses the existing `projects_update_managers` policy, no new UPDATE policy needed, since the new columns live on the same row.
+- **`wiki_articles`** gains `is_public` (default `false`), deliberately separate from `status='approved'` — approved means "trusted canonical knowledge," public means "safe for anonymous disclosure." `wiki_versions_select_public` scopes to exactly an article's *current* version via an `is_public_wiki_article()` helper — never a draft, a pending review revision, or a superseded-but-once-approved version.
+- **Column safety is enforced by the query layer, not RLS**, in `src/lib/projects/public.ts`/`src/lib/wiki/public.ts` — both select an explicit narrow column allowlist and cast to a hand-typed row interface. (Supabase-js's select-string literal type inference doesn't resolve real per-column types against this codebase's hand-authored `Database` type — it silently degrades every field to `any` — so the actual TypeScript safety net here is the explicit row interface + cast, not the select string's type. The runtime column list sent to Postgrest is still exactly what's written regardless.)
+- **Routes**: a new `(public)` route group (`src/app/(public)/`) — `/` (landing), `/about`, `/examples` + `/examples/[slug]` (published project showcases), `/knowledge` + `/knowledge/[slug]` (public Wiki articles). Its layout does not redirect on auth state — unlike `(app)/layout.tsx`, it works for a sessionless visitor and stays reachable for a logged-in user (who gets extra affordances, e.g. an owner's "Manage Public Page" link). Every other authenticated route is unchanged and still redirects to `/login`.
+- **Publishing UX** (`/projects/[id]/publish`, owner/admin only): explicitly separate "Save draft" vs. "Publish"/"Unpublish" actions — changing a form field never auto-publishes. Unpublishing frees the slug and resets `visibility`/`published_at`/`published_by` but preserves the `public_profile` draft so the owner doesn't lose their work.
+- Deliberately **not** exposed to anon: `wiki_sources`, `wiki_relations`, `project_members`, any `eval_*` table, `ai_operation_logs` — none of these gained a new policy this milestone, confirmed via a live anon-key regression check (`scripts/live-e2e.test.ts`).
 
 ## What's explicitly not built yet
 
 Per Milestone 3's scope: no agents, no Agent Builder, no graph orchestration/loops, no automatic query rewriting, no autonomous research, no full Experiments subsystem (a run can be flagged as a baseline and compared to one other run — that's the whole of "comparison" for now), no governance approval workflows beyond the Wiki's own draft→review→approved gate, no training-dataset export, no LoRA/QLoRA/DoRA, no full Runs/Tracing subsystem (only the `eval_run_id`/`eval_case_id` linkage on `ai_operation_logs` described above). An evaluation result — including a `failed` one — never automatically modifies production knowledge, prompts, or models; every correction (score override, failure reclassification) is an explicit human action via `submitHumanReviewAction`.
 
 There's still no general-purpose `/search` retrieval UI outside the evaluation pipeline — `match_documents`/`match_wiki_vectors` exist and are exercised by every eval run, but nothing else calls them yet.
+
+Nothing through Milestone 3.7 builds toward M4 onward yet: no graph orchestration/agent loop, no formal Agent definitions, no Runs/Tracing/Experiments subsystem beyond the baseline-vs-one-other-run comparison already in Milestone 3, no governance inventory/risk-tier/approval-record system, no research agent, no training-dataset export or model fine-tuning, no guided-learning-project templates. Real Supabase Auth anonymous sign-in sessions (`profiles.role='anonymous'`) also remain unbuilt/dormant — Milestone 3.7 solved "anonymous access" with a simpler no-session model instead (see above), not by finishing that older mechanism.

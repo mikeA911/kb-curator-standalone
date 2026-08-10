@@ -6,19 +6,31 @@ const retrieveEvidenceMock = vi.fn()
 const generateAnswerMock = vi.fn()
 const judgeAnswerMock = vi.fn()
 const getProviderByNameMock = vi.fn()
-getProviderByNameMock.mockReturnValue({ name: 'fake-provider' })
+const resolveModelMock = vi.fn()
+const assertModelCapabilityMock = vi.fn()
+getProviderByNameMock.mockResolvedValue({ name: 'fake-provider' })
+resolveModelMock.mockImplementation((_supabase: unknown, provider: string, modelId: string) =>
+  Promise.resolve({
+    provider: { name: provider },
+    model: { model_id: modelId, model_type: 'generation', enabled: true, supports_structured_output: true },
+  })
+)
 
 vi.mock('./retrieval', () => ({ retrieveEvidence: (...args: unknown[]) => retrieveEvidenceMock(...args) }))
 vi.mock('./generation', () => ({ generateAnswer: (...args: unknown[]) => generateAnswerMock(...args) }))
 vi.mock('./judge', () => ({ judgeAnswer: (...args: unknown[]) => judgeAnswerMock(...args) }))
-vi.mock('@/lib/ai', () => ({ getProviderByName: (...args: unknown[]) => getProviderByNameMock(...args) }))
+vi.mock('@/lib/ai', () => ({
+  getProviderByName: (...args: unknown[]) => getProviderByNameMock(...args),
+  resolveModel: (...args: unknown[]) => resolveModelMock(...args),
+  assertModelCapability: (...args: unknown[]) => assertModelCapabilityMock(...args),
+}))
 
 const { executeEvalRun } = await import('./run')
 
 function baseConfig(overrides: Partial<EvalRunConfig> = {}): EvalRunConfig {
   return {
-    generation: { provider: 'gemini' },
-    embedding: { provider: 'gemini' },
+    generation: { provider: 'gemini', model: 'gemini-3.5-flash' },
+    embedding: { provider: 'gemini', model: 'gemini-embedding-001' },
     retrieval: { evidence_source: 'wiki', top_k: 5 },
     evaluator: { type: 'none' },
     ...overrides,
@@ -64,6 +76,8 @@ beforeEach(() => {
   generateAnswerMock.mockReset()
   judgeAnswerMock.mockReset()
   getProviderByNameMock.mockClear()
+  getProviderByNameMock.mockResolvedValue({ name: 'fake-provider' })
+  assertModelCapabilityMock.mockClear()
 })
 
 describe('executeEvalRun', () => {
@@ -87,7 +101,7 @@ describe('executeEvalRun', () => {
   })
 
   it('stores the LLM judge structured result without ever using it as the sole evaluator', async () => {
-    const config = baseConfig({ evaluator: { type: 'llm_judge', provider: 'openai' } })
+    const config = baseConfig({ evaluator: { type: 'llm_judge', provider: 'openai', model: 'gpt-4o-mini' } })
     retrieveEvidenceMock.mockResolvedValue({ evidence: [], queryEmbedding: [], embeddingModel: 'm' })
     generateAnswerMock.mockResolvedValue({ answer: 'the answer', model: 'm', inputTokens: 10, outputTokens: 20 })
     judgeAnswerMock.mockResolvedValue({
@@ -120,7 +134,7 @@ describe('executeEvalRun', () => {
   })
 
   it('uses the provider frozen into the run config, not a fresh lookup -- historical runs stay interpretable after settings change', async () => {
-    const config = baseConfig({ generation: { provider: 'gemini' } })
+    const config = baseConfig({ generation: { provider: 'gemini', model: 'gemini-3.5-flash' } })
     retrieveEvidenceMock.mockResolvedValue({ evidence: [], queryEmbedding: [], embeddingModel: 'm' })
     generateAnswerMock.mockResolvedValue({ answer: 'ans', model: 'm', inputTokens: null, outputTokens: null })
 
@@ -132,7 +146,26 @@ describe('executeEvalRun', () => {
 
     await executeEvalRun(supabase, 'run-1', 'user-1')
 
-    expect(getProviderByNameMock).toHaveBeenCalledWith('gemini', expect.objectContaining({ evalRunId: 'run-1' }))
+    expect(getProviderByNameMock).toHaveBeenCalledWith(supabase, 'gemini', expect.objectContaining({ evalRunId: 'run-1' }))
+  })
+
+  it('validates model capability once at run start, before any case executes', async () => {
+    const config = baseConfig()
+    retrieveEvidenceMock.mockResolvedValue({ evidence: [], queryEmbedding: [], embeddingModel: 'm' })
+    generateAnswerMock.mockResolvedValue({ answer: 'ans', model: 'm', inputTokens: null, outputTokens: null })
+
+    const supabase = createFakeSupabase({
+      eval_runs: [{ data: run(config), error: null }, { data: null, error: null }, { data: null, error: null }],
+      eval_cases: [{ data: [evalCase('case-1')], error: null }],
+      eval_results: [{ data: null, error: null }],
+    }) as never
+
+    await executeEvalRun(supabase, 'run-1', 'user-1')
+
+    expect(resolveModelMock).toHaveBeenCalledWith(supabase, 'gemini', 'gemini-3.5-flash')
+    expect(resolveModelMock).toHaveBeenCalledWith(supabase, 'gemini', 'gemini-embedding-001')
+    expect(assertModelCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({ model_id: 'gemini-3.5-flash' }), 'generation')
+    expect(assertModelCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({ model_id: 'gemini-embedding-001' }), 'embedding')
   })
 
   it('records a failed case as an explicit failed result instead of losing it, and still completes the run', async () => {

@@ -4,7 +4,7 @@ import { useTransition } from 'react'
 import type { KnowledgeBase, Profile, UserRole } from '@/types/database'
 import { updateUserRole, updateUserActive, assignKBsToCurator } from '@/app/actions/admin'
 
-export function CuratorAssignment({ profiles, knowledgeBases }: { profiles: Profile[]; knowledgeBases: KnowledgeBase[] }) {
+export function UserManagement({ profiles, knowledgeBases }: { profiles: Profile[]; knowledgeBases: KnowledgeBase[] }) {
   const [isPending, startTransition] = useTransition()
 
   function toggleKb(profile: Profile, kbId: string) {
@@ -30,18 +30,22 @@ export function CuratorAssignment({ profiles, knowledgeBases }: { profiles: Prof
           <tbody>
             {profiles.map((profile) => (
               <tr key={profile.id} className="border-b border-zinc-100 last:border-0">
-                <td className="px-3 py-2">{profile.email}</td>
+                <td className="px-3 py-2">{profile.email ?? <span className="text-zinc-400">(anonymous)</span>}</td>
                 <td className="px-3 py-2">
-                  <select
-                    defaultValue={profile.role}
-                    disabled={isPending}
-                    onChange={(e) => startTransition(() => updateUserRole(profile.id, e.target.value as UserRole))}
-                    className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
-                  >
-                    <option value="user">user</option>
-                    <option value="curator">curator</option>
-                    <option value="admin">admin</option>
-                  </select>
+                  {profile.role === 'anonymous' ? (
+                    <span className="rounded bg-zinc-100 px-1.5 py-1 text-xs text-zinc-500">anonymous</span>
+                  ) : (
+                    <select
+                      defaultValue={profile.role}
+                      disabled={isPending}
+                      onChange={(e) => startTransition(() => updateUserRole(profile.id, e.target.value as Exclude<UserRole, 'anonymous'>))}
+                      className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
+                    >
+                      <option value="consultant">consultant</option>
+                      <option value="curator">curator</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <input

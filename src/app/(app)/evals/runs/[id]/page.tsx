@@ -23,6 +23,14 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
   const { id } = await params
   const supabase = await createClient()
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const { data: viewerProfile } = user
+    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
+    : { data: null }
+  const canAuthor = viewerProfile?.role === 'curator' || viewerProfile?.role === 'admin'
+
   const { data: run } = await supabase.from('eval_runs').select('*').eq('id', id).single()
   if (!run) notFound()
 
@@ -67,7 +75,7 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
             {run.config.evaluator.type}
           </p>
         </div>
-        {run.status === 'completed' && !run.is_baseline && <BaselineButton runId={run.id} datasetId={run.dataset_id} />}
+        {canAuthor && run.status === 'completed' && !run.is_baseline && <BaselineButton runId={run.id} datasetId={run.dataset_id} />}
       </div>
 
       {run.error_message && <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{run.error_message}</p>}

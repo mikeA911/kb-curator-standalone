@@ -8,6 +8,14 @@ export default async function EvalDatasetPage({ params }: { params: Promise<{ id
   const { id } = await params
   const supabase = await createClient()
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const { data: viewerProfile } = user
+    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
+    : { data: null }
+  const canAuthor = viewerProfile?.role === 'curator' || viewerProfile?.role === 'admin'
+
   const { data: dataset } = await supabase.from('eval_datasets').select('*').eq('id', id).single()
   if (!dataset) notFound()
 
@@ -15,6 +23,8 @@ export default async function EvalDatasetPage({ params }: { params: Promise<{ id
     supabase.from('eval_cases').select('*').eq('dataset_id', id).order('created_at', { ascending: true }),
     supabase.from('wiki_articles').select('id, title, slug').eq('status', 'approved').order('title'),
   ])
+
+  const canRun = canAuthor || dataset.status === 'active'
 
   return (
     <div className="flex flex-col gap-6">
@@ -27,10 +37,12 @@ export default async function EvalDatasetPage({ params }: { params: Promise<{ id
           {dataset.description && <p className="mt-1 text-sm text-zinc-600">{dataset.description}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Link href={`/evals/runs/new?dataset=${dataset.id}`} className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white">
-            Run evaluation
-          </Link>
-          <DatasetActions datasetId={dataset.id} status={dataset.status} />
+          {canRun && (
+            <Link href={`/evals/runs/new?dataset=${dataset.id}`} className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white">
+              Run evaluation
+            </Link>
+          )}
+          {canAuthor && <DatasetActions datasetId={dataset.id} status={dataset.status} />}
         </div>
       </div>
 
@@ -39,6 +51,7 @@ export default async function EvalDatasetPage({ params }: { params: Promise<{ id
         datasetStatus={dataset.status}
         cases={cases ?? []}
         articles={articles ?? []}
+        canAuthor={canAuthor}
       />
     </div>
   )

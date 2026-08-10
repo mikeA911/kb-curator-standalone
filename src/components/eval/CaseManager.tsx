@@ -23,14 +23,16 @@ export function CaseManager({
   datasetStatus,
   cases,
   articles,
+  canAuthor,
 }: {
   datasetId: string
   datasetStatus: EvalDatasetStatus
   cases: EvalCase[]
   articles: ArticleOption[]
+  canAuthor: boolean
 }) {
   const router = useRouter()
-  const editable = datasetStatus === 'draft'
+  const editable = canAuthor && datasetStatus === 'draft'
 
   return (
     <div className="flex flex-col gap-4">
@@ -61,11 +63,13 @@ export function CaseManager({
 
       {editable ? (
         <AddCaseForm datasetId={datasetId} articles={articles} onAdded={() => router.refresh()} />
-      ) : (
+      ) : canAuthor ? (
         <p className="text-sm text-zinc-500">
           Cases are frozen because this dataset is {datasetStatus} -- editing them once active would make past runs
           incomparable to future ones. Create a new dataset to change the benchmark.
         </p>
+      ) : (
+        <p className="text-sm text-zinc-500">Cases in this benchmark are managed by curators.</p>
       )}
     </div>
   )

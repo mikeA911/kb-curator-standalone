@@ -49,7 +49,7 @@ export async function listAllProfiles() {
   return data
 }
 
-export async function updateUserRole(userId: string, role: 'user' | 'curator' | 'admin') {
+export async function updateUserRole(userId: string, role: 'consultant' | 'curator' | 'admin') {
   await requireRole('admin')
   const admin = createAdminClient()
   const { error } = await admin.from('profiles').update({ role }).eq('id', userId)

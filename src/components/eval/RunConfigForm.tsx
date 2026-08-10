@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { AIProviderName, EvidenceSource, EvaluatorType } from '@/types/database'
+import type { AIModelRow, AIProviderRow, AIModelType, EvidenceSource, EvaluatorType } from '@/types/database'
 import { createAndRunEvalAction } from '@/app/actions/eval'
 
 interface DatasetOption {
@@ -12,21 +12,101 @@ interface DatasetOption {
   version: number
 }
 
+function ProviderModelPicker({
+  label,
+  providers,
+  models,
+  modelType,
+  providerName,
+  modelId,
+  onChange,
+}: {
+  label: string
+  providers: AIProviderRow[]
+  models: AIModelRow[]
+  modelType: AIModelType
+  providerName: string
+  modelId: string
+  onChange: (providerName: string, modelId: string) => void
+}) {
+  const providersWithModel = providers.filter((p) => models.some((m) => m.provider_id === p.id && m.model_type === modelType))
+  const modelsForProvider = models.filter((m) => {
+    const provider = providers.find((p) => p.name === providerName)
+    return provider && m.provider_id === provider.id && m.model_type === modelType
+  })
+
+  return (
+    <div className="flex gap-3">
+      <label className="flex flex-1 flex-col gap-1">
+        <span className="text-sm font-medium">{label} provider</span>
+        <select
+          value={providerName}
+          onChange={(e) => {
+            const nextProvider = e.target.value
+            const firstModel = models.find((m) => {
+              const provider = providers.find((p) => p.name === nextProvider)
+              return provider && m.provider_id === provider.id && m.model_type === modelType
+            })
+            onChange(nextProvider, firstModel?.model_id ?? '')
+          }}
+          className="rounded border border-zinc-300 px-3 py-2 text-sm"
+        >
+          {providersWithModel.map((p) => (
+            <option key={p.id} value={p.name}>
+              {p.display_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-1 flex-col gap-1">
+        <span className="text-sm font-medium">{label} model</span>
+        <select value={modelId} onChange={(e) => onChange(providerName, e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
+          {modelsForProvider.map((m) => (
+            <option key={m.id} value={m.model_id}>
+              {m.display_name}
+              {m.status === 'deprecated' ? ' (deprecated)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  )
+}
+
+function firstModelFor(providers: AIProviderRow[], models: AIModelRow[], modelType: AIModelType) {
+  const candidates = models.filter((m) => m.model_type === modelType)
+  const model = candidates.find((m) => m.is_default) ?? candidates[0]
+  const provider = providers.find((p) => p.id === model?.provider_id)
+  return { provider: provider?.name ?? '', model: model?.model_id ?? '' }
+}
+
 export function RunConfigForm({
   datasets,
   preselectedDatasetId,
+  providers,
+  models,
 }: {
   datasets: DatasetOption[]
   preselectedDatasetId?: string
+  providers: AIProviderRow[]
+  models: AIModelRow[]
 }) {
   const router = useRouter()
   const [datasetId, setDatasetId] = useState(preselectedDatasetId ?? datasets[0]?.id ?? '')
   const [name, setName] = useState('')
-  const [provider, setProvider] = useState<AIProviderName>('openai')
+
+  const defaultGeneration = firstModelFor(providers, models, 'generation')
+  const defaultEmbedding = firstModelFor(providers, models, 'embedding')
+
+  const [generationProvider, setGenerationProvider] = useState(defaultGeneration.provider)
+  const [generationModel, setGenerationModel] = useState(defaultGeneration.model)
+  const [embeddingProvider, setEmbeddingProvider] = useState(defaultEmbedding.provider)
+  const [embeddingModel, setEmbeddingModel] = useState(defaultEmbedding.model)
   const [evidenceSource, setEvidenceSource] = useState<EvidenceSource>('chunks')
   const [topK, setTopK] = useState(5)
   const [evaluatorType, setEvaluatorType] = useState<EvaluatorType>('llm_judge')
-  const [evaluatorProvider, setEvaluatorProvider] = useState<AIProviderName>('openai')
+  const [evaluatorProvider, setEvaluatorProvider] = useState(defaultGeneration.provider)
+  const [evaluatorModel, setEvaluatorModel] = useState(defaultGeneration.model)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
@@ -38,6 +118,10 @@ export function RunConfigForm({
       setError('Select a dataset')
       return
     }
+    if (!generationModel || !embeddingModel) {
+      setError('No enabled models available -- ask an admin to configure one under Administration → AI Config')
+      return
+    }
     setSubmitting(true)
     setProgress('Running cases -- this can take a minute for the full dataset…')
     try {
@@ -45,10 +129,11 @@ export function RunConfigForm({
         datasetId,
         name,
         config: {
-          generation: { provider },
-          embedding: { provider },
+          generation: { provider: generationProvider, model: generationModel },
+          embedding: { provider: embeddingProvider, model: embeddingModel },
           retrieval: { evidence_source: evidenceSource, top_k: topK },
-          evaluator: evaluatorType === 'llm_judge' ? { type: 'llm_judge', provider: evaluatorProvider } : { type: 'none' },
+          evaluator:
+            evaluatorType === 'llm_judge' ? { type: 'llm_judge', provider: evaluatorProvider, model: evaluatorModel } : { type: 'none' },
         },
       })
       router.push(`/evals/runs/${result.runId}`)
@@ -74,16 +159,34 @@ export function RunConfigForm({
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Run name (optional)</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. gemini + wiki-only" className="rounded border border-zinc-300 px-3 py-2 text-sm" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. groq + wiki-only" className="rounded border border-zinc-300 px-3 py-2 text-sm" />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Generation / embedding provider</span>
-        <select value={provider} onChange={(e) => setProvider(e.target.value as AIProviderName)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
-          <option value="openai">OpenAI</option>
-          <option value="gemini">Gemini</option>
-        </select>
-      </label>
+      <ProviderModelPicker
+        label="Generation"
+        providers={providers}
+        models={models}
+        modelType="generation"
+        providerName={generationProvider}
+        modelId={generationModel}
+        onChange={(p, m) => {
+          setGenerationProvider(p)
+          setGenerationModel(m)
+        }}
+      />
+
+      <ProviderModelPicker
+        label="Embedding"
+        providers={providers}
+        models={models}
+        modelType="embedding"
+        providerName={embeddingProvider}
+        modelId={embeddingModel}
+        onChange={(p, m) => {
+          setEmbeddingProvider(p)
+          setEmbeddingModel(m)
+        }}
+      />
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Retrieval source</span>
@@ -108,13 +211,18 @@ export function RunConfigForm({
       </label>
 
       {evaluatorType === 'llm_judge' && (
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Judge provider</span>
-          <select value={evaluatorProvider} onChange={(e) => setEvaluatorProvider(e.target.value as AIProviderName)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-          </select>
-        </label>
+        <ProviderModelPicker
+          label="Evaluator"
+          providers={providers}
+          models={models}
+          modelType="generation"
+          providerName={evaluatorProvider}
+          modelId={evaluatorModel}
+          onChange={(p, m) => {
+            setEvaluatorProvider(p)
+            setEvaluatorModel(m)
+          }}
+        />
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
