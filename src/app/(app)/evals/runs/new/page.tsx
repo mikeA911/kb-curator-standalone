@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { RunConfigForm } from '@/components/eval/RunConfigForm'
 import { listProviders, listModels } from '@/lib/ai'
+import { listActiveGraphs } from '@/lib/graph/queries'
 
 // executeEvalRun runs every case in a dataset sequentially (retrieve ->
 // generate -> optional LLM judge = up to 3 AI calls per case), inside the
@@ -18,10 +19,11 @@ export default async function NewEvalRunPage({
   const { dataset: preselectedDatasetId } = await searchParams
   const supabase = await createClient()
 
-  const [{ data: datasets }, providers, models] = await Promise.all([
+  const [{ data: datasets }, providers, models, graphs] = await Promise.all([
     supabase.from('eval_datasets').select('id, name, status, version').order('created_at', { ascending: false }),
     listProviders(supabase, { enabledOnly: true }),
     listModels(supabase, { enabledOnly: true }),
+    listActiveGraphs(supabase),
   ])
 
   return (
@@ -32,6 +34,7 @@ export default async function NewEvalRunPage({
         preselectedDatasetId={preselectedDatasetId}
         providers={providers}
         models={models}
+        graphs={graphs}
       />
     </div>
   )

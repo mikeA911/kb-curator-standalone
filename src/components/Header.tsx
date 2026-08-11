@@ -25,6 +25,7 @@ export function Header({ profile }: { profile: Profile }) {
             <Link href="/projects" className="hover:text-zinc-900">Projects</Link>
             <Link href="/wiki" className="hover:text-zinc-900">Wiki</Link>
             <Link href="/evals" className="hover:text-zinc-900">Evals</Link>
+            <Link href="/graphs" className="hover:text-zinc-900">Graphs</Link>
             {(profile.role === 'curator' || profile.role === 'admin') && (
               <Link href="/upload" className="hover:text-zinc-900">Upload</Link>
             )}

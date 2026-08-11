@@ -13,6 +13,16 @@ export interface LogContext {
   requestedBy?: string
   evalRunId?: string
   evalCaseId?: string
+  graphRunId?: string
+  graphStepId?: string
+  // Fired with the new ai_operation_logs row's id right after insert -- this
+  // is how a graph node wrapper (src/lib/graph/persistence.ts) links
+  // graph_steps.ai_operation_log_id to the log row its own AI call produced.
+  // A plain return value from record() can't reach the node's calling code
+  // (record() fires inside this wrapper, several layers removed) -- a
+  // callback works because JS is single-threaded, so it fires before the
+  // awaited generateText()/etc. call resolves back to the caller.
+  onLogged?: (id: string) => void
 }
 
 // Wraps any AIProvider so every call is recorded in ai_operation_logs --
@@ -28,21 +38,28 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
     outcome: { success: true; inputTokens: number | null; outputTokens: number | null } | { success: false; error: string }
   ) => {
     const admin = createAdminClient()
-    await admin.from('ai_operation_logs').insert({
-      operation,
-      provider: provider.name,
-      model,
-      document_id: context.documentId ?? null,
-      chunk_id: context.chunkId ?? null,
-      requested_by: context.requestedBy ?? null,
-      eval_run_id: context.evalRunId ?? null,
-      eval_case_id: context.evalCaseId ?? null,
-      latency_ms: Date.now() - startedAt,
-      input_tokens: outcome.success ? outcome.inputTokens : null,
-      output_tokens: outcome.success ? outcome.outputTokens : null,
-      success: outcome.success,
-      error_message: outcome.success ? null : outcome.error,
-    })
+    const { data } = await admin
+      .from('ai_operation_logs')
+      .insert({
+        operation,
+        provider: provider.name,
+        model,
+        document_id: context.documentId ?? null,
+        chunk_id: context.chunkId ?? null,
+        requested_by: context.requestedBy ?? null,
+        eval_run_id: context.evalRunId ?? null,
+        eval_case_id: context.evalCaseId ?? null,
+        graph_run_id: context.graphRunId ?? null,
+        graph_step_id: context.graphStepId ?? null,
+        latency_ms: Date.now() - startedAt,
+        input_tokens: outcome.success ? outcome.inputTokens : null,
+        output_tokens: outcome.success ? outcome.outputTokens : null,
+        success: outcome.success,
+        error_message: outcome.success ? null : outcome.error,
+      })
+      .select('id')
+      .single()
+    if (data) context.onLogged?.(data.id)
   }
 
   return {

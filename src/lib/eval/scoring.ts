@@ -55,6 +55,10 @@ export interface RunSummary {
   totalInputTokens: number
   totalOutputTokens: number
   totalEstimatedCost: number | null
+  // null when every result in the run is single-pass (iteration_count is
+  // only ever set on a graph-mode eval_results row) -- distinguishing "no
+  // iterations happened" from "this run didn't use the graph at all".
+  avgIterations: number | null
 }
 
 function average(values: (number | null | undefined)[]): number | null {
@@ -76,6 +80,7 @@ export function summarizeResults(
     input_tokens: number | null
     output_tokens: number | null
     estimated_cost: number | null
+    iteration_count?: number | null
   }[]
 ): RunSummary {
   const completed = results.filter((r) => r.status === 'completed')
@@ -96,5 +101,6 @@ export function summarizeResults(
     totalOutputTokens: completed.reduce((sum, r) => sum + (r.output_tokens ?? 0), 0),
     totalEstimatedCost:
       completed.some((r) => r.estimated_cost !== null) ? completed.reduce((sum, r) => sum + (r.estimated_cost ?? 0), 0) : null,
+    avgIterations: average(completed.map((r) => r.iteration_count)),
   }
 }

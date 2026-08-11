@@ -1,10 +1,10 @@
 # KB Sandbox — Current Architecture
 
-Living documentation of what's actually implemented, as of Milestone 3.7 (Public / Anonymous Experience). Where this differs from `KB Sandbox.md`'s original brief, that's called out explicitly with a reason — this file describes reality, not intent.
+Living documentation of what's actually implemented, as of Milestone 4 (Controlled Graph Runtime). Where this differs from `KB Sandbox.md`'s original brief, that's called out explicitly with a reason — this file describes reality, not intent.
 
 ## Milestone roadmap
 
-The project follows a revised milestone sequence (superseding any earlier "Milestone 4/5..." numbering implied by the original brief). Everything through **M3.7 is built**; M4 onward is planned, not started.
+The project follows a revised milestone sequence (superseding any earlier "Milestone 4/5..." numbering implied by the original brief). Everything through **M4 is built**; M5 onward is planned, not started.
 
 | # | Milestone | Status |
 |---|-----------|--------|
@@ -14,7 +14,7 @@ The project follows a revised milestone sequence (superseding any earlier "Miles
 | M3.5 | Multi-Provider / Multi-Model AI Registry — `ai_providers`/`ai_models`, Groq + generic OpenAI-compatible gateway, capability validation | Built |
 | M3.6 | Projects, Membership & Isolation — `project_members`, project roles, project-scoped RLS, client/training isolation | Built |
 | M3.7 | Public / Anonymous Experience — public About/Examples/Knowledge, explicit publish/unpublish, anon-safe RLS | Built |
-| M4 | Graph Runtime / Controlled Agent Loop — Retrieve → Generate → Evaluate → Retry/End, persistent state, graph versioning | Planned |
+| M4 | Graph Runtime / Controlled Agent Loop — Retrieve → Generate → Evaluate → Retry/End, persistent state, graph versioning | Built |
 | M5 | First Formal Agents — model + instructions + state + sources + tools + graph + guardrails + eval suite, starting with a RAG Answer Agent | Planned |
 | M6 | Runs, Tracing & Experiments — full execution traces, experiment definitions, configuration leaderboard | Planned |
 | M7 | Governance Foundation — AI system inventory, risk tier, controls, evaluation gates, approval records, audit evidence | Planned |
@@ -22,7 +22,7 @@ The project follows a revised milestone sequence (superseding any earlier "Miles
 | M9 | Learning & Model Adaptation — structured corrections, validated training datasets, LoRA/QLoRA/DoRA experiments, governed promotion | Planned |
 | M10 | Training / Consultant Enablement Layer — guided learning projects, reusable templates, curated examples for junior consultants | Planned |
 
-The sections below describe M1–M3.7 as actually implemented. See each section heading for which milestone introduced it.
+The sections below describe M1–M4 as actually implemented. See each section heading for which milestone introduced it.
 
 ## Stack
 
@@ -163,10 +163,25 @@ Governing principle: **publish a curated view of a project, never the internal p
 - **Publishing UX** (`/projects/[id]/publish`, owner/admin only): explicitly separate "Save draft" vs. "Publish"/"Unpublish" actions — changing a form field never auto-publishes. Unpublishing frees the slug and resets `visibility`/`published_at`/`published_by` but preserves the `public_profile` draft so the owner doesn't lose their work.
 - Deliberately **not** exposed to anon: `wiki_sources`, `wiki_relations`, `project_members`, any `eval_*` table, `ai_operation_logs` — none of these gained a new policy this milestone, confirmed via a live anon-key regression check (`scripts/live-e2e.test.ts`).
 
+## Graph Runtime (Milestone 4)
+
+The first graph-based execution primitive: STATE + NODES + EDGES + CONDITIONAL TRANSITIONS + TERMINATION + TRACE. Extends the M3 single-pass pipeline (`retrieve → generate → score`) into a bounded retry loop (`retrieve → generate → evaluate → (accept → END | retry: diagnose → rewrite_query → retrieve)`, capped at `maxIterations`) without replacing the single-pass path, which remains available and unchanged. **The graph controls execution; the LLM only controls content generation and query rewriting inside nodes** — no `while(modelSaysContinue){modelDoAnything()}`. This is explicitly not the Agent milestone (M5): no tool-calling, no Agent Builder, no autonomous behavior; `ai_models.supports_tools` stays unread.
+
+Uses `@langchain/langgraph` (`StateGraph`/`Annotation.Root`) for orchestration only — every node reuses an existing M3 service unchanged (`retrieveEvidence`, `generateAnswer`, `judgeAnswer`, `computeRetrievalMetrics`); LangChain never replaces `AIProvider` or the eval pipeline. `RagGraphState` (`src/lib/graph/state.ts`) is an explicit typed interface, never `Record<string, any>`.
+
+- **Schema**: `graphs` (stable identity, nullable `project_id` = platform-global) → `graph_versions` (immutable config snapshot — no UPDATE RLS policy at all, same enforcement mechanism as `wiki_versions`; a graph's *active* version is tracked via `graphs.active_version_id`, updated in place, so `graph_versions` itself never needs an UPDATE) → `graph_runs` (one execution) → `graph_steps` (one row per executed node — the actual trace, the design brief's own framing: "more important than visual graph editing").
+- **Nodes** (`src/lib/graph/nodes.ts`) — five plain, independently-testable functions, no LangGraph dependency of their own: `retrieveNode`/`generateNode` thinly wrap the M3 services; `evaluateNode` always runs deterministic retrieval metrics and adds an LLM judge only when one is configured (never fabricates a score with no golden answer); `diagnoseNode` uses deterministic rules only (missing expected evidence → `retrieval_failure`, low score → `generation_failure`); `rewriteQueryNode` produces only a revised retrieval query, never an answer.
+- **Transition** (`src/lib/graph/transitions.ts`) — `shouldContinue()` is a pure, deterministic function (never asks the model "want another attempt?"): accepted → end; `iteration >= maxIterations` → end; retryable → diagnose. Three acceptance regimes depending on what's configured: judge-and-thresholds, deterministic-retrieval-hit-only (no judge but golden evidence exists), or a single pass ending in `terminationReason = 'unscored'` (deliberately distinct from `'success'` — nothing was checked, and a comparison UI must never conflate the two).
+- **Reasoning retry vs. infrastructure retry** — structurally separate code paths. A thrown `AIProviderError` from an AI-calling node terminates the `graph_run` immediately (`status='failed'`, `termination_reason='provider_error'`) and never reaches `diagnose`; that's a catch block, not a graph edge. No infrastructure-level retry/backoff exists in the provider layer today — a transient `rate_limit` fails the run outright, a known limitation, not silently absorbed.
+- **Eval integration**: `EvalRunConfig.execution` is optional (`{ mode: 'single_pass' | 'graph', graphId?, graphVersionId?, maxIterations?, acceptanceThresholds? }`) — absent means exactly today's single-pass behavior, fully backward compatible with every historical run. `runCaseViaGraph()` (`src/lib/eval/run.ts`) creates a `graph_runs` row and maps the graph's *final* state into the same `eval_results` shape the single-pass path writes (plus new nullable `graph_run_id`/`iteration_count` columns) — the results table, scoring, and run-comparison UI need no changes to understand a graph-mode result. `MAX_GRAPH_ITERATIONS = 5` (`src/lib/graph/errors.ts`) is a hard server-side ceiling regardless of what a run requests.
+- **UI**: `/graphs` (list + `[slug]` detail — version history, "Activate Version," an ordinary list/ASCII flow diagram, deliberately no visual node-drag editor), an Execution Mode selector on `RunConfigForm`, and a trace panel added to the existing eval-result drill-down page (`/evals/runs/[id]/[resultId]`) showing each executed node/iteration when `eval_results.graph_run_id` is present.
+- **RLS**: `graphs`/`graph_versions` use the same two-tier split `knowledge_bases` already uses for nullable `project_id` (global vs. project-scoped), except "manage" is owner-only for project-scoped graphs (`can_manage_project`, not `can_curate_project`) per the design brief's explicit "admin/project owner" wording. `graph_runs`/`graph_steps` mirror `eval_runs`' exact staff-unscoped-plus-consultant-project-scoped shape. All helper functions (`is_project_member`, `can_manage_project`, `can_run_project_evals`, `is_curator_or_admin`) are reused by name from M3.6, never redefined.
+- **Known scope trim**: `graph_steps.ai_operation_log_id` linkage to the *specific* AI call a node made is not wired for M4 (the column exists for a later milestone) — providers are resolved once per case, not once per node invocation, so `ai_operation_logs.graph_run_id` is populated correctly but the step-level cross-reference isn't. The trace's core value (which nodes ran, their input/output/latency/status/iteration) doesn't depend on it.
+
 ## What's explicitly not built yet
 
 Per Milestone 3's scope: no agents, no Agent Builder, no graph orchestration/loops, no automatic query rewriting, no autonomous research, no full Experiments subsystem (a run can be flagged as a baseline and compared to one other run — that's the whole of "comparison" for now), no governance approval workflows beyond the Wiki's own draft→review→approved gate, no training-dataset export, no LoRA/QLoRA/DoRA, no full Runs/Tracing subsystem (only the `eval_run_id`/`eval_case_id` linkage on `ai_operation_logs` described above). An evaluation result — including a `failed` one — never automatically modifies production knowledge, prompts, or models; every correction (score override, failure reclassification) is an explicit human action via `submitHumanReviewAction`.
 
 There's still no general-purpose `/search` retrieval UI outside the evaluation pipeline — `match_documents`/`match_wiki_vectors` exist and are exercised by every eval run, but nothing else calls them yet.
 
-Nothing through Milestone 3.7 builds toward M4 onward yet: no graph orchestration/agent loop, no formal Agent definitions, no Runs/Tracing/Experiments subsystem beyond the baseline-vs-one-other-run comparison already in Milestone 3, no governance inventory/risk-tier/approval-record system, no research agent, no training-dataset export or model fine-tuning, no guided-learning-project templates. Real Supabase Auth anonymous sign-in sessions (`profiles.role='anonymous'`) also remain unbuilt/dormant — Milestone 3.7 solved "anonymous access" with a simpler no-session model instead (see above), not by finishing that older mechanism.
+Nothing through Milestone 4 builds toward M5 onward yet: no formal Agent definitions, no tool-calling (the registry's `supports_tools` flag exists but is unread), no Agent Builder UI, no multi-agent collaboration, no autonomous research, no Runs/Tracing/Experiments subsystem beyond the baseline-vs-one-other-run comparison already in Milestone 3 plus the graph trace panel, no governance inventory/risk-tier/approval-record system, no training-dataset export or model fine-tuning, no guided-learning-project templates. Real Supabase Auth anonymous sign-in sessions (`profiles.role='anonymous'`) also remain unbuilt/dormant — Milestone 3.7 solved "anonymous access" with a simpler no-session model instead (see above), not by finishing that older mechanism.

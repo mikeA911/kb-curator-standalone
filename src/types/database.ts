@@ -182,6 +182,8 @@ export interface AIOperationLog {
   error_message: string | null
   eval_run_id: string | null
   eval_case_id: string | null
+  graph_run_id: string | null
+  graph_step_id: string | null
 }
 
 export interface ChunkForReview extends DocumentChunk {
@@ -462,6 +464,23 @@ export interface EvalCase {
   updated_at: string
 }
 
+// Absent = today's exact single-pass behavior (backward compatible with
+// every stored run). graphId/graphVersionId/maxIterations/acceptanceThresholds
+// are the config snapshot Milestone 4 requires so a historical graph run
+// stays interpretable even after the active graph version changes later --
+// see docs/CURRENT-ARCHITECTURE.md's Graph Runtime section.
+export interface EvalRunExecutionConfig {
+  mode: 'single_pass' | 'graph'
+  graphId?: string
+  graphVersionId?: string
+  maxIterations?: number
+  acceptanceThresholds?: {
+    requiredOutcomeScore?: number
+    requiredGroundingScore?: number
+    requireExpectedEvidence?: boolean
+  }
+}
+
 export interface EvalRunConfig {
   // model is required, not optional -- a run must snapshot exactly which
   // model was tested (see the brief this shipped with: "historical eval runs
@@ -472,6 +491,7 @@ export interface EvalRunConfig {
   // provider/model stay optional as a pair -- evaluator.type='none' genuinely
   // has neither.
   evaluator: { type: EvaluatorType; provider?: AIProviderName; model?: string }
+  execution?: EvalRunExecutionConfig
 }
 
 export interface EvalRun {
@@ -543,10 +563,123 @@ export interface EvalResult {
   human_failure_classification: FailureClassification | null
   human_notes: string | null
   created_at: string
+  // Null for a single-pass run. Set together -- a graph-mode result always
+  // has both, a single-pass result always has neither.
+  graph_run_id: string | null
+  iteration_count: number | null
 }
 
 export interface EvalResultWithCase extends EvalResult {
   case: Pick<EvalCase, 'question' | 'expected_answer' | 'expected_concepts' | 'expected_article_ids' | 'expected_chunk_ids'>
+}
+
+// ============================================
+// Graph Runtime (Milestone 4)
+// ============================================
+// graphs (stable identity) -> graph_versions (immutable config snapshot) ->
+// graph_runs (one execution) -> graph_steps (one row per executed node,
+// the actual trace). The executable graph wiring lives in TypeScript
+// (src/lib/graph/); graph_versions.definition documents what ran, it is
+// never reconstructed from jsonb at runtime. See
+// docs/CURRENT-ARCHITECTURE.md's Graph Runtime section for the full model.
+
+export type GraphType = 'rag_retry'
+export type GraphStatus = 'draft' | 'active' | 'archived'
+
+export interface Graph {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  graph_type: GraphType
+  status: GraphStatus
+  project_id: string | null
+  active_version_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Config snapshot only -- not reconstructed into an executable graph at
+// runtime. Mirrors the 5-node RAG Retry flow; a future graph_type would get
+// its own definition shape.
+export interface GraphVersionDefinition {
+  nodes: string[]
+  edges: { from: string; to: string }[]
+  conditionalEdges: { from: string; condition: string; accept: string; retry: string }[]
+  maxIterations: number
+  acceptanceThresholds: {
+    requiredOutcomeScore?: number
+    requiredGroundingScore?: number
+    requireExpectedEvidence?: boolean
+  }
+}
+
+export interface GraphVersion {
+  id: string
+  graph_id: string
+  version_number: number
+  definition: GraphVersionDefinition
+  instructions_version: string | null
+  created_by: string | null
+  created_at: string
+  activated_at: string | null
+}
+
+export type GraphRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'terminated'
+
+// Every graph run records why it stopped. 'unscored' (distinct from
+// 'success') covers the no-judge/no-golden-evidence case -- the graph ran
+// once and stopped because there was nothing to score against, which must
+// never be conflated with an actual accepted evaluation in a comparison UI.
+export type GraphTerminationReason =
+  | 'success'
+  | 'unscored'
+  | 'max_iterations'
+  | 'non_retryable_failure'
+  | 'provider_error'
+  | 'invalid_configuration'
+  | 'manual_termination'
+
+export interface GraphRun {
+  id: string
+  graph_id: string
+  graph_version_id: string
+  project_id: string | null
+  eval_run_id: string | null
+  eval_case_id: string | null
+  status: GraphRunStatus
+  initial_input: Record<string, unknown>
+  final_output: Record<string, unknown> | null
+  iteration_count: number
+  started_at: string | null
+  completed_at: string | null
+  termination_reason: GraphTerminationReason | null
+  error_code: string | null
+  error_message: string | null
+  created_by: string | null
+  created_at: string
+}
+
+export type GraphStepStatus = 'completed' | 'failed'
+export type GraphNodeName = 'retrieve' | 'generate' | 'evaluate' | 'diagnose' | 'rewrite_query'
+
+export interface GraphStep {
+  id: string
+  graph_run_id: string
+  sequence_number: number
+  node_name: GraphNodeName
+  iteration: number
+  input_snapshot: Record<string, unknown> | null
+  output_snapshot: Record<string, unknown> | null
+  transition_to: string | null
+  status: GraphStepStatus
+  latency_ms: number | null
+  ai_operation_log_id: string | null
+  error_code: string | null
+  error_message: string | null
+  started_at: string
+  completed_at: string | null
 }
 
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
@@ -609,6 +742,23 @@ export type AIProviderUpdate = Partial<Omit<AIProviderRow, 'id' | 'created_at'>>
 export type AIModelInsert = Omit<AIModelRow, 'id' | 'created_at' | 'updated_at'>
 export type AIModelUpdate = Partial<Omit<AIModelRow, 'id' | 'provider_id' | 'created_at'>>
 
+// active_version_id is optional at insert time -- a graph is created before
+// its first version exists, then activated via a separate UPDATE.
+export type GraphInsert = Omit<Graph, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
+  Partial<Pick<Graph, 'active_version_id'>>
+export type GraphUpdate = Partial<Omit<Graph, 'id' | 'created_at'>>
+
+// No GraphVersionUpdate -- graph_versions is insert-only (see the migration
+// comment: no UPDATE RLS policy exists at all, same immutability mechanism
+// as wiki_versions).
+export type GraphVersionInsert = Omit<GraphVersion, 'id' | 'created_at'>
+
+export type GraphRunInsert = Omit<GraphRun, 'id' | 'created_at'>
+export type GraphRunUpdate = Partial<Omit<GraphRun, 'id' | 'graph_id' | 'graph_version_id' | 'created_at'>>
+
+export type GraphStepInsert = Omit<GraphStep, 'id'>
+export type GraphStepUpdate = Partial<Omit<GraphStep, 'id' | 'graph_run_id' | 'started_at'>>
+
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
 // doesn't error, it silently collapses every Row/Insert/Update type to
@@ -666,6 +816,10 @@ export interface Database {
       project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
       ai_providers: { Row: AIProviderRow; Insert: AIProviderInsert; Update: AIProviderUpdate; Relationships: [] }
       ai_models: { Row: AIModelRow; Insert: AIModelInsert; Update: AIModelUpdate; Relationships: [] }
+      graphs: { Row: Graph; Insert: GraphInsert; Update: GraphUpdate; Relationships: [] }
+      graph_versions: { Row: GraphVersion; Insert: GraphVersionInsert; Update: never; Relationships: [] }
+      graph_runs: { Row: GraphRun; Insert: GraphRunInsert; Update: GraphRunUpdate; Relationships: [] }
+      graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }
     }
     Views: Record<string, never>
     Functions: {

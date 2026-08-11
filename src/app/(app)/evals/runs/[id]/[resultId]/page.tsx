@@ -13,6 +13,13 @@ export default async function EvalResultPage({ params }: { params: Promise<{ id:
 
   const { data: evalCase } = await supabase.from('eval_cases').select('*').eq('id', result.eval_case_id).single()
 
+  const [{ data: graphRun }, { data: graphSteps }] = result.graph_run_id
+    ? await Promise.all([
+        supabase.from('graph_runs').select('*').eq('id', result.graph_run_id).single(),
+        supabase.from('graph_steps').select('*').eq('graph_run_id', result.graph_run_id).order('sequence_number', { ascending: true }),
+      ])
+    : [{ data: null }, { data: null }]
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -99,6 +106,38 @@ export default async function EvalResultPage({ params }: { params: Promise<{ id:
           </div>
         )}
       </div>
+
+      {graphRun && (
+        <div className="rounded border border-zinc-200 bg-white p-4">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Graph trace</h2>
+          <p className="mb-3 text-xs text-zinc-500">
+            {graphRun.iteration_count + 1} attempt{graphRun.iteration_count > 0 ? 's' : ''} · status: {graphRun.status}
+            {graphRun.termination_reason && <> · terminated: {graphRun.termination_reason}</>}
+          </p>
+          <ol className="flex flex-col gap-2">
+            {(graphSteps ?? []).map((step) => (
+              <li
+                key={step.id}
+                className={`rounded border px-3 py-2 text-sm ${step.status === 'failed' ? 'border-red-200 bg-red-50' : 'border-zinc-100'}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    {step.sequence_number}. {step.node_name}{' '}
+                    <span className="font-normal text-zinc-400">(iteration {step.iteration})</span>
+                  </span>
+                  <span className="text-xs text-zinc-500">{step.latency_ms !== null ? `${step.latency_ms}ms` : '—'}</span>
+                </div>
+                {step.status === 'failed' && (
+                  <p className="mt-1 text-xs text-red-700">
+                    {step.error_code}: {step.error_message}
+                  </p>
+                )}
+              </li>
+            ))}
+            {(graphSteps ?? []).length === 0 && <li className="text-sm text-zinc-500">No steps recorded.</li>}
+          </ol>
+        </div>
+      )}
 
       <HumanReviewForm result={result} runId={id} />
     </div>

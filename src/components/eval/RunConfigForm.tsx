@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { AIModelRow, AIProviderRow, AIModelType, EvidenceSource, EvaluatorType } from '@/types/database'
+import type { AIModelRow, AIProviderRow, AIModelType, EvidenceSource, EvaluatorType, Graph } from '@/types/database'
 import { createAndRunEvalAction } from '@/app/actions/eval'
+import { MAX_GRAPH_ITERATIONS } from '@/lib/graph/errors'
 
 interface DatasetOption {
   id: string
@@ -85,11 +86,13 @@ export function RunConfigForm({
   preselectedDatasetId,
   providers,
   models,
+  graphs,
 }: {
   datasets: DatasetOption[]
   preselectedDatasetId?: string
   providers: AIProviderRow[]
   models: AIModelRow[]
+  graphs: Graph[]
 }) {
   const router = useRouter()
   const [datasetId, setDatasetId] = useState(preselectedDatasetId ?? datasets[0]?.id ?? '')
@@ -107,6 +110,9 @@ export function RunConfigForm({
   const [evaluatorType, setEvaluatorType] = useState<EvaluatorType>('llm_judge')
   const [evaluatorProvider, setEvaluatorProvider] = useState(defaultGeneration.provider)
   const [evaluatorModel, setEvaluatorModel] = useState(defaultGeneration.model)
+  const [executionMode, setExecutionMode] = useState<'single_pass' | 'graph'>('single_pass')
+  const [graphId, setGraphId] = useState(graphs[0]?.id ?? '')
+  const [maxIterations, setMaxIterations] = useState(2)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
@@ -122,8 +128,17 @@ export function RunConfigForm({
       setError('No enabled models available -- ask an admin to configure one under Administration → AI Config')
       return
     }
+    const selectedGraph = graphs.find((g) => g.id === graphId)
+    if (executionMode === 'graph' && (!selectedGraph || !selectedGraph.active_version_id)) {
+      setError('Selected graph has no active version')
+      return
+    }
     setSubmitting(true)
-    setProgress('Running cases -- this can take a minute for the full dataset…')
+    setProgress(
+      executionMode === 'graph'
+        ? 'Running cases through the graph -- each case may retry up to the max iteration count, this can take a while…'
+        : 'Running cases -- this can take a minute for the full dataset…'
+    )
     try {
       const result = await createAndRunEvalAction({
         datasetId,
@@ -134,6 +149,15 @@ export function RunConfigForm({
           retrieval: { evidence_source: evidenceSource, top_k: topK },
           evaluator:
             evaluatorType === 'llm_judge' ? { type: 'llm_judge', provider: evaluatorProvider, model: evaluatorModel } : { type: 'none' },
+          execution:
+            executionMode === 'graph'
+              ? {
+                  mode: 'graph',
+                  graphId: selectedGraph!.id,
+                  graphVersionId: selectedGraph!.active_version_id!,
+                  maxIterations: Math.min(maxIterations, MAX_GRAPH_ITERATIONS),
+                }
+              : { mode: 'single_pass' },
         },
       })
       router.push(`/evals/runs/${result.runId}`)
@@ -223,6 +247,44 @@ export function RunConfigForm({
             setEvaluatorModel(m)
           }}
         />
+      )}
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Execution mode</span>
+        <select
+          value={executionMode}
+          onChange={(e) => setExecutionMode(e.target.value as 'single_pass' | 'graph')}
+          className="rounded border border-zinc-300 px-3 py-2 text-sm"
+        >
+          <option value="single_pass">Single Pass</option>
+          {graphs.length > 0 && <option value="graph">Graph: {graphs[0].name}</option>}
+        </select>
+      </label>
+
+      {executionMode === 'graph' && (
+        <div className="flex gap-3">
+          <label className="flex flex-1 flex-col gap-1">
+            <span className="text-sm font-medium">Graph</span>
+            <select value={graphId} onChange={(e) => setGraphId(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
+              {graphs.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Max retries</span>
+            <input
+              type="number"
+              min={0}
+              max={MAX_GRAPH_ITERATIONS}
+              value={maxIterations}
+              onChange={(e) => setMaxIterations(Number(e.target.value))}
+              className="w-24 rounded border border-zinc-300 px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}

@@ -72,7 +72,7 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
           </p>
           <p className="mt-1 text-xs text-zinc-500">
             {run.config.generation.provider} · {run.config.retrieval.evidence_source} · top-{run.config.retrieval.top_k} · evaluator:{' '}
-            {run.config.evaluator.type}
+            {run.config.evaluator.type} · mode: {run.config.execution?.mode ?? 'single_pass'}
           </p>
         </div>
         {canAuthor && run.status === 'completed' && !run.is_baseline && <BaselineButton runId={run.id} datasetId={run.dataset_id} />}
@@ -93,6 +93,13 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
           value={summary.avgLatencyMs === null ? '—' : `${(summary.avgLatencyMs / 1000).toFixed(1)}s`}
           baseline={baselineSummary?.avgLatencyMs != null ? `${(baselineSummary.avgLatencyMs / 1000).toFixed(1)}s` : undefined}
         />
+        {summary.avgIterations !== null && (
+          <Metric
+            label="Avg iterations"
+            value={summary.avgIterations.toFixed(1)}
+            baseline={baselineSummary?.avgIterations != null ? baselineSummary.avgIterations.toFixed(1) : undefined}
+          />
+        )}
       </div>
       {baselineRun && (
         <p className="text-xs text-zinc-500">
