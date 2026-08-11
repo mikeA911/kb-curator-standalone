@@ -24,6 +24,15 @@ vi.mock('@/lib/ai', () => ({
   resolveModel: (...args: unknown[]) => resolveModelMock(...args),
   assertModelCapability: (...args: unknown[]) => assertModelCapabilityMock(...args),
 }))
+// Graph-mode tests below only exercise runCaseViaGraph's own glue (does it
+// thread agentId/agentVersionId onto the graph_runs insert) -- the graph's
+// own retry/accept behavior is already fully covered by
+// src/lib/graph/rag-retry-graph.test.ts, so the compiled graph itself is
+// mocked here rather than duplicated.
+const graphInvokeMock = vi.fn()
+vi.mock('@/lib/graph/rag-retry-graph', () => ({
+  buildRagRetryGraph: () => ({ invoke: (...args: unknown[]) => graphInvokeMock(...args) }),
+}))
 
 const { executeEvalRun } = await import('./run')
 
@@ -78,6 +87,14 @@ beforeEach(() => {
   getProviderByNameMock.mockClear()
   getProviderByNameMock.mockResolvedValue({ name: 'fake-provider' })
   assertModelCapabilityMock.mockClear()
+  graphInvokeMock.mockReset()
+  graphInvokeMock.mockResolvedValue({
+    generatedAnswer: 'graph answer',
+    retrievedEvidence: [],
+    evaluation: null,
+    iteration: 0,
+    terminationReason: 'unscored',
+  })
 })
 
 describe('executeEvalRun', () => {
@@ -192,5 +209,42 @@ describe('executeEvalRun', () => {
 
     const runUpdates = calls.filter((c) => c.table === 'eval_runs' && c.method === 'update')
     expect(runUpdates[runUpdates.length - 1].args).toMatchObject({ status: 'completed' })
+  })
+})
+
+describe('executeEvalRun (graph mode) -- Milestone 5B agentId/agentVersionId threading', () => {
+  function graphModeSupabase(config: EvalRunConfig) {
+    return createFakeSupabase({
+      eval_runs: [{ data: run(config), error: null }, { data: null, error: null }, { data: null, error: null }],
+      eval_cases: [{ data: [evalCase('case-1')], error: null }],
+      eval_datasets: [{ data: { project_id: null }, error: null }],
+      graph_versions: [
+        { data: { id: 'graph-version-1', graph_id: 'graph-1', definition: { maxIterations: 2, acceptanceThresholds: {} } }, error: null },
+      ],
+      graph_runs: [{ data: { id: 'graph-run-1' }, error: null }, { data: null, error: null }],
+      eval_results: [{ data: null, error: null }],
+    }) as never
+  }
+
+  it('threads config.execution.agentId/agentVersionId onto the graph_runs insert when present', async () => {
+    const config = baseConfig({
+      execution: { mode: 'graph', graphId: 'graph-1', graphVersionId: 'graph-version-1', agentId: 'agent-1', agentVersionId: 'agent-version-1' },
+    })
+    const supabase = graphModeSupabase(config)
+
+    await executeEvalRun(supabase, 'run-1', 'user-1')
+
+    const insert = (supabase as ReturnType<typeof createFakeSupabase>)._calls.find((c) => c.table === 'graph_runs' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({ agent_id: 'agent-1', agent_version_id: 'agent-version-1' })
+  })
+
+  it('leaves agent_id/agent_version_id null when absent -- backward compatible with every pre-M5B stored run', async () => {
+    const config = baseConfig({ execution: { mode: 'graph', graphId: 'graph-1', graphVersionId: 'graph-version-1' } })
+    const supabase = graphModeSupabase(config)
+
+    await executeEvalRun(supabase, 'run-1', 'user-1')
+
+    const insert = (supabase as ReturnType<typeof createFakeSupabase>)._calls.find((c) => c.table === 'graph_runs' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({ agent_id: null, agent_version_id: null })
   })
 })

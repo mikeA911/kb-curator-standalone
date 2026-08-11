@@ -252,6 +252,13 @@ async function runCaseViaGraph(
       project_id: models.projectId,
       eval_run_id: runId,
       eval_case_id: evalCase.id,
+      // Milestone 5B -- set when this run is "an Agent's evaluation suite"
+      // (the Agent detail page's "Run evaluation suite" control), null for
+      // a bare graph-mode run with no Agent involved. Both optional and
+      // both-or-neither on EvalRunExecutionConfig -- absent here reproduces
+      // every pre-M5B run's exact behavior.
+      agent_id: execution.agentId ?? null,
+      agent_version_id: execution.agentVersionId ?? null,
       status: 'running',
       initial_input: { question: evalCase.question },
       final_output: null,

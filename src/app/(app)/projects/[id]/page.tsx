@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { ProjectNotes } from '@/components/projects/ProjectNotes'
+import { listWorkstreams } from '@/lib/projects/workstreams'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -22,15 +23,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     data: { user },
   } = await supabase.auth.getUser()
 
-  const [{ data: knowledgeBases }, { data: evalDatasets }, { data: viewerProfile }, { data: viewerMembership }] = await Promise.all([
+  const [{ data: knowledgeBases }, { data: evalDatasets }, { data: viewerProfile }, { data: viewerMembership }, workstreams] = await Promise.all([
     supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
     user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
     user
       ? supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).single()
       : Promise.resolve({ data: null }),
+    listWorkstreams(supabase, id),
   ])
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
+  // Workstreams are curator+ manageable, not just owner -- matches
+  // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
+  const canCurateWorkstreams = canManage || viewerMembership?.role === 'curator'
 
   return (
     <div className="flex flex-col gap-8">
@@ -103,6 +108,36 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </ul>
         ) : (
           <p className="text-sm text-zinc-500">No benchmark attached yet.</p>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Workstreams</h2>
+          {canCurateWorkstreams && (
+            <Link href={`/projects/${project.id}/workstreams/new`} className="text-sm underline">
+              New Workstream
+            </Link>
+          )}
+        </div>
+        {workstreams.length > 0 ? (
+          <ul className="flex flex-col gap-1 text-sm">
+            {workstreams.map((w) => {
+              const completed = w.deliverables.filter((d) => d.completed).length
+              return (
+                <li key={w.id}>
+                  <Link href={`/projects/${project.id}/workstreams/${w.id}`} className="underline">
+                    {w.name}
+                  </Link>{' '}
+                  <span className="text-zinc-500">
+                    ({w.status} · {completed}/{w.deliverables.length} deliverables)
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <p className="text-sm text-zinc-500">No workstreams defined yet.</p>
         )}
       </section>
 

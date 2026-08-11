@@ -365,6 +365,50 @@ export interface ProjectMember {
   updated_at: string
 }
 
+// M5D (simplified) -- a Workstream is a scope document (repository scope,
+// goal, a named guardrail, a deliverables checklist) that tells a
+// consultant what to do with an external tool (e.g. Claude Code against a
+// cloned openapi-modernizer/mcp-modernizer repo template); KB Sandbox never
+// executes this itself. workstream_artifacts is the evidence trail the
+// consultant attaches when they're done -- insert-only, no automated
+// scoring against it in this pass.
+export type WorkstreamStatus = 'draft' | 'active' | 'completed' | 'archived'
+
+export interface WorkstreamDeliverable {
+  label: string
+  completed: boolean
+}
+
+export interface ProjectWorkstream {
+  id: string
+  project_id: string
+  name: string
+  slug: string
+  status: WorkstreamStatus
+  repository_scope: string[]
+  goal: string | null
+  guardrail: string | null
+  deliverables: WorkstreamDeliverable[]
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ArtifactType = 'capability_inventory' | 'openapi_spec' | 'mcp_server' | 'test_results' | 'findings' | 'other'
+
+export interface WorkstreamArtifact {
+  id: string
+  workstream_id: string
+  artifact_type: ArtifactType
+  title: string
+  external_tool: string | null
+  content: string | null
+  external_url: string | null
+  notes: string | null
+  created_by: string | null
+  created_at: string
+}
+
 export type EvalDatasetStatus = 'draft' | 'active' | 'archived'
 export type EvalDifficulty = 'easy' | 'medium' | 'hard'
 export type EvalRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -479,6 +523,13 @@ export interface EvalRunExecutionConfig {
     requiredGroundingScore?: number
     requireExpectedEvidence?: boolean
   }
+  // Milestone 5B -- both-or-neither, optional. Absent = today's exact
+  // graph-mode behavior. Set when a run is "an Agent's evaluation suite"
+  // rather than a bare graph-mode run, so graph_runs.agent_id/
+  // agent_version_id get populated (see src/lib/eval/run.ts's
+  // runCaseViaGraph) without any other change to how the run executes.
+  agentId?: string
+  agentVersionId?: string
 }
 
 export interface EvalRunConfig {
@@ -648,6 +699,12 @@ export interface GraphRun {
   project_id: string | null
   eval_run_id: string | null
   eval_case_id: string | null
+  // Milestone 5B -- set when this run was produced by an Agent (either a
+  // live answerQuestion() call or an Agent's evaluation suite run), null
+  // for a bare graph-mode run with no Agent involved. Both null/both set,
+  // never one without the other.
+  agent_id: string | null
+  agent_version_id: string | null
   status: GraphRunStatus
   initial_input: Record<string, unknown>
   final_output: Record<string, unknown> | null
@@ -680,6 +737,111 @@ export interface GraphStep {
   error_message: string | null
   started_at: string
   completed_at: string | null
+}
+
+// ============================================
+// Agent Framework (Milestone 5A foundation slice + 5B)
+// ============================================
+// agent_templates (reusable, mutable defaults) -> agents (stable identity,
+// optionally created from a template) -> agent_versions (immutable,
+// executes THROUGH the Graph Runtime above -- graph_runs.agent_id/
+// agent_version_id link an execution back to the Agent that produced it,
+// there is no separate agent_runs table). See
+// docs/CURRENT-ARCHITECTURE.md's Agent Framework section for the full
+// model, including why no tool-calling/authorization framework exists yet.
+
+export type AgentType = 'knowledge' | 'research' | 'evaluation' | 'engineering' | 'governance' | 'learning'
+export type AgentStatus = 'draft' | 'active' | 'archived'
+export type AgentTemplateStatus = 'active' | 'archived'
+
+export interface AgentSourcePolicy {
+  evidenceSource: EvidenceSource
+  topK: number
+  threshold?: number
+}
+
+export interface AgentGuardrails {
+  noUnsupportedClaims?: boolean
+  projectKnowledgeBoundary?: boolean
+  maxRetries?: number
+}
+
+export interface AgentTerminationPolicy {
+  maxIterations?: number
+  successTerminationReasons?: GraphTerminationReason[]
+}
+
+// Reserved for future per-tool policy toggles -- see docs/CURRENT-ARCHITECTURE.md.
+export type AgentToolPolicy = Record<string, unknown>
+
+// Ordinary mutable table -- a template has no runs of its own, only Agents
+// created from it do. "Template changes don't mutate existing Agent
+// versions" holds because these defaults are COPIED into an agent_versions
+// row at creation time (src/lib/agent/create.ts), never read live.
+export interface AgentTemplate {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  agent_type: AgentType
+  default_graph_version_id: string
+  default_purpose: string
+  default_instructions: string
+  default_source_policy: AgentSourcePolicy
+  default_tool_policy: AgentToolPolicy
+  default_guardrails: AgentGuardrails
+  default_termination_policy: AgentTerminationPolicy
+  default_generation_provider_id: string | null
+  default_generation_model_id: string | null
+  default_embedding_provider_id: string | null
+  default_embedding_model_id: string | null
+  default_evaluator_provider_id: string | null
+  default_evaluator_model_id: string | null
+  status: AgentTemplateStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Agent {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  agent_type: AgentType
+  template_id: string | null
+  project_id: string | null
+  active_version_id: string | null
+  status: AgentStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// No AgentVersionUpdate -- agent_versions is insert-only (see the migration
+// comment: no UPDATE RLS policy exists at all, same immutability mechanism
+// as graph_versions/wiki_versions).
+export interface AgentVersion {
+  id: string
+  agent_id: string
+  version_number: number
+  purpose: string
+  instructions: string
+  graph_version_id: string
+  generation_provider_id: string
+  generation_model_id: string
+  embedding_provider_id: string
+  embedding_model_id: string
+  evaluator_provider_id: string | null
+  evaluator_model_id: string | null
+  source_policy: AgentSourcePolicy
+  tool_policy: AgentToolPolicy
+  guardrails: AgentGuardrails
+  termination_policy: AgentTerminationPolicy
+  metadata: Record<string, unknown>
+  created_by: string | null
+  created_at: string
+  activated_at: string | null
 }
 
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
@@ -736,6 +898,13 @@ export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
 export type ProjectMemberUpdate = Partial<Omit<ProjectMember, 'id' | 'project_id' | 'user_id' | 'created_at'>>
 
+export type ProjectWorkstreamInsert = Omit<ProjectWorkstream, 'id' | 'created_at' | 'updated_at'>
+export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
+
+// No WorkstreamArtifactUpdate -- insert-only, no update/delete RLS policy
+// (see the migration comment: an immutable evidence trail).
+export type WorkstreamArtifactInsert = Omit<WorkstreamArtifact, 'id' | 'created_at'>
+
 export type AIProviderInsert = Omit<AIProviderRow, 'id' | 'created_at' | 'updated_at'>
 export type AIProviderUpdate = Partial<Omit<AIProviderRow, 'id' | 'created_at'>>
 
@@ -758,6 +927,23 @@ export type GraphRunUpdate = Partial<Omit<GraphRun, 'id' | 'graph_id' | 'graph_v
 
 export type GraphStepInsert = Omit<GraphStep, 'id'>
 export type GraphStepUpdate = Partial<Omit<GraphStep, 'id' | 'graph_run_id' | 'started_at'>>
+
+// agent_templates is an ordinary mutable table (see the interface comment
+// above) -- both Insert and Update exist, unlike agent_versions below.
+export type AgentTemplateInsert = Omit<AgentTemplate, 'id' | 'created_at' | 'updated_at'>
+export type AgentTemplateUpdate = Partial<Omit<AgentTemplate, 'id' | 'created_at'>>
+
+// active_version_id is optional at insert time -- an agent is created
+// before its first version exists, then activated via a separate UPDATE,
+// same convention as GraphInsert.
+export type AgentInsert = Omit<Agent, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
+  Partial<Pick<Agent, 'active_version_id'>>
+export type AgentUpdate = Partial<Omit<Agent, 'id' | 'created_at'>>
+
+// No AgentVersionUpdate -- agent_versions is insert-only (see the migration
+// comment: no UPDATE RLS policy exists at all, same immutability mechanism
+// as graph_versions/wiki_versions).
+export type AgentVersionInsert = Omit<AgentVersion, 'id' | 'created_at'>
 
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
@@ -814,11 +1000,16 @@ export interface Database {
       eval_results: { Row: EvalResult; Insert: EvalResultInsert; Update: EvalResultUpdate; Relationships: [] }
       projects: { Row: Project; Insert: ProjectInsert; Update: ProjectUpdate; Relationships: [] }
       project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
+      project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
+      workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
       ai_providers: { Row: AIProviderRow; Insert: AIProviderInsert; Update: AIProviderUpdate; Relationships: [] }
       ai_models: { Row: AIModelRow; Insert: AIModelInsert; Update: AIModelUpdate; Relationships: [] }
       graphs: { Row: Graph; Insert: GraphInsert; Update: GraphUpdate; Relationships: [] }
       graph_versions: { Row: GraphVersion; Insert: GraphVersionInsert; Update: never; Relationships: [] }
       graph_runs: { Row: GraphRun; Insert: GraphRunInsert; Update: GraphRunUpdate; Relationships: [] }
+      agent_templates: { Row: AgentTemplate; Insert: AgentTemplateInsert; Update: AgentTemplateUpdate; Relationships: [] }
+      agents: { Row: Agent; Insert: AgentInsert; Update: AgentUpdate; Relationships: [] }
+      agent_versions: { Row: AgentVersion; Insert: AgentVersionInsert; Update: never; Relationships: [] }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }
     }
     Views: Record<string, never>

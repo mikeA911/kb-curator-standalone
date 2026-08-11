@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { RunConfigForm } from '@/components/eval/RunConfigForm'
 import { listProviders, listModels } from '@/lib/ai'
 import { listActiveGraphs } from '@/lib/graph/queries'
+import { getAgentBySlug, getAgentVersion } from '@/lib/agent/queries'
 
 // executeEvalRun runs every case in a dataset sequentially (retrieve ->
 // generate -> optional LLM judge = up to 3 AI calls per case), inside the
@@ -14,9 +15,9 @@ export const maxDuration = 60
 export default async function NewEvalRunPage({
   searchParams,
 }: {
-  searchParams: Promise<{ dataset?: string }>
+  searchParams: Promise<{ dataset?: string; agent?: string }>
 }) {
-  const { dataset: preselectedDatasetId } = await searchParams
+  const { dataset: preselectedDatasetId, agent: agentSlug } = await searchParams
   const supabase = await createClient()
 
   const [{ data: datasets }, providers, models, graphs] = await Promise.all([
@@ -25,6 +26,22 @@ export default async function NewEvalRunPage({
     listModels(supabase, { enabledOnly: true }),
     listActiveGraphs(supabase),
   ])
+
+  // "Run evaluation suite" from an Agent's detail page -- reuses this exact
+  // form/action rather than a separate eval-running code path. Milestone
+  // 5B: agentId/agentVersionId just ride along on the existing graph-mode
+  // config so graph_runs records which Agent produced the run.
+  let preselectedAgent: { id: string; versionId: string; graphId: string; name: string } | null = null
+  if (agentSlug) {
+    const agent = await getAgentBySlug(supabase, agentSlug)
+    if (agent?.active_version_id) {
+      const version = await getAgentVersion(supabase, agent.active_version_id)
+      const graph = graphs.find((g) => g.active_version_id !== null && version?.graph_version_id && g.active_version_id === version.graph_version_id)
+      if (version && graph) {
+        preselectedAgent = { id: agent.id, versionId: version.id, graphId: graph.id, name: agent.name }
+      }
+    }
+  }
 
   return (
     <div className="flex max-w-lg flex-col gap-6">
@@ -35,6 +52,7 @@ export default async function NewEvalRunPage({
         providers={providers}
         models={models}
         graphs={graphs}
+        preselectedAgent={preselectedAgent}
       />
     </div>
   )

@@ -87,12 +87,19 @@ export function RunConfigForm({
   providers,
   models,
   graphs,
+  preselectedAgent,
 }: {
   datasets: DatasetOption[]
   preselectedDatasetId?: string
   providers: AIProviderRow[]
   models: AIModelRow[]
   graphs: Graph[]
+  // "Run evaluation suite" from an Agent's detail page -- when present,
+  // defaults execution mode to this Agent's graph and, on submit, includes
+  // agentId/agentVersionId in the execution config so the resulting
+  // graph_runs rows record which Agent produced them. Cleared automatically
+  // if the user picks a different graph.
+  preselectedAgent?: { id: string; versionId: string; graphId: string; name: string } | null
 }) {
   const router = useRouter()
   const [datasetId, setDatasetId] = useState(preselectedDatasetId ?? datasets[0]?.id ?? '')
@@ -110,8 +117,8 @@ export function RunConfigForm({
   const [evaluatorType, setEvaluatorType] = useState<EvaluatorType>('llm_judge')
   const [evaluatorProvider, setEvaluatorProvider] = useState(defaultGeneration.provider)
   const [evaluatorModel, setEvaluatorModel] = useState(defaultGeneration.model)
-  const [executionMode, setExecutionMode] = useState<'single_pass' | 'graph'>('single_pass')
-  const [graphId, setGraphId] = useState(graphs[0]?.id ?? '')
+  const [executionMode, setExecutionMode] = useState<'single_pass' | 'graph'>(preselectedAgent ? 'graph' : 'single_pass')
+  const [graphId, setGraphId] = useState(preselectedAgent?.graphId ?? graphs[0]?.id ?? '')
   const [maxIterations, setMaxIterations] = useState(2)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -156,6 +163,12 @@ export function RunConfigForm({
                   graphId: selectedGraph!.id,
                   graphVersionId: selectedGraph!.active_version_id!,
                   maxIterations: Math.min(maxIterations, MAX_GRAPH_ITERATIONS),
+                  // Only ride along when the preselected Agent's own graph is
+                  // still the one selected -- if the user switched graphs,
+                  // this run is no longer "that Agent's evaluation suite".
+                  ...(preselectedAgent && preselectedAgent.graphId === graphId
+                    ? { agentId: preselectedAgent.id, agentVersionId: preselectedAgent.versionId }
+                    : {}),
                 }
               : { mode: 'single_pass' },
         },
@@ -170,6 +183,12 @@ export function RunConfigForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {preselectedAgent && (
+        <p className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+          Running as <span className="font-medium">{preselectedAgent.name}</span>&rsquo;s evaluation suite -- switching the graph below
+          will run this as a plain graph-mode run instead.
+        </p>
+      )}
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Dataset</span>
         <select required value={datasetId} onChange={(e) => setDatasetId(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
