@@ -8,6 +8,7 @@ import { PendingApprovals } from '@/components/admin/PendingApprovals'
 import { AdminTabs } from '@/components/admin/AdminTabs'
 import { listProviders, listModels } from '@/lib/ai'
 import { env } from '@/lib/env'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -34,6 +35,8 @@ export default async function AdminPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SectionHero image="/images/sections/admin.png" height="compact" priority />
+
       <h1 className="text-xl font-semibold">Administration</h1>
 
       <AdminTabs

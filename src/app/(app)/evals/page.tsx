@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { SectionHero } from '@/components/SectionHero'
 
 const DATASET_STATUS_STYLES: Record<string, string> = {
   draft: 'bg-zinc-100 text-zinc-700',
@@ -39,6 +40,8 @@ export default async function EvalsPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <SectionHero image="/images/sections/evaluations.png" height="compact" priority />
+
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Evals</h1>
         {canAuthor && (

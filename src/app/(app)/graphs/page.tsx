@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listActiveGraphs } from '@/lib/graph/queries'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function GraphsPage() {
   const supabase = await createClient()
@@ -8,6 +9,8 @@ export default async function GraphsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SectionHero image="/images/sections/graphs.png" height="compact" priority />
+
       <div>
         <h1 className="text-xl font-semibold">Graphs</h1>
         <p className="mt-1 text-sm text-zinc-600">

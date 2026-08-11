@@ -1,6 +1,10 @@
+import { SectionHero } from '@/components/SectionHero'
+
 export default function AboutPage() {
   return (
     <div className="flex flex-col gap-8">
+      <SectionHero image="/images/sections/kb-sandbox.png" height="standard" />
+
       <div>
         <h1 className="text-2xl font-semibold">About KB Sandbox</h1>
         <p className="mt-2 max-w-2xl text-zinc-600">

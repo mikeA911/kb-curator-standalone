@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listPublicProjects } from '@/lib/projects/public'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function Home() {
   const supabase = await createClient()
@@ -15,8 +16,9 @@ export default async function Home() {
 
   return (
     <div className="flex flex-col gap-10">
-      <div className="flex flex-col gap-4 py-8 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">KB Sandbox</h1>
+      <SectionHero image="/images/sections/kb-sandbox.png" title="KB Sandbox" height="large" priority />
+
+      <div className="flex flex-col gap-4 text-center">
         <p className="mx-auto max-w-xl text-zinc-600">
           Build, evaluate, govern and improve AI systems through evidence.
         </p>

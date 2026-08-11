@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listActiveAgents } from '@/lib/agent/queries'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function AgentsPage() {
   const supabase = await createClient()
@@ -17,6 +18,8 @@ export default async function AgentsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SectionHero image="/images/sections/agents.png" height="compact" priority />
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">Agents</h1>

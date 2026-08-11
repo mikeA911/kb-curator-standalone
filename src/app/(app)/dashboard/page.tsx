@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { DocumentRow } from '@/components/curator/DocumentRow'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -21,6 +22,8 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <SectionHero image="/images/sections/curation.png" height="compact" priority />
+
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <Link href="/upload" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">

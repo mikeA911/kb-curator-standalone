@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { SectionHero } from '@/components/SectionHero'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -22,6 +23,8 @@ export default async function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SectionHero image="/images/sections/projects.png" height="compact" priority />
+
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Projects</h1>
         <Link href="/projects/new" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
