@@ -58,9 +58,6 @@ export async function getVersionHistory(supabase: SupabaseClient<Database>, arti
   return data ?? []
 }
 
-// The most recent version regardless of approval -- what a draft editor
-// should load to continue working (as opposed to current_version_id, which
-// only ever points at the last APPROVED version).
 // Articles with unreviewed work sitting on them -- either a brand-new draft
 // that never went through review, or an edit made on top of previously
 // approved (possibly already-public) content. Both cases mean "what's on
@@ -77,6 +74,25 @@ export async function listUnpublishedArticles(supabase: SupabaseClient<Database>
   return data ?? []
 }
 
+// Candidates for the "related articles" picker on the article page --
+// everything except the article itself and anything archived (a dead end,
+// not worth cross-linking to). Not restricted to approved/public: curators
+// routinely want to cross-link two articles that are still both in review,
+// e.g. while working through a whole batch together.
+export async function listArticlesForLinking(supabase: SupabaseClient<Database>, excludeArticleId: string) {
+  const { data, error } = await supabase
+    .from('wiki_articles')
+    .select('id, slug, title, status')
+    .neq('id', excludeArticleId)
+    .neq('status', 'archived')
+    .order('title', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
+// The most recent version regardless of approval -- what a draft editor
+// should load to continue working (as opposed to current_version_id, which
+// only ever points at the last APPROVED version).
 export async function getLatestVersion(supabase: SupabaseClient<Database>, articleId: string) {
   const { data, error } = await supabase
     .from('wiki_versions')

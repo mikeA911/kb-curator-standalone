@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { getArticleBySlug, getLatestVersion, getVersionHistory } from '@/lib/wiki/queries'
+import { getArticleBySlug, getLatestVersion, getVersionHistory, listArticlesForLinking } from '@/lib/wiki/queries'
 import { getSourcesForVersion } from '@/lib/wiki/sources'
 import { getRelatedArticles } from '@/lib/wiki/relations'
 import { MarkdownLite } from '@/components/wiki/MarkdownLite'
@@ -24,10 +24,11 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
   const article = await getArticleBySlug(supabase, slug)
   if (!article) notFound()
 
-  const [version, history, related] = await Promise.all([
+  const [version, history, related, linkableArticles] = await Promise.all([
     getLatestVersion(supabase, article.id),
     isStaff ? getVersionHistory(supabase, article.id) : Promise.resolve([]),
     getRelatedArticles(supabase, article.id),
+    isStaff ? listArticlesForLinking(supabase, article.id) : Promise.resolve([]),
   ])
 
   const sources = version ? await getSourcesForVersion(supabase, version.id) : []
@@ -124,7 +125,13 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
                   )}
                 </ul>
               )}
-              {isStaff && <RelatedArticlesManager articleId={article.id} />}
+              {isStaff && (
+                <RelatedArticlesManager
+                  articleId={article.id}
+                  articles={linkableArticles}
+                  excludeSlugs={related.map((r) => r.article?.slug).filter((s): s is string => !!s)}
+                />
+              )}
             </div>
           </div>
 
