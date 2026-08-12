@@ -223,10 +223,19 @@ export async function approveArticleAction(articleId: string, versionId: string)
 
   await approveWikiVersion(admin, articleId, versionId, user.id)
 
-  const { data: version } = await admin.from('wiki_versions').select('content').eq('id', versionId).single()
-  if (version) {
-    const provider = await getActiveProvider(admin, { requestedBy: user.id })
-    await embedApprovedVersion(admin, provider, versionId, version.content)
+  // Embedding is best-effort and must never turn a successful approval into
+  // a failed request -- see the comment on embedApprovedVersion. That
+  // guarantee previously only covered the embed call itself; getActiveProvider()
+  // sits before it and can throw AIConfigError (no default model, missing API
+  // key) just as easily, so it has to be inside the same try/catch.
+  try {
+    const { data: version } = await admin.from('wiki_versions').select('content').eq('id', versionId).single()
+    if (version) {
+      const provider = await getActiveProvider(admin, { requestedBy: user.id })
+      await embedApprovedVersion(admin, provider, versionId, version.content)
+    }
+  } catch (err) {
+    console.error(`Wiki embedding skipped for version ${versionId}:`, err)
   }
 
   revalidatePath('/wiki')
