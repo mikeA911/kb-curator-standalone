@@ -1,7 +1,20 @@
 import { notFound } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { getPublicArticleBySlug } from '@/lib/wiki/public'
+import { getPublicArticleBySlug, listRelatedExamples } from '@/lib/wiki/public'
 import { MarkdownLite } from '@/components/wiki/MarkdownLite'
+import { SectionHero } from '@/components/SectionHero'
+
+// Per-article banners are a deliberate one-off, not a general "every
+// article gets custom art" system -- only the articles an actual asset was
+// supplied for get one.
+const ARTICLE_BANNERS: Record<string, string> = {
+  'retrieval-augmented-generation': '/images/sections/techno_rag.png',
+  'ai-governance': '/images/sections/governance.png',
+  'agentic-loops': '/images/sections/Agent_loops.png',
+  'graph-workflows': '/images/sections/graph-workflow.png',
+  'local-llm-deployment': '/images/sections/localLLM.png',
+}
 
 // No Sources section, no version history, no Edit link -- all staff-only
 // concerns (and Sources would point at potentially private document
@@ -14,8 +27,13 @@ export default async function PublicArticlePage({ params }: { params: Promise<{ 
   if (!result) notFound()
   const { article, version } = result
 
+  const relatedExamples = await listRelatedExamples(supabase, slug)
+  const banner = ARTICLE_BANNERS[slug]
+
   return (
     <div className="flex flex-col gap-6">
+      {banner && <SectionHero image={banner} height="compact" />}
+
       <div>
         <h1 className="text-2xl font-semibold">{article.title}</h1>
         {article.short_description && <p className="mt-1 text-zinc-600">{article.short_description}</p>}
@@ -40,6 +58,19 @@ export default async function PublicArticlePage({ params }: { params: Promise<{ 
           </div>
         )}
       </div>
+
+      {relatedExamples.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Related Learning</h2>
+          <div className="flex flex-wrap gap-2 text-sm">
+            {relatedExamples.map((p) => (
+              <Link key={p.id} href={`/examples/${p.public_slug}`} className="rounded-full bg-zinc-100 px-3 py-1 hover:bg-zinc-200">
+                {p.public_profile?.title || p.name}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

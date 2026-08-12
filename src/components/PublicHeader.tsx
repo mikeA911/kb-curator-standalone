@@ -13,8 +13,11 @@ export function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) 
           <Link href="/" className="font-semibold tracking-tight">KB Sandbox</Link>
           <nav className="flex gap-4 text-sm text-zinc-600">
             <Link href="/about" className="hover:text-zinc-900">About</Link>
+            {/* Public route stays /knowledge -- /wiki is already the
+                authenticated Wiki management app, reusing it here would
+                collide. "Wiki" is the label the design note wants. */}
+            <Link href="/knowledge" className="hover:text-zinc-900">Wiki</Link>
             <Link href="/examples" className="hover:text-zinc-900">Examples</Link>
-            <Link href="/knowledge" className="hover:text-zinc-900">Public Knowledge</Link>
           </nav>
         </div>
         <div className="text-sm text-zinc-600">

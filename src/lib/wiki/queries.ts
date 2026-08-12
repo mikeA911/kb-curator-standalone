@@ -61,6 +61,22 @@ export async function getVersionHistory(supabase: SupabaseClient<Database>, arti
 // The most recent version regardless of approval -- what a draft editor
 // should load to continue working (as opposed to current_version_id, which
 // only ever points at the last APPROVED version).
+// Articles with unreviewed work sitting on them -- either a brand-new draft
+// that never went through review, or an edit made on top of previously
+// approved (possibly already-public) content. Both cases mean "what's on
+// wiki_articles right now is not what's live," which is what the
+// admin/curator dashboards need to surface. Archived articles are excluded:
+// they're a deliberate terminal state, not a pending edit.
+export async function listUnpublishedArticles(supabase: SupabaseClient<Database>) {
+  const { data, error } = await supabase
+    .from('wiki_articles')
+    .select('id, slug, title, category, status, is_public, updated_at')
+    .in('status', ['draft', 'review'])
+    .order('updated_at', { ascending: false })
+  if (error) throw error
+  return data ?? []
+}
+
 export async function getLatestVersion(supabase: SupabaseClient<Database>, articleId: string) {
   const { data, error } = await supabase
     .from('wiki_versions')

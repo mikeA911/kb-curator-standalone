@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { listPublicArticles } from '@/lib/wiki/public'
 import { listCategories } from '@/lib/wiki/queries'
 import type { WikiCategoryId } from '@/types/database'
+import { SectionHero } from '@/components/SectionHero'
 
 export default async function PublicKnowledgePage({
   searchParams,
@@ -19,9 +20,13 @@ export default async function PublicKnowledgePage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SectionHero image="/images/sections/ghibli_wiki.png" height="standard" priority />
+
       <div>
-        <h1 className="text-xl font-semibold">Public Knowledge</h1>
-        <p className="mt-1 text-sm text-zinc-600">Selected AI Engineering Wiki articles, freely readable.</p>
+        <h1 className="text-xl font-semibold">AI Engineering Wiki</h1>
+        <p className="mt-1 text-sm text-zinc-600">
+          Practical reference material for building, evaluating and governing modern AI systems.
+        </p>
       </div>
 
       <form className="flex flex-wrap gap-2" action="/knowledge">

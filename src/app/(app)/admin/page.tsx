@@ -9,6 +9,8 @@ import { AdminTabs } from '@/components/admin/AdminTabs'
 import { listProviders, listModels } from '@/lib/ai'
 import { env } from '@/lib/env'
 import { SectionHero } from '@/components/SectionHero'
+import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
+import { listUnpublishedArticles } from '@/lib/wiki/queries'
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -20,7 +22,7 @@ export default async function AdminPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile || profile.role !== 'admin') redirect('/dashboard')
 
-  const [{ data: knowledgeBases }, { data: queue }, { data: profiles }, { data: pendingDocs }, aiProviders, aiModels] =
+  const [{ data: knowledgeBases }, { data: queue }, { data: profiles }, { data: pendingDocs }, aiProviders, aiModels, unpublishedWikiArticles] =
     await Promise.all([
       supabase.from('knowledge_bases').select('*').order('name'),
       supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
@@ -28,6 +30,7 @@ export default async function AdminPage() {
       supabase.from('documents').select('*').eq('processing_status', 'submitted').order('upload_date'),
       listProviders(supabase),
       listModels(supabase),
+      listUnpublishedArticles(supabase),
     ])
 
   // Checked server-side only -- reports Configured/Missing, never the value.
@@ -38,6 +41,8 @@ export default async function AdminPage() {
       <SectionHero image="/images/sections/admin.png" height="compact" priority />
 
       <h1 className="text-xl font-semibold">Administration</h1>
+
+      <UnpublishedWikiWidget articles={unpublishedWikiArticles} />
 
       <AdminTabs
         tabs={[

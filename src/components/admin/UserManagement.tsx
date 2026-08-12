@@ -3,6 +3,7 @@
 import { useTransition } from 'react'
 import type { KnowledgeBase, Profile, UserRole } from '@/types/database'
 import { updateUserRole, updateUserActive, assignKBsToCurator } from '@/app/actions/admin'
+import { CreateUserForm } from './CreateUserForm'
 
 export function UserManagement({ profiles, knowledgeBases }: { profiles: Profile[]; knowledgeBases: KnowledgeBase[] }) {
   const [isPending, startTransition] = useTransition()
@@ -17,6 +18,7 @@ export function UserManagement({ profiles, knowledgeBases }: { profiles: Profile
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Users</h2>
+      <CreateUserForm />
       <div className="overflow-x-auto rounded border border-zinc-200 bg-white">
         <table className="w-full text-sm">
           <thead className="border-b border-zinc-200 text-left text-zinc-500">

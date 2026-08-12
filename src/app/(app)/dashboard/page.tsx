@@ -2,15 +2,25 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { DocumentRow } from '@/components/curator/DocumentRow'
 import { SectionHero } from '@/components/SectionHero'
+import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
+import { listUnpublishedArticles } from '@/lib/wiki/queries'
+import { hasRequiredRole } from '@/lib/auth'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const { data: documents } = await supabase
-    .from('documents')
-    .select('*')
-    .order('upload_date', { ascending: false })
-    .limit(50)
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const { data: profile } = user
+    ? await supabase.from('profiles').select('role').eq('id', user.id).single()
+    : { data: null }
+  const canSeeWikiQueue = profile ? hasRequiredRole(profile.role, 'curator') : false
+
+  const [{ data: documents }, unpublishedWikiArticles] = await Promise.all([
+    supabase.from('documents').select('*').order('upload_date', { ascending: false }).limit(50),
+    canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
+  ])
 
   const stats = {
     total: documents?.length ?? 0,
@@ -65,6 +75,8 @@ export default async function DashboardPage() {
           </tbody>
         </table>
       </div>
+
+      {canSeeWikiQueue && <UnpublishedWikiWidget articles={unpublishedWikiArticles} />}
     </div>
   )
 }

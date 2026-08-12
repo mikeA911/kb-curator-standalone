@@ -1,6 +1,7 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, WikiCategoryId } from '@/types/database'
+import { listPublicProjects, type PublicProjectRow } from '@/lib/projects/public'
 
 // Narrow-select query layer for anonymous/public reads -- mirrors
 // getQuickHelpBySlug's pattern (src/lib/wiki/help.ts), not the select('*')
@@ -78,4 +79,16 @@ export async function listPublicArticles(supabase: SupabaseClient<Database>, fil
   const { data, error } = await query
   if (error) throw error
   return (data ?? []) as PublicArticleRow[]
+}
+
+// The reverse of the Example -> Wiki link already rendered on
+// /examples/[slug] ("Related Knowledge", via public_profile.relatedWikiSlugs)
+// -- reuses the exact same slug-array relationship rather than a new join
+// table, per the design note's "use relationships, don't duplicate content."
+// listPublicProjects is small (a handful of published examples at most), so
+// a full fetch + in-memory filter is simpler than threading a new query
+// param through projects/public.ts for one caller.
+export async function listRelatedExamples(supabase: SupabaseClient<Database>, articleSlug: string): Promise<PublicProjectRow[]> {
+  const projects = await listPublicProjects(supabase)
+  return projects.filter((p) => p.public_profile?.relatedWikiSlugs?.includes(articleSlug))
 }

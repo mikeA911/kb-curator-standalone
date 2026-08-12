@@ -73,6 +73,40 @@ export async function assignKBsToCurator(userId: string, kbIds: string[]) {
   revalidatePath('/admin')
 }
 
+// Self-serve registration (/register) is removed -- admin is the only way to
+// create an account now. Sets a real password directly (email_confirm: true,
+// same as scripts/seed-test-users.mjs) rather than an email invite, since
+// this environment has no email delivery configured.
+//
+// No DB trigger creates a profiles row on auth.users insert -- that only
+// happens lazily on first login via ensureProfile() (src/app/actions/auth.ts),
+// which would default role to 'consultant' regardless of what's picked here.
+// So the profile is inserted directly, not left for ensureProfile to create.
+export async function createUserAction(input: { email: string; password: string; role: 'consultant' | 'curator' | 'admin' }) {
+  await requireRole('admin')
+  if (input.password.length < 8) throw new Error('Password must be at least 8 characters')
+
+  const admin = createAdminClient()
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+  })
+  if (createError) throw createError
+
+  const { error: profileError } = await admin.from('profiles').insert({
+    id: created.user.id,
+    email: input.email,
+    full_name: null,
+    role: input.role,
+    is_active: true,
+    assigned_kbs: [],
+  })
+  if (profileError) throw profileError
+
+  revalidatePath('/admin')
+}
+
 export async function updateAIProviderSetting(provider: 'openai' | 'gemini') {
   const { user } = await requireRole('admin')
   const admin = createAdminClient()
