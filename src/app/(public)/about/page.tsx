@@ -1,5 +1,21 @@
 import { SectionHero } from '@/components/SectionHero'
 
+// "Live" here means the milestone's core capability is built and usable
+// today, not that it's finished forever -- each milestone keeps accreting
+// features (e.g. M5 Apply gained Project Workstreams after Agents shipped).
+const ROADMAP: { id: string; name: string; description: string; status: 'live' | 'planned' }[] = [
+  { id: 'M1', name: 'Curate', description: 'Turn sources into approved evidence.', status: 'live' },
+  { id: 'M2', name: 'Organize', description: 'Turn evidence into structured knowledge.', status: 'live' },
+  { id: 'M3', name: 'Evaluate', description: 'Measure whether AI actually works.', status: 'live' },
+  { id: 'M4', name: 'Orchestrate', description: 'Build controlled iterative workflows.', status: 'live' },
+  { id: 'M5', name: 'Apply', description: 'Agents + consulting workstreams.', status: 'live' },
+  { id: 'M6', name: 'Deploy', description: 'Cloud / local / private / hybrid.', status: 'planned' },
+  { id: 'M7', name: 'Govern', description: 'Risk + controls + guardrails + approvals.', status: 'planned' },
+  { id: 'M8', name: 'Communicate', description: 'Findings + executive reports.', status: 'planned' },
+  { id: 'M9', name: 'Teach', description: 'Consultant learning paths.', status: 'planned' },
+  { id: 'M10', name: 'Research', description: 'Advanced retrieval / knowledge / autonomy.', status: 'planned' },
+]
+
 export default function AboutPage() {
   return (
     <div className="flex flex-col gap-8">
@@ -58,6 +74,33 @@ export default function AboutPage() {
           change to a prompt, a chunking strategy, a model, or a graph can be judged on evidence instead of
           impression, and two different configurations can be compared on the same benchmark.
         </p>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Roadmap</h2>
+        <p className="text-sm text-zinc-700">
+          KB Sandbox is being built in milestones, each one a working capability layered on top of the last rather
+          than a phase that gets thrown away. Curation, knowledge, evaluation, orchestration, and agents are live
+          today; deployment, governance, reporting, teaching, and research are next.
+        </p>
+        <ol className="flex flex-col divide-y divide-zinc-100 rounded border border-zinc-200 bg-white">
+          {ROADMAP.map((m) => (
+            <li key={m.id} className="flex items-center justify-between gap-4 px-4 py-3">
+              <div>
+                <span className="font-mono text-xs text-zinc-400">{m.id}</span>{' '}
+                <span className="font-medium text-zinc-900">{m.name}</span>
+                <p className="text-sm text-zinc-600">{m.description}</p>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                  m.status === 'live' ? 'bg-green-100 text-green-800' : 'bg-zinc-100 text-zinc-500'
+                }`}
+              >
+                {m.status === 'live' ? 'Live' : 'Planned'}
+              </span>
+            </li>
+          ))}
+        </ol>
       </section>
 
       <section className="flex flex-col gap-3">

@@ -21,14 +21,14 @@ export function Header({ profile }: { profile: Profile }) {
         <div className="flex items-center gap-6">
           <Link href="/dashboard" className="font-semibold tracking-tight">KB Sandbox</Link>
           <nav className="flex gap-4 text-sm text-zinc-600">
-            <Link href="/dashboard" className="hover:text-zinc-900">Dashboard</Link>
+            <Link href="/dashboard" className="hover:text-zinc-900">Workbench</Link>
             <Link href="/projects" className="hover:text-zinc-900">Projects</Link>
             <Link href="/wiki" className="hover:text-zinc-900">Wiki</Link>
             <Link href="/evals" className="hover:text-zinc-900">Evals</Link>
             <Link href="/graphs" className="hover:text-zinc-900">Graphs</Link>
             <Link href="/agents" className="hover:text-zinc-900">Agents</Link>
             {(profile.role === 'curator' || profile.role === 'admin') && (
-              <Link href="/upload" className="hover:text-zinc-900">Upload</Link>
+              <Link href="/upload" className="hover:text-zinc-900">Sources &amp; Curation</Link>
             )}
             {profile.role === 'admin' && (
               <Link href="/admin" className="hover:text-zinc-900">Administration</Link>

@@ -27,6 +27,16 @@ export async function listCategories(supabase: SupabaseClient<Database>) {
   return data ?? []
 }
 
+// Platform Knowledge summary card on the Workbench/Wiki pages -- archived
+// articles don't count toward "what's in the Wiki" any more than they show
+// up in listArticles.
+export async function getWikiStats(supabase: SupabaseClient<Database>) {
+  const { data, error } = await supabase.from('wiki_articles').select('status').neq('status', 'archived')
+  if (error) throw error
+  const rows = data ?? []
+  return { total: rows.length, approved: rows.filter((a) => a.status === 'approved').length }
+}
+
 export async function getArticleBySlug(supabase: SupabaseClient<Database>, slug: string) {
   const { data, error } = await supabase.from('wiki_articles').select('*').eq('slug', slug).maybeSingle()
   if (error) throw error

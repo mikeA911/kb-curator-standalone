@@ -8,6 +8,13 @@ export async function listActiveAgents(supabase: SupabaseClient<Database>): Prom
   return data ?? []
 }
 
+export async function getAgentStats(supabase: SupabaseClient<Database>) {
+  const { data, error } = await supabase.from('agents').select('status')
+  if (error) throw error
+  const rows = data ?? []
+  return { total: rows.length, active: rows.filter((a) => a.status === 'active').length }
+}
+
 export async function getAgentBySlug(supabase: SupabaseClient<Database>, slug: string): Promise<Agent | null> {
   const { data, error } = await supabase.from('agents').select('*').eq('slug', slug).maybeSingle()
   if (error) throw error

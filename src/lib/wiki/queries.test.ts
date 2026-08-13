@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { listUnpublishedArticles, listArticlesForLinking } from './queries'
+import { listUnpublishedArticles, listArticlesForLinking, getWikiStats } from './queries'
 
 describe('listUnpublishedArticles', () => {
   it('queries only draft/review status, newest edit first', async () => {
@@ -35,5 +35,19 @@ describe('listArticlesForLinking', () => {
     const result = await listArticlesForLinking(supabase, '1')
 
     expect(result).toEqual(rows)
+  })
+})
+
+describe('getWikiStats', () => {
+  it('counts non-archived articles and how many are approved', async () => {
+    const supabase = createFakeSupabase({
+      wiki_articles: [
+        { data: [{ status: 'approved' }, { status: 'review' }, { status: 'approved' }, { status: 'draft' }], error: null },
+      ],
+    }) as never
+
+    const result = await getWikiStats(supabase)
+
+    expect(result).toEqual({ total: 4, approved: 2 })
   })
 })
