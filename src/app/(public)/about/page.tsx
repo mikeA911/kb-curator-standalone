@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import { SectionHero } from '@/components/SectionHero'
 
 // "Live" here means the milestone's core capability is built and usable
@@ -83,6 +84,16 @@ export default function AboutPage() {
           than a phase that gets thrown away. Curation, knowledge, evaluation, orchestration, and agents are live
           today; deployment, governance, reporting, teaching, and research are next.
         </p>
+        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
+          <Image
+            src="/images/sections/milestones.png"
+            alt="Illustration of the KB Sandbox milestone roadmap as floors of a treehouse workbench, from M1 Curate at the top through M10 Research at the roots"
+            width={1408}
+            height={768}
+            sizes="(min-width: 1024px) 1024px, 100vw"
+            className="h-auto w-full"
+          />
+        </div>
         <ol className="flex flex-col divide-y divide-zinc-100 rounded border border-zinc-200 bg-white">
           {ROADMAP.map((m) => (
             <li key={m.id} className="flex items-center justify-between gap-4 px-4 py-3">
