@@ -496,7 +496,15 @@ export interface ProjectWorkstream {
   updated_at: string
 }
 
-export type ArtifactType = 'capability_inventory' | 'openapi_spec' | 'mcp_server' | 'test_results' | 'findings' | 'other'
+export type ArtifactType =
+  | 'capability_inventory'
+  | 'endpoint_inventory'
+  | 'openapi_spec'
+  | 'mcp_server'
+  | 'evidence_map'
+  | 'test_results'
+  | 'findings'
+  | 'other'
 
 export interface WorkstreamArtifact {
   id: string

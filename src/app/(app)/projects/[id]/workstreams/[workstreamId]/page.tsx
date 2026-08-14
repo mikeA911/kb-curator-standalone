@@ -2,15 +2,17 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listArtifacts } from '@/lib/projects/workstreams'
-import type { ProjectWorkstream } from '@/types/database'
+import type { ArtifactType, ProjectWorkstream } from '@/types/database'
 import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist'
 import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
 
-const ARTIFACT_TYPE_LABELS: Record<string, string> = {
-  capability_inventory: 'Capability inventory',
-  openapi_spec: 'OpenAPI spec',
-  mcp_server: 'MCP server',
-  test_results: 'Test results',
+const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
+  capability_inventory: 'Capability Inventory',
+  endpoint_inventory: 'Endpoint Inventory',
+  openapi_spec: 'OpenAPI Spec',
+  mcp_server: 'MCP Server',
+  evidence_map: 'Evidence Map',
+  test_results: 'Test Results',
   findings: 'Findings',
   other: 'Other',
 }

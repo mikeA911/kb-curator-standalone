@@ -32,6 +32,12 @@ describe('project_notes RLS', () => {
     expect(section).toMatch(/for select using \(can_view_project_note\(id, auth\.uid\(\)\)\)/)
   })
 
+  it('has a subquery-free author policy alongside can_view_project_note -- INSERT...RETURNING cannot see a row through a same-table subquery mid-statement', () => {
+    const start = sql.indexOf('"project_notes_select_own"')
+    const section = sql.slice(start, start + 150)
+    expect(section).toMatch(/for select using \(author_id = auth\.uid\(\)\)/)
+  })
+
   it('insert requires author_id to match the caller, project membership, and -- when addressed to a specific user -- that user to also be a member', () => {
     const start = sql.indexOf('"project_notes_insert_member"')
     const section = sql.slice(start, start + 350)

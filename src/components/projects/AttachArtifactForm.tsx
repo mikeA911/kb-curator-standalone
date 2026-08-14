@@ -6,10 +6,12 @@ import { attachArtifactAction } from '@/app/actions/workstreams'
 import type { ArtifactType } from '@/types/database'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
-  capability_inventory: 'Capability inventory',
-  openapi_spec: 'OpenAPI spec',
-  mcp_server: 'MCP server',
-  test_results: 'Test results',
+  capability_inventory: 'Capability Inventory',
+  endpoint_inventory: 'Endpoint Inventory',
+  openapi_spec: 'OpenAPI Spec',
+  mcp_server: 'MCP Server',
+  evidence_map: 'Evidence Map',
+  test_results: 'Test Results',
   findings: 'Findings',
   other: 'Other',
 }

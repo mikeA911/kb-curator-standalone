@@ -71,6 +71,14 @@ alter table project_note_replies enable row level security;
 create policy "project_notes_select_visible" on project_notes
   for select using (can_view_project_note(id, auth.uid()));
 
+-- Direct, subquery-free companion to the policy above -- required because
+-- can_view_project_note re-queries project_notes internally, and that
+-- subquery's snapshot does not see the row an INSERT ... RETURNING (i.e.
+-- .insert().select()) is still in the middle of creating, so createProjectNoteAction's
+-- own return value would otherwise fail RLS for the row it just inserted.
+create policy "project_notes_select_own" on project_notes
+  for select using (author_id = auth.uid());
+
 create policy "project_notes_insert_member" on project_notes
   for insert to authenticated
   with check (
