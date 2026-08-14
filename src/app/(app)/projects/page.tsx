@@ -23,7 +23,7 @@ export default async function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <SectionHero image="/images/sections/projects.png" height="compact" priority />
+      <SectionHero image="/images/sections/graph-workflow.png" height="compact" priority />
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Projects</h1>

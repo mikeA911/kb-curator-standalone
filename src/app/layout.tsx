@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "KB Sandbox",
   description: "Knowledge curation workbench",
-  icons: { icon: LOGO_PATH },
+  icons: { icon: LOGO_PATH, apple: LOGO_PATH },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
