@@ -66,6 +66,15 @@ export function createFakeSupabase(queued: Record<string, QueryResult[]>) {
       rpcCalls.push({ name, args })
       return { data: null, error: null }
     },
+    storage: {
+      from(bucket: string) {
+        return {
+          getPublicUrl(path: string) {
+            return { data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}` } }
+          },
+        }
+      },
+    },
     _rpcCalls: rpcCalls,
     _calls: calls,
   }

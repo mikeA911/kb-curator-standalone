@@ -4,7 +4,6 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/browser'
-import { LOGO_PATH } from '@/lib/branding'
 import { NavDropdown } from '@/components/NavDropdown'
 import type { Profile } from '@/types/database'
 
@@ -16,7 +15,7 @@ const EXPLORE_ITEMS = [
   { href: '/agents', label: 'Agents' },
 ]
 
-export function Header({ profile }: { profile: Profile }) {
+export function Header({ profile, logoUrl }: { profile: Profile; logoUrl: string }) {
   const router = useRouter()
 
   async function handleSignOut() {
@@ -32,7 +31,7 @@ export function Header({ profile }: { profile: Profile }) {
         <div className="flex items-center gap-6">
           <Link href="/dashboard" aria-label="KB Sandbox" className="shrink-0">
             <span className="relative block h-9 w-9 overflow-hidden rounded-full">
-              <Image src={LOGO_PATH} alt="KB Sandbox" fill className="object-cover" />
+              <Image src={logoUrl} alt="KB Sandbox" fill className="object-cover" />
             </span>
           </Link>
           <nav className="flex items-center gap-4 text-sm text-zinc-600">

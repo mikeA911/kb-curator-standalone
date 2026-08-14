@@ -2415,3 +2415,66 @@ $$;
 drop policy "wiki_articles_select_public" on wiki_articles;
 create policy "wiki_articles_select_public" on wiki_articles
   for select using (is_public_wiki_article(id));
+
+-- ============================================================
+-- Migration: 20260814100001_branding_storage.sql
+-- ============================================================
+
+-- Public storage bucket for admin-managed branding assets (logo, PWA
+-- icons). Unlike the `documents` bucket, this is deliberately public --
+-- the browser tab favicon, PWA manifest icons, and the site header all
+-- need to fetch these with no auth. Writes stay admin-only; reads are
+-- open to anyone via the bucket's own public URL regardless of these
+-- policies, but the policies still govern API-level access (list/upload
+-- via the Supabase client, as opposed to a bare public URL fetch).
+insert into storage.buckets (id, name, public)
+values ('branding', 'branding', true)
+on conflict (id) do update set public = true;
+
+create policy "branding_bucket_admin_insert" on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'branding'
+    and exists (
+      select 1 from profiles
+      where id = auth.uid() and role = 'admin' and is_active = true
+    )
+  );
+
+create policy "branding_bucket_admin_update" on storage.objects
+  for update to authenticated
+  using (
+    bucket_id = 'branding'
+    and exists (
+      select 1 from profiles
+      where id = auth.uid() and role = 'admin' and is_active = true
+    )
+  );
+
+create policy "branding_bucket_admin_delete" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'branding'
+    and exists (
+      select 1 from profiles
+      where id = auth.uid() and role = 'admin' and is_active = true
+    )
+  );
+
+create policy "branding_bucket_public_select" on storage.objects
+  for select using (bucket_id = 'branding');
+
+-- ============================================================
+-- Migration: 20260814100002_settings_public_branding_read.sql
+-- ============================================================
+
+-- settings has RLS restricting SELECT to curator/admin only
+-- (settings_select_staff, 20260808190010_rls_policies.sql) -- appropriate
+-- for its original purpose (internal runtime toggles like ai_provider), but
+-- the new 'branding' key needs to be readable by anonymous visitors too
+-- (the public site's header/favicon/manifest all read it). Multiple SELECT
+-- policies on the same table are OR'd together, so this adds narrow public
+-- read access to exactly that one key without loosening anything else in
+-- the table.
+create policy "settings_select_public_branding" on settings
+  for select using (key = 'branding');

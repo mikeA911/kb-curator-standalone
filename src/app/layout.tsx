@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { LOGO_PATH } from "@/lib/branding";
+import { getBrandingUrls } from "@/lib/branding";
+import { createClient } from "@/lib/supabase/server";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,11 +14,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "KB Sandbox",
-  description: "Knowledge curation workbench",
-  icons: { icon: LOGO_PATH, apple: LOGO_PATH },
-};
+// Async so the favicon/apple-touch-icon reflect whatever an admin has
+// configured (src/lib/branding.ts), not just the shipped default.
+export async function generateMetadata(): Promise<Metadata> {
+  const supabase = await createClient();
+  const urls = await getBrandingUrls(supabase);
+  return {
+    title: "KB Sandbox",
+    description: "Knowledge curation workbench",
+    icons: { icon: urls.icon192, apple: urls.appleTouchIcon },
+  };
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

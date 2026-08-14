@@ -1,7 +1,28 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    // Default 1MB is well under the 5MB icon cap validateIconFile enforces
+    // (src/lib/branding.ts) -- without raising this, a valid upload under
+    // that cap can still get rejected by Next itself before the action body
+    // is even parsed.
+    serverActions: {
+      bodySizeLimit: "6mb",
+    },
+  },
+  images: {
+    // Admin-uploaded branding icons live in Supabase Storage (a public
+    // bucket) rather than public/ once configured -- see src/lib/branding.ts.
+    // Wildcard subdomain so this doesn't need updating if the project ref
+    // ever changes.
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

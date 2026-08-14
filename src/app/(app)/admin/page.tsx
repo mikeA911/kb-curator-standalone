@@ -11,6 +11,8 @@ import { env } from '@/lib/env'
 import { SectionHero } from '@/components/SectionHero'
 import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
 import { listUnpublishedArticles } from '@/lib/wiki/queries'
+import { BrandingSettings } from '@/components/admin/BrandingSettings'
+import { getBrandingUrls } from '@/lib/branding'
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -22,7 +24,7 @@ export default async function AdminPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile || profile.role !== 'admin') redirect('/dashboard')
 
-  const [{ data: knowledgeBases }, { data: queue }, { data: profiles }, { data: pendingDocs }, aiProviders, aiModels, unpublishedWikiArticles] =
+  const [{ data: knowledgeBases }, { data: queue }, { data: profiles }, { data: pendingDocs }, aiProviders, aiModels, unpublishedWikiArticles, brandingUrls] =
     await Promise.all([
       supabase.from('knowledge_bases').select('*').order('name'),
       supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
@@ -31,6 +33,7 @@ export default async function AdminPage() {
       listProviders(supabase),
       listModels(supabase),
       listUnpublishedArticles(supabase),
+      getBrandingUrls(supabase),
     ])
 
   // Checked server-side only -- reports Configured/Missing, never the value.
@@ -59,6 +62,7 @@ export default async function AdminPage() {
             label: 'AI Config',
             content: <AIProvidersList providers={aiProviders} models={aiModels} configuredByProvider={configuredByProvider} />,
           },
+          { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
         ]}
       />
     </div>

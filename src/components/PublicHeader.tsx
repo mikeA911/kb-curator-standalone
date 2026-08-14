@@ -1,20 +1,19 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import { LOGO_PATH } from '@/lib/branding'
 
 // Works for both a sessionless visitor and a logged-in user browsing the
 // same public pages -- unlike (app)/layout.tsx's Header, this never
 // redirects based on auth state. isAuthenticated only changes the
 // right-hand CTA (doc: authenticated users keep access, with extra
 // actions).
-export function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) {
+export function PublicHeader({ isAuthenticated, logoUrl }: { isAuthenticated: boolean; logoUrl: string }) {
   return (
     <header className="border-b border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
             <span className="relative block h-7 w-7 shrink-0 overflow-hidden rounded-full">
-              <Image src={LOGO_PATH} alt="" fill className="object-cover" />
+              <Image src={logoUrl} alt="" fill className="object-cover" />
             </span>
             KB Sandbox
           </Link>
