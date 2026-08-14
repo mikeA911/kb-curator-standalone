@@ -254,6 +254,9 @@ export interface WikiVersion {
   approved_by: string | null
   created_at: string
   approved_at: string | null
+  // Which Trending item (if any) this version was promoted from -- see
+  // trending_items / promoteTrendingToWikiAction.
+  promoted_from_trending_item_id: string | null
 }
 
 export interface WikiSource {
@@ -293,6 +296,105 @@ export interface WikiSourceWithEvidence extends WikiSource {
   document?: Pick<Document, 'id' | 'original_filename' | 'doc_type'> | null
   chunk?: Pick<DocumentChunk, 'id' | 'chunk_index' | 'source_page' | 'chunk_text'> | null
 }
+
+// ============================================
+// Trending Knowledge (M5E)
+// ============================================
+
+// Deliberately not the Wiki draft/review/approved lifecycle -- Trending is
+// "what are we watching?", Wiki is "what do we currently know?". See
+// supabase/migrations/20260814110001_trending_knowledge.sql.
+export type TrendingVisibility = 'platform' | 'project'
+export type TrendingStatus = 'active' | 'under_review' | 'promoted' | 'archived'
+
+export interface TrendingItem {
+  id: string
+  title: string
+  source_url: string
+  source_name: string | null
+  description: string
+  tags: string[]
+  submitted_by: string | null
+  project_id: string | null
+  visibility: TrendingVisibility
+  status: TrendingStatus
+  // Separate axis from status -- see wiki_articles.is_public precedent.
+  is_public: boolean
+  published_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type TrendingItemInsert = Omit<
+  TrendingItem,
+  'id' | 'created_at' | 'updated_at' | 'status' | 'is_public' | 'published_at' | 'visibility' | 'tags'
+> &
+  Partial<Pick<TrendingItem, 'status' | 'is_public' | 'published_at' | 'visibility' | 'tags'>>
+export type TrendingItemUpdate = Partial<Omit<TrendingItem, 'id' | 'created_at'>>
+
+export interface TrendingComment {
+  id: string
+  trending_item_id: string
+  author_id: string | null
+  body: string
+  created_at: string
+  updated_at: string | null
+}
+export type TrendingCommentInsert = Omit<TrendingComment, 'id' | 'created_at' | 'updated_at'>
+
+export interface TrendingWikiLink {
+  id: string
+  trending_item_id: string
+  wiki_article_id: string
+  linked_by: string | null
+  created_at: string
+}
+export type TrendingWikiLinkInsert = Omit<TrendingWikiLink, 'id' | 'created_at'>
+
+// ============================================
+// Project Notes (M5E)
+// ============================================
+
+// 'project_team' means every member; 'curator'/'admin' mean any curator/admin
+// on staff, not a specific person -- see can_view_project_note in
+// supabase/migrations/20260814120001_project_notes.sql.
+export type ProjectNoteRecipientType = 'user' | 'project_team' | 'curator' | 'admin'
+export type ProjectNoteStatus = 'open' | 'resolved'
+
+export interface ProjectNote {
+  id: string
+  project_id: string
+  author_id: string | null
+  recipient_type: ProjectNoteRecipientType
+  recipient_user_id: string | null
+  subject: string
+  body: string
+  // Polymorphic reference to a Workbench object (eval run, document, ...) --
+  // no FK constraint, resolved per-type at read time. See ProjectNotes
+  // Interpretive decisions in the M5E plan.
+  context_type: string | null
+  context_id: string | null
+  status: ProjectNoteStatus
+  created_at: string
+  resolved_at: string | null
+  resolved_by: string | null
+}
+
+export type ProjectNoteInsert = Omit<
+  ProjectNote,
+  'id' | 'created_at' | 'status' | 'resolved_at' | 'resolved_by' | 'recipient_user_id' | 'context_type' | 'context_id'
+> &
+  Partial<Pick<ProjectNote, 'status' | 'resolved_at' | 'resolved_by' | 'recipient_user_id' | 'context_type' | 'context_id'>>
+export type ProjectNoteUpdate = Partial<Omit<ProjectNote, 'id' | 'created_at' | 'project_id'>>
+
+export interface ProjectNoteReply {
+  id: string
+  note_id: string
+  author_id: string | null
+  body: string
+  created_at: string
+}
+export type ProjectNoteReplyInsert = Omit<ProjectNoteReply, 'id' | 'created_at'>
 
 // ============================================
 // Evaluation
@@ -864,7 +966,8 @@ export type WikiArticleInsert = Omit<WikiArticle, 'id' | 'created_at' | 'updated
   Partial<Pick<WikiArticle, 'current_version_id' | 'is_public'>>
 export type WikiArticleUpdate = Partial<Omit<WikiArticle, 'id' | 'created_at'>>
 
-export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at'>
+export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at' | 'promoted_from_trending_item_id'> &
+  Partial<Pick<WikiVersion, 'promoted_from_trending_item_id'>>
 export type WikiVersionUpdate = Partial<Pick<WikiVersion, 'approved_by' | 'approved_at'>>
 
 export type WikiSourceInsert = Omit<WikiSource, 'id' | 'created_at'>
@@ -994,6 +1097,11 @@ export interface Database {
         Relationships: []
       }
       wiki_vectors: { Row: WikiVector; Insert: WikiVectorInsert; Update: Partial<WikiVector>; Relationships: [] }
+      trending_items: { Row: TrendingItem; Insert: TrendingItemInsert; Update: TrendingItemUpdate; Relationships: [] }
+      trending_comments: { Row: TrendingComment; Insert: TrendingCommentInsert; Update: Partial<TrendingComment>; Relationships: [] }
+      trending_wiki_links: { Row: TrendingWikiLink; Insert: TrendingWikiLinkInsert; Update: Partial<TrendingWikiLink>; Relationships: [] }
+      project_notes: { Row: ProjectNote; Insert: ProjectNoteInsert; Update: ProjectNoteUpdate; Relationships: [] }
+      project_note_replies: { Row: ProjectNoteReply; Insert: ProjectNoteReplyInsert; Update: Partial<ProjectNoteReply>; Relationships: [] }
       eval_datasets: { Row: EvalDataset; Insert: EvalDatasetInsert; Update: EvalDatasetUpdate; Relationships: [] }
       eval_cases: { Row: EvalCase; Insert: EvalCaseInsert; Update: EvalCaseUpdate; Relationships: [] }
       eval_runs: { Row: EvalRun; Insert: EvalRunInsert; Update: EvalRunUpdate; Relationships: [] }

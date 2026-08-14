@@ -34,7 +34,7 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
   const { data: run } = await supabase.from('eval_runs').select('*').eq('id', id).single()
   if (!run) notFound()
 
-  const { data: dataset } = await supabase.from('eval_datasets').select('name').eq('id', run.dataset_id).single()
+  const { data: dataset } = await supabase.from('eval_datasets').select('name, project_id').eq('id', run.dataset_id).single()
 
   const [{ data: results }, { data: cases }, { data: baselineRun }] = await Promise.all([
     supabase.from('eval_results').select('*').eq('eval_run_id', id),
@@ -75,7 +75,17 @@ export default async function EvalRunPage({ params }: { params: Promise<{ id: st
             {run.config.evaluator.type} · mode: {run.config.execution?.mode ?? 'single_pass'}
           </p>
         </div>
-        {canAuthor && run.status === 'completed' && !run.is_baseline && <BaselineButton runId={run.id} datasetId={run.dataset_id} />}
+        <div className="flex items-center gap-3">
+          {dataset?.project_id && user && viewerProfile?.role !== 'anonymous' && (
+            <Link
+              href={`/projects/${dataset.project_id}/notes?contextType=eval_run&contextId=${run.id}`}
+              className="text-sm underline"
+            >
+              + Note about this run
+            </Link>
+          )}
+          {canAuthor && run.status === 'completed' && !run.is_baseline && <BaselineButton runId={run.id} datasetId={run.dataset_id} />}
+        </div>
       </div>
 
       {run.error_message && <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{run.error_message}</p>}

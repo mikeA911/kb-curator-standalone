@@ -2,10 +2,13 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { SectionHero } from '@/components/SectionHero'
 import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
+import { NotesForYouWidget, type NoteForYouRow } from '@/components/projects/NotesForYouWidget'
 import { listUnpublishedArticles, getWikiStats } from '@/lib/wiki/queries'
 import { getProjectStats } from '@/lib/projects/queries'
 import { getEvalStats } from '@/lib/eval/queries'
 import { getAgentStats } from '@/lib/agent/queries'
+import { getTrendingStats } from '@/lib/trending/queries'
+import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
 import { hasRequiredRole } from '@/lib/auth'
 
@@ -19,21 +22,39 @@ export default async function DashboardPage() {
     ? await supabase.from('profiles').select('role').eq('id', user.id).single()
     : { data: null }
   const canSeeWikiQueue = profile ? hasRequiredRole(profile.role, 'curator') : false
+  const canSeeNotes = !!user && profile?.role !== 'anonymous'
 
-  const [unpublishedWikiArticles, projectStats, wikiStats, evalStats, agentStats, needsAttention] = await Promise.all([
-    canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
-    getProjectStats(supabase),
-    getWikiStats(supabase),
-    getEvalStats(supabase),
-    getAgentStats(supabase),
-    canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
-  ])
+  const [unpublishedWikiArticles, projectStats, wikiStats, evalStats, agentStats, trendingStats, needsAttention, notesForUser] =
+    await Promise.all([
+      canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
+      getProjectStats(supabase),
+      getWikiStats(supabase),
+      getEvalStats(supabase),
+      getAgentStats(supabase),
+      getTrendingStats(supabase),
+      canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
+      canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
+    ])
+
+  const projectIds = [...new Set(notesForUser.map((n) => n.project_id))]
+  const { data: noteProjects } =
+    projectIds.length > 0 ? await supabase.from('projects').select('id, name').in('id', projectIds) : { data: [] }
+  const projectNameById = new Map((noteProjects ?? []).map((p) => [p.id, p.name]))
+  const notesForYou: NoteForYouRow[] = notesForUser.map((n) => ({
+    id: n.id,
+    projectId: n.project_id,
+    projectName: projectNameById.get(n.project_id) ?? 'Unknown project',
+    subject: n.subject,
+    authorEmail: n.author?.email ?? null,
+    createdAt: n.created_at,
+  }))
 
   const summaryCards = [
     { label: 'Projects', href: '/projects', value: projectStats.total, subtitle: `${projectStats.active} active` },
     { label: 'Knowledge', href: '/wiki', value: wikiStats.total, subtitle: `${wikiStats.approved} approved` },
     { label: 'Evaluations', href: '/evals', value: evalStats.totalRuns, subtitle: `${evalStats.needReview} need review` },
     { label: 'Agents', href: '/agents', value: agentStats.total, subtitle: `${agentStats.active} active` },
+    { label: 'Trending', href: '/trending', value: trendingStats.total, subtitle: `${trendingStats.active} active` },
   ]
 
   const attentionItems = needsAttention.filter((item) => item.count > 0)
@@ -49,7 +70,7 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
         {summaryCards.map((card) => (
           <Link key={card.label} href={card.href} className="rounded border border-zinc-200 bg-white p-4 hover:border-zinc-400">
             <div className="text-xs uppercase tracking-wide text-zinc-500">{card.label}</div>
@@ -79,6 +100,7 @@ export default async function DashboardPage() {
       )}
 
       {canSeeWikiQueue && <UnpublishedWikiWidget articles={unpublishedWikiArticles} />}
+      {canSeeNotes && <NotesForYouWidget notes={notesForYou} />}
     </div>
   )
 }

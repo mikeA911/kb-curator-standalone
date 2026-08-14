@@ -1,0 +1,85 @@
+import { notFound, redirect } from 'next/navigation'
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { getProjectNote, listNoteReplies } from '@/lib/projects/notes'
+import { ProjectNoteThread } from '@/components/projects/ProjectNoteThread'
+
+const STATUS_STYLES: Record<string, string> = {
+  open: 'bg-amber-100 text-amber-800',
+  resolved: 'bg-green-100 text-green-800',
+}
+
+// Context is a polymorphic (type, id) pair with no FK -- only a couple of
+// types are resolved to a real link today; every other type (or an unknown
+// one) degrades to a plain, non-linked label rather than a broken link.
+function contextLink(contextType: string | null, contextId: string | null, projectId: string) {
+  if (!contextType || !contextId) return null
+  if (contextType === 'eval_run') return { href: `/evals/runs/${contextId}`, label: 'Eval run' }
+  if (contextType === 'workstream') return { href: `/projects/${projectId}/workstreams/${contextId}`, label: 'Workstream' }
+  return { href: null, label: contextType }
+}
+
+export default async function ProjectNoteDetailPage({ params }: { params: Promise<{ id: string; noteId: string }> }) {
+  const { id, noteId } = await params
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const note = await getProjectNote(supabase, noteId)
+  if (!note || note.project_id !== id) notFound()
+
+  const [replies, { data: viewerProfile }, { data: viewerMembership }] = await Promise.all([
+    listNoteReplies(supabase, noteId),
+    supabase.from('profiles').select('role').eq('id', user.id).single(),
+    supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).maybeSingle(),
+  ])
+
+  const canCurate = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner' || viewerMembership?.role === 'curator'
+  const canResolve =
+    note.author_id === user.id || (note.recipient_type === 'user' && note.recipient_user_id === user.id) || canCurate
+
+  const ctx = contextLink(note.context_type, note.context_id, id)
+
+  return (
+    <div className="flex max-w-2xl flex-col gap-6">
+      <div>
+        <Link href={`/projects/${id}/notes`} className="text-sm underline">
+          &larr; Notes
+        </Link>
+      </div>
+
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">{note.subject}</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {note.author?.email ?? 'Unknown'} · {new Date(note.created_at).toLocaleString()}
+          </p>
+        </div>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[note.status]}`}>{note.status}</span>
+      </div>
+
+      <div className="rounded border border-zinc-200 bg-white p-4">
+        <p className="whitespace-pre-wrap text-sm text-zinc-700">{note.body}</p>
+        {ctx && (
+          <p className="mt-3 text-xs text-zinc-500">
+            Attached to:{' '}
+            {ctx.href ? (
+              <Link href={ctx.href} className="underline">
+                {ctx.label}
+              </Link>
+            ) : (
+              <span>
+                {ctx.label} · {note.context_id}
+              </span>
+            )}
+          </p>
+        )}
+      </div>
+
+      <ProjectNoteThread noteId={note.id} status={note.status} canResolve={canResolve} replies={replies} />
+    </div>
+  )
+}

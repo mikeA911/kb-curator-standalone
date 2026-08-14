@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { ProjectNotes } from '@/components/projects/ProjectNotes'
+import { ProjectFindings } from '@/components/projects/ProjectFindings'
 import { listWorkstreams } from '@/lib/projects/workstreams'
+import { listProjectNotes } from '@/lib/projects/notes'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -23,15 +24,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     data: { user },
   } = await supabase.auth.getUser()
 
-  const [{ data: knowledgeBases }, { data: evalDatasets }, { data: viewerProfile }, { data: viewerMembership }, workstreams] = await Promise.all([
-    supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
-    supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
-    user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
-    user
-      ? supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).single()
-      : Promise.resolve({ data: null }),
-    listWorkstreams(supabase, id),
-  ])
+  const [{ data: knowledgeBases }, { data: evalDatasets }, { data: viewerProfile }, { data: viewerMembership }, workstreams, openNotes] =
+    await Promise.all([
+      supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
+      supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
+      user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
+      user
+        ? supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).single()
+        : Promise.resolve({ data: null }),
+      listWorkstreams(supabase, id),
+      user ? listProjectNotes(supabase, id, { status: 'open' }) : Promise.resolve([]),
+    ])
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
@@ -142,8 +145,31 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Notes / Findings</h2>
-        <ProjectNotes projectId={project.id} initialNotes={project.notes} />
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Findings</h2>
+        <ProjectFindings projectId={project.id} initialNotes={project.notes} />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Notes</h2>
+          <Link href={`/projects/${project.id}/notes`} className="text-sm underline">
+            {openNotes.length > 0 ? `${openNotes.length} open` : 'View all'}
+          </Link>
+        </div>
+        {openNotes.length > 0 ? (
+          <ul className="flex flex-col gap-1 text-sm">
+            {openNotes.slice(0, 5).map((note) => (
+              <li key={note.id}>
+                <Link href={`/projects/${project.id}/notes/${note.id}`} className="underline">
+                  {note.subject}
+                </Link>{' '}
+                <span className="text-zinc-500">({note.author?.email ?? 'Unknown'})</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-zinc-500">No open notes.</p>
+        )}
       </section>
     </div>
   )

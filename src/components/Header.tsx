@@ -10,6 +10,7 @@ import type { Profile } from '@/types/database'
 const EXPLORE_ITEMS = [
   { href: '/projects', label: 'Projects' },
   { href: '/wiki', label: 'Wiki' },
+  { href: '/trending', label: 'Trending' },
   { href: '/evals', label: 'Evals' },
   { href: '/graphs', label: 'Graphs' },
   { href: '/agents', label: 'Agents' },
