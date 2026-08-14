@@ -1,8 +1,10 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/browser'
+import { LOGO_PATH } from '@/lib/branding'
 import type { Profile } from '@/types/database'
 
 export function Header({ profile }: { profile: Profile }) {
@@ -19,7 +21,12 @@ export function Header({ profile }: { profile: Profile }) {
     <header className="border-b border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="font-semibold tracking-tight">KB Sandbox</Link>
+          <Link href="/dashboard" className="flex items-center gap-2 font-semibold tracking-tight">
+            <span className="relative block h-7 w-7 shrink-0 overflow-hidden rounded-full">
+              <Image src={LOGO_PATH} alt="" fill className="object-cover" />
+            </span>
+            KB Sandbox
+          </Link>
           <nav className="flex gap-4 text-sm text-zinc-600">
             <Link href="/dashboard" className="hover:text-zinc-900">Workbench</Link>
             <Link href="/projects" className="hover:text-zinc-900">Projects</Link>

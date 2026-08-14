@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { LOGO_PATH } from "@/lib/branding";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,6 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "KB Sandbox",
   description: "Knowledge curation workbench",
+  icons: { icon: LOGO_PATH },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -1,4 +1,6 @@
+import Image from 'next/image'
 import Link from 'next/link'
+import { LOGO_PATH } from '@/lib/branding'
 
 // Works for both a sessionless visitor and a logged-in user browsing the
 // same public pages -- unlike (app)/layout.tsx's Header, this never
@@ -10,7 +12,12 @@ export function PublicHeader({ isAuthenticated }: { isAuthenticated: boolean }) 
     <header className="border-b border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
         <div className="flex items-center gap-6">
-          <Link href="/" className="font-semibold tracking-tight">KB Sandbox</Link>
+          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+            <span className="relative block h-7 w-7 shrink-0 overflow-hidden rounded-full">
+              <Image src={LOGO_PATH} alt="" fill className="object-cover" />
+            </span>
+            KB Sandbox
+          </Link>
           <nav className="flex gap-4 text-sm text-zinc-600">
             <Link href="/about" className="hover:text-zinc-900">About</Link>
             {/* Public route stays /knowledge -- /wiki is already the

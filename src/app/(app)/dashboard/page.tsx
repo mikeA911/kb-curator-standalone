@@ -40,7 +40,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <SectionHero image="/images/sections/curation.png" height="compact" priority />
+      <SectionHero image="/images/sections/kb-sandbox.png" height="compact" priority />
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Workbench</h1>
