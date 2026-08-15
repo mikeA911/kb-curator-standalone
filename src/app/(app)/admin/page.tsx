@@ -45,8 +45,6 @@ export default async function AdminPage() {
 
       <h1 className="text-xl font-semibold">Administration</h1>
 
-      <UnpublishedWikiWidget articles={unpublishedWikiArticles} />
-
       <AdminTabs
         tabs={[
           { id: 'approvals', label: 'Pending Approvals', content: <PendingApprovals documents={pendingDocs ?? []} /> },
@@ -65,6 +63,8 @@ export default async function AdminPage() {
           { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
         ]}
       />
+
+      <UnpublishedWikiWidget articles={unpublishedWikiArticles} />
     </div>
   )
 }
