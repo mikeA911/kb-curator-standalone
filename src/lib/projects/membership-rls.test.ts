@@ -4,10 +4,13 @@ import path from 'node:path'
 
 // No live database in this suite (see docs/CURRENT-ARCHITECTURE.md), so this
 // asserts the *shape* of the M3.6 migration directly -- same approach as
-// every other *.rls.test.ts file in this repo.
-const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260810120001_project_members.sql'), 'utf-8')
-const fixSql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260810120002_fix_projects_select_returning.sql'), 'utf-8')
-const eval3RlsSql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260809110004_eval_rls.sql'), 'utf-8')
+// every other *.rls.test.ts file in this repo. Normalized to LF since a
+// literal '\n' match below would otherwise depend on the checkout's line
+// endings (this repo has core.autocrlf=true).
+const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf-8').replace(/\r\n/g, '\n')
+const sql = read('supabase/migrations/20260810120001_project_members.sql')
+const fixSql = read('supabase/migrations/20260810120002_fix_projects_select_returning.sql')
+const eval3RlsSql = read('supabase/migrations/20260809110004_eval_rls.sql')
 
 describe('project_members schema', () => {
   it('enforces one membership row per user/project', () => {
