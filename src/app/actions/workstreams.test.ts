@@ -124,4 +124,41 @@ describe('attachArtifactAction', () => {
     const insert = supabase._calls.find((c) => c.table === 'workstream_artifacts' && c.method === 'insert')
     expect(insert?.args).toMatchObject({ workstream_id: 'ws-1', artifact_type: 'findings', title: 'Findings', content: 'It works' })
   })
+
+  it('rejects a local filesystem path as the link -- must be a github.com URL', async () => {
+    requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' } })
+    await expect(
+      attachArtifactAction({
+        workstreamId: 'ws-1',
+        artifactType: 'findings',
+        title: 'X',
+        externalUrl: 'C:\\Users\\mikea\\projects\\CareCall\\docs\\findings.md',
+      })
+    ).rejects.toThrow('github.com')
+  })
+
+  it('rejects a non-GitHub URL as the link', async () => {
+    requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' } })
+    await expect(
+      attachArtifactAction({ workstreamId: 'ws-1', artifactType: 'findings', title: 'X', externalUrl: 'https://gitlab.com/org/repo' })
+    ).rejects.toThrow('github.com')
+  })
+
+  it('accepts a github.com PR link', async () => {
+    const supabase = createFakeSupabase({
+      project_workstreams: [{ data: { project_id: 'p-1' }, error: null }],
+      workstream_artifacts: [{ data: null, error: null }],
+    })
+    requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' }, supabase })
+
+    await attachArtifactAction({
+      workstreamId: 'ws-1',
+      artifactType: 'findings',
+      title: 'X',
+      externalUrl: 'https://github.com/org/repo/pull/123',
+    })
+
+    const insert = supabase._calls.find((c) => c.table === 'workstream_artifacts' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({ external_url: 'https://github.com/org/repo/pull/123' })
+  })
 })

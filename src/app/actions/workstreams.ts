@@ -5,6 +5,18 @@ import { requireUser, AuthError } from '@/lib/auth'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import type { WorkstreamDeliverable, ArtifactType } from '@/types/database'
 
+// A generic repo URL (or a local filesystem path) drifts or breaks -- a
+// PR/commit link is durable. This is the authoritative check; the form has
+// the same check client-side only to fail fast.
+function isGithubUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && (u.hostname === 'github.com' || u.hostname === 'www.github.com')
+  } catch {
+    return false
+  }
+}
+
 // requireUser() + an anonymous check, then RLS (project_workstreams_manage_curator
 // -- can_curate_project, project-role-aware) is the real gate -- not
 // requireRole('curator'), which checks PLATFORM role and would incorrectly
@@ -90,6 +102,9 @@ export async function attachArtifactAction(input: {
   if (profile.role === 'anonymous') throw new AuthError('Create an account to attach an artifact')
   if (!input.content?.trim() && !input.externalUrl?.trim()) {
     throw new ProjectValidationError('Provide either content or a link to attach as evidence')
+  }
+  if (input.externalUrl?.trim() && !isGithubUrl(input.externalUrl.trim())) {
+    throw new ProjectValidationError('Link must be a github.com URL (ideally the PR or commit, not just the repo root)')
   }
 
   const { data: workstream, error: workstreamError } = await supabase

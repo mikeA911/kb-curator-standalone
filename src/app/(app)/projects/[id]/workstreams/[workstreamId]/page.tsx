@@ -5,6 +5,7 @@ import { listArtifacts } from '@/lib/projects/workstreams'
 import type { ArtifactType, ProjectWorkstream } from '@/types/database'
 import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist'
 import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
+import { Markdown } from '@/components/shared/Markdown'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   capability_inventory: 'Capability Inventory',
@@ -73,10 +74,17 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
           )}
 
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Goal</h2>
-          <p className="text-sm text-zinc-700">{workstream.goal || 'Not specified.'}</p>
+          {workstream.goal ? <Markdown text={workstream.goal} /> : <p className="text-sm text-zinc-500">Not specified.</p>}
 
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Guardrail</h2>
-          <p className="text-sm text-zinc-700">{workstream.guardrail || 'Not specified.'}</p>
+          {workstream.guardrail ? <Markdown text={workstream.guardrail} /> : <p className="text-sm text-zinc-500">Not specified.</p>}
+
+          <Link
+            href={`/projects/${id}/notes?contextType=workstream&contextId=${workstream.id}`}
+            className="self-start text-sm text-blue-700 underline"
+          >
+            Add a note about this workstream
+          </Link>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -95,7 +103,7 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
 
         <div className="flex flex-col gap-3">
           {artifacts.map((a) => (
-            <div key={a.id} className="rounded border border-zinc-200 bg-white p-4">
+            <div key={a.id} id={a.id} className="rounded border border-zinc-200 bg-white p-4 scroll-mt-4">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="font-medium">{a.title}</h3>
                 <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
@@ -106,13 +114,33 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
                 {a.external_tool && <>via {a.external_tool} · </>}
                 {new Date(a.created_at).toLocaleString()}
               </p>
-              {a.content && <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-zinc-700">{a.content}</pre>}
-              {a.external_url && (
-                <a href={a.external_url} target="_blank" rel="noreferrer" className="mt-2 block text-sm text-blue-700 underline">
-                  {a.external_url}
-                </a>
+              {a.content && (
+                <div className="mt-2 rounded border border-zinc-100 bg-zinc-50 p-3">
+                  <Markdown text={a.content} />
+                </div>
               )}
-              {a.notes && <p className="mt-2 text-sm text-zinc-600">{a.notes}</p>}
+              {a.external_url && (
+                /^https?:\/\//i.test(a.external_url) ? (
+                  <a href={a.external_url} target="_blank" rel="noreferrer" className="mt-2 block text-sm text-blue-700 underline">
+                    {a.external_url}
+                  </a>
+                ) : (
+                  <p className="mt-2 font-mono text-xs text-zinc-500" title="Not a public URL -- a local filesystem path can't be opened from the browser.">
+                    {a.external_url} <span className="italic text-zinc-400">(local path, not a link)</span>
+                  </p>
+                )
+              )}
+              {a.notes && (
+                <div className="mt-2 border-t border-zinc-100 pt-2">
+                  <Markdown text={a.notes} />
+                </div>
+              )}
+              <Link
+                href={`/projects/${id}/notes?contextType=workstream_artifact&contextId=${a.id}`}
+                className="mt-2 inline-block text-xs text-blue-700 underline"
+              >
+                Add a note about this artifact
+              </Link>
             </div>
           ))}
           {artifacts.length === 0 && <p className="text-sm text-zinc-500">No artifacts attached yet.</p>}

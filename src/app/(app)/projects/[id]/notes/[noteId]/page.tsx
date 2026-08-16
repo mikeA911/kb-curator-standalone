@@ -12,10 +12,23 @@ const STATUS_STYLES: Record<string, string> = {
 // Context is a polymorphic (type, id) pair with no FK -- only a couple of
 // types are resolved to a real link today; every other type (or an unknown
 // one) degrades to a plain, non-linked label rather than a broken link.
-function contextLink(contextType: string | null, contextId: string | null, projectId: string) {
+// workstream_artifact has no standalone page -- it resolves to its parent
+// workstream page, deep-linked to the artifact's card (see the `id={a.id}`
+// anchor on each card in workstreams/[workstreamId]/page.tsx).
+async function contextLink(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  contextType: string | null,
+  contextId: string | null,
+  projectId: string,
+) {
   if (!contextType || !contextId) return null
   if (contextType === 'eval_run') return { href: `/evals/runs/${contextId}`, label: 'Eval run' }
   if (contextType === 'workstream') return { href: `/projects/${projectId}/workstreams/${contextId}`, label: 'Workstream' }
+  if (contextType === 'workstream_artifact') {
+    const { data: artifact } = await supabase.from('workstream_artifacts').select('workstream_id, title').eq('id', contextId).maybeSingle()
+    if (!artifact) return { href: null, label: 'Artifact (deleted or not visible)' }
+    return { href: `/projects/${projectId}/workstreams/${artifact.workstream_id}#${contextId}`, label: `Artifact: ${artifact.title}` }
+  }
   return { href: null, label: contextType }
 }
 
@@ -41,7 +54,7 @@ export default async function ProjectNoteDetailPage({ params }: { params: Promis
   const canResolve =
     note.author_id === user.id || (note.recipient_type === 'user' && note.recipient_user_id === user.id) || canCurate
 
-  const ctx = contextLink(note.context_type, note.context_id, id)
+  const ctx = await contextLink(supabase, note.context_type, note.context_id, id)
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">

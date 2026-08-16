@@ -5,6 +5,18 @@ import { useRouter } from 'next/navigation'
 import { attachArtifactAction } from '@/app/actions/workstreams'
 import type { ArtifactType } from '@/types/database'
 
+// A generic repo URL (or worse, a local path) drifts or breaks -- a PR/commit
+// link is durable. Enforced server-side too (attachArtifactAction); this is
+// just the fast client-side check.
+function isGithubUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && (u.hostname === 'github.com' || u.hostname === 'www.github.com')
+  } catch {
+    return false
+  }
+}
+
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   capability_inventory: 'Capability Inventory',
   endpoint_inventory: 'Endpoint Inventory',
@@ -36,6 +48,10 @@ export function AttachArtifactForm({ workstreamId }: { workstreamId: string }) {
     }
     if (!content.trim() && !externalUrl.trim()) {
       setError('Provide either content or a link')
+      return
+    }
+    if (externalUrl.trim() && !isGithubUrl(externalUrl.trim())) {
+      setError('Link must be a github.com URL (ideally the PR or commit, not just the repo root)')
       return
     }
     setSubmitting(true)
@@ -92,7 +108,12 @@ export function AttachArtifactForm({ workstreamId }: { workstreamId: string }) {
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Link</span>
-        <input value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} placeholder="Link to the PR/branch/repo where the real artifact lives" className="rounded border border-zinc-300 px-3 py-2 text-sm" />
+        <input
+          value={externalUrl}
+          onChange={(e) => setExternalUrl(e.target.value)}
+          placeholder="https://github.com/org/repo/pull/123 -- the PR or commit, not just the repo root"
+          className="rounded border border-zinc-300 px-3 py-2 text-sm"
+        />
       </label>
 
       <label className="flex flex-col gap-1">
