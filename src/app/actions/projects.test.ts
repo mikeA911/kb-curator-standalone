@@ -20,6 +20,7 @@ const {
   createProjectAction,
   attachKnowledgeBaseAction,
   updateProjectNotesAction,
+  updateProjectGoalAction,
   searchProfilesByEmailAction,
   addProjectMemberAction,
   transferOwnershipAction,
@@ -162,6 +163,28 @@ describe('updateProjectNotesAction', () => {
 
     const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
     expect(update?.args).toMatchObject({ notes: 'Wiki-assisted retrieval outperformed raw chunks on 8/10 cases.' })
+  })
+})
+
+describe('updateProjectGoalAction', () => {
+  it('only requires an authenticated session -- RLS enforces owner-or-staff', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, supabase })
+
+    await updateProjectGoalAction('project-1', '  Analyze the repo and produce an OpenAPI spec.  ')
+
+    const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(update?.args).toEqual({ goal: 'Analyze the repo and produce an OpenAPI spec.' })
+  })
+
+  it('stores null for a blank goal', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, supabase })
+
+    await updateProjectGoalAction('project-1', '   ')
+
+    const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(update?.args).toEqual({ goal: null })
   })
 })
 

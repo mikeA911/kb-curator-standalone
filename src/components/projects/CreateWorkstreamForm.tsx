@@ -16,7 +16,6 @@ export function CreateWorkstreamForm({ projectId }: { projectId: string }) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [repositoryScope, setRepositoryScope] = useState('')
-  const [goal, setGoal] = useState('')
   const [guardrail, setGuardrail] = useState('')
   const [deliverables, setDeliverables] = useState<string[]>([])
   const [deliverableInput, setDeliverableInput] = useState('')
@@ -43,7 +42,6 @@ export function CreateWorkstreamForm({ projectId }: { projectId: string }) {
         name,
         slug: slugify(name),
         repositoryScope: repositoryScope.split('\n'),
-        goal: goal || undefined,
         guardrail: guardrail || undefined,
         deliverables,
       })
@@ -72,16 +70,9 @@ export function CreateWorkstreamForm({ projectId }: { projectId: string }) {
         />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Goal</span>
-        <textarea
-          rows={2}
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          placeholder="e.g. Create reviewed OpenAPI + MCP interfaces"
-          className="rounded border border-zinc-300 px-3 py-2 text-sm"
-        />
-      </label>
+      <p className="text-xs text-zinc-500">
+        Goal is set once at the project level (every workstream shares it) — edit it from the project page.
+      </p>
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Guardrail</span>

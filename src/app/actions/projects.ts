@@ -107,6 +107,16 @@ export async function updateProjectNotesAction(projectId: string, notes: string)
   revalidatePath(`/projects/${projectId}`)
 }
 
+// Shared method/approach, common to every workstream in the project -- see
+// the `goal` column comment on the Project type. Same owner/admin-only gate
+// as updateProjectNotesAction (projects_update_managers).
+export async function updateProjectGoalAction(projectId: string, goal: string) {
+  const { supabase } = await requireUser()
+  const { error } = await supabase.from('projects').update({ goal: goal.trim() || null }).eq('id', projectId)
+  if (error) throw error
+  revalidatePath(`/projects/${projectId}`)
+}
+
 // Minimal cross-user lookup backing the "add existing user" controls (the
 // wizard's Team step and the Members page) -- returns only id+email, never
 // role/is_active/anything else. See resolveUserIdsByEmail's comment for why

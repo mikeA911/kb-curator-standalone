@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
+import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
 
@@ -79,6 +80,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </dl>
         )}
       </div>
+
+      <ProjectGoalForm projectId={project.id} goal={project.goal} canEdit={canManage} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge</h2>

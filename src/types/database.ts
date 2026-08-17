@@ -435,6 +435,12 @@ export interface Project {
   objective: string | null
   status: ProjectStatus
   notes: string | null
+  // Shared method/approach, common to every workstream in this project --
+  // e.g. "the same 4-phase discovery method, run by two different AI
+  // tools." A workstream's own page links back here rather than repeating
+  // it (see project_workstreams.goal, still per-workstream for cases where
+  // it genuinely differs, but no longer the primary display).
+  goal: string | null
   // Type-specific fields (hypothesis, success_criteria, business_problem, ...)
   // live here rather than as a wide table of nullable columns -- no template
   // engine, per the Project Model brief's explicit scope limit.
@@ -1004,9 +1010,9 @@ export type EvalResultUpdate = Partial<Omit<EvalResult, 'id' | 'eval_run_id' | '
 // publication state, only publishProjectAction does.
 export type ProjectInsert = Omit<
   Project,
-  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by'
+  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal'
 > &
-  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by'>>
+  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal'>>
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 
 export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>

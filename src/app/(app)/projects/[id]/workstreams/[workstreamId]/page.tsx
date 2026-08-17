@@ -77,7 +77,13 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
           )}
 
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Goal</h2>
-          {workstream.goal ? <Markdown text={workstream.goal} /> : <p className="text-sm text-zinc-500">Not specified.</p>}
+          <p className="text-sm text-zinc-500">
+            Same for every workstream in this project —{' '}
+            <Link href={`/projects/${id}#goal`} className="text-blue-700 underline">
+              see the project goal
+            </Link>
+            .
+          </p>
 
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Guardrail</h2>
           {workstream.guardrail ? <Markdown text={workstream.guardrail} /> : <p className="text-sm text-zinc-500">Not specified.</p>}
