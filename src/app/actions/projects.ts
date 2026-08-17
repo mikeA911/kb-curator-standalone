@@ -229,6 +229,25 @@ export async function publishProjectAction(projectId: string, publicSlug: string
   revalidatePath(`/examples/${publicSlug}`)
 }
 
+// Stricter than the rest of the publish flow (which is owner-or-admin via
+// can_manage_project RLS): "full data exposure" -- real workstreams,
+// artifacts, and assessment responses, not just the curated public_profile
+// summary -- is gated to platform admins only, enforced here at the
+// application layer since RLS alone can't distinguish "admin-only" from
+// "owner-or-admin" on the same projects_update_managers policy. Deliberately
+// per-project (not global): every other published project keeps
+// public_full_detail=false unless an admin opts it in individually.
+export async function setPublicFullDetailAction(projectId: string, enabled: boolean) {
+  const { profile, supabase } = await requireUser()
+  if (profile.role !== 'admin') throw new AuthError('Only a platform admin can enable full data exposure for a published project')
+
+  const { error } = await supabase.from('projects').update({ public_full_detail: enabled }).eq('id', projectId)
+  if (error) throw error
+  revalidatePath(`/projects/${projectId}/publish`)
+  revalidatePath(`/projects/${projectId}`)
+  revalidatePath('/examples')
+}
+
 // Frees the slug (so it can be reused later) but preserves public_profile
 // draft content -- unpublishing shouldn't lose the owner's work.
 export async function unpublishProjectAction(projectId: string) {

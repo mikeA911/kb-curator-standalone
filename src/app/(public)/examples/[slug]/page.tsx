@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { getPublicProjectBySlug } from '@/lib/projects/public'
+import { listPublicWorkstreams } from '@/lib/projects/public-workstreams'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -32,6 +33,7 @@ export default async function ExampleDetailPage({ params }: { params: Promise<{ 
   }
 
   const profile = project.public_profile ?? {}
+  const workstreams = project.public_full_detail ? await listPublicWorkstreams(supabase, project.id) : []
 
   return (
     <div className="flex flex-col gap-8">
@@ -100,6 +102,27 @@ export default async function ExampleDetailPage({ params }: { params: Promise<{ 
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">What We Learned</h2>
           <p className="text-sm text-zinc-700 whitespace-pre-wrap">{profile.conclusion}</p>
+        </section>
+      )}
+
+      {workstreams.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Workstreams</h2>
+          <p className="text-xs text-zinc-500">The real workstreams, artifacts, and assessment responses behind this project &mdash; not just the summary above.</p>
+          <div className="flex flex-col gap-2">
+            {workstreams.map((w) => (
+              <Link
+                key={w.id}
+                href={`/examples/${slug}/workstreams/${w.id}`}
+                className="rounded border border-zinc-200 bg-white p-3 text-sm hover:border-zinc-300"
+              >
+                <span className="font-medium">{w.name}</span>
+                <span className="ml-2 text-xs text-zinc-500">
+                  {w.deliverables.filter((d) => d.completed).length}/{w.deliverables.length} deliverables
+                </span>
+              </Link>
+            ))}
+          </div>
         </section>
       )}
 

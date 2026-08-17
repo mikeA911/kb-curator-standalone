@@ -23,9 +23,15 @@ export interface PublicProjectRow {
   project_type: ProjectType
   public_profile: PublicProjectProfile | null
   published_at: string | null
+  // Admin-only opt-in (see setPublicFullDetailAction) -- when true, this
+  // project's workstreams/artifacts/assessment responses are also visible
+  // to anonymous visitors via src/lib/projects/public-workstreams.ts, not
+  // just the curated public_profile summary. Defaults false; every other
+  // published project (e.g. the RAG vs LLM comparison) is unaffected.
+  public_full_detail: boolean
 }
 
-const PUBLIC_PROJECT_COLUMNS = 'id, public_slug, name, project_type, public_profile, published_at'
+const PUBLIC_PROJECT_COLUMNS = 'id, public_slug, name, project_type, public_profile, published_at, public_full_detail'
 
 export async function getPublicProjectBySlug(supabase: SupabaseClient<Database>, slug: string) {
   const { data, error } = await supabase

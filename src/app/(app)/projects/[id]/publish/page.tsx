@@ -40,6 +40,8 @@ export default async function ProjectPublishPage({ params }: { params: Promise<{
         visibility={project.visibility}
         publicSlug={project.public_slug}
         publicProfile={project.public_profile}
+        isAdmin={viewerProfile?.role === 'admin'}
+        publicFullDetail={project.public_full_detail}
       />
     </div>
   )

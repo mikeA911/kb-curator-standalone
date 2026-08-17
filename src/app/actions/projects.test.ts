@@ -27,6 +27,7 @@ const {
   savePublicProfileDraftAction,
   publishProjectAction,
   unpublishProjectAction,
+  setPublicFullDetailAction,
 } = await import('./projects')
 
 beforeEach(() => {
@@ -292,6 +293,38 @@ describe('unpublishProjectAction', () => {
 
     const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
     expect(update?.args).toEqual({ visibility: 'private', published_at: null, published_by: null, public_slug: null })
+  })
+})
+
+describe('setPublicFullDetailAction', () => {
+  it('rejects an anonymous session', async () => {
+    requireUserMock.mockResolvedValue({ profile: { role: 'anonymous' } })
+    await expect(setPublicFullDetailAction('project-1', true)).rejects.toThrow('platform admin')
+  })
+
+  it('rejects a project owner who is not a platform admin -- stricter than the rest of the publish flow', async () => {
+    requireUserMock.mockResolvedValue({ profile: { role: 'curator' } })
+    await expect(setPublicFullDetailAction('project-1', true)).rejects.toThrow('platform admin')
+  })
+
+  it('lets a platform admin turn it on', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ profile: { role: 'admin' }, supabase })
+
+    await setPublicFullDetailAction('project-1', true)
+
+    const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(update?.args).toEqual({ public_full_detail: true })
+  })
+
+  it('lets a platform admin turn it back off', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ profile: { role: 'admin' }, supabase })
+
+    await setPublicFullDetailAction('project-1', false)
+
+    const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(update?.args).toEqual({ public_full_detail: false })
   })
 })
 

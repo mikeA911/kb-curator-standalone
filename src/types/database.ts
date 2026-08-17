@@ -451,6 +451,11 @@ export interface Project {
   public_profile: PublicProjectProfile | null
   published_at: string | null
   published_by: string | null
+  // Stricter, admin-only opt-in layered on top of visibility='public' --
+  // exposes real workstreams/artifacts/assessment responses to anonymous
+  // visitors, not just the curated public_profile summary. See
+  // setPublicFullDetailAction and 20260817120001_public_full_detail.sql.
+  public_full_detail: boolean
   created_at: string
   updated_at: string
 }
@@ -1115,9 +1120,9 @@ export type EvalResultUpdate = Partial<Omit<EvalResult, 'id' | 'eval_run_id' | '
 // publication state, only publishProjectAction does.
 export type ProjectInsert = Omit<
   Project,
-  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal'
+  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal' | 'public_full_detail'
 > &
-  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal'>>
+  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal' | 'public_full_detail'>>
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 
 export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
