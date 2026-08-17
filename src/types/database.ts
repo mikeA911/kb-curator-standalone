@@ -490,6 +490,9 @@ export interface ProjectWorkstream {
   repository_scope: string[]
   goal: string | null
   guardrail: string | null
+  // Outcome summary -- distinct from `goal` (what we set out to do). Curator-
+  // editable, populated once artifacts/evidence exist.
+  summary: string | null
   deliverables: WorkstreamDeliverable[]
   created_by: string | null
   created_at: string

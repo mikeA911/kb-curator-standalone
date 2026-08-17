@@ -5,6 +5,7 @@ import { listArtifacts } from '@/lib/projects/workstreams'
 import type { ArtifactType, ProjectWorkstream } from '@/types/database'
 import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist'
 import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
+import { WorkstreamSummaryForm } from '@/components/projects/WorkstreamSummaryForm'
 import { Markdown } from '@/components/shared/Markdown'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
@@ -62,6 +63,8 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
         </p>
       </div>
 
+      <WorkstreamSummaryForm workstreamId={workstream.id} summary={workstream.summary} canEdit={canEdit} />
+
       <section className="grid gap-6 sm:grid-cols-2">
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Repository scope</h2>
@@ -103,13 +106,22 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
 
         <div className="flex flex-col gap-3">
           {artifacts.map((a) => (
-            <div key={a.id} id={a.id} className="rounded border border-zinc-200 bg-white p-4 scroll-mt-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-medium">{a.title}</h3>
+            <details key={a.id} id={a.id} className="group rounded border border-zinc-200 bg-white p-4 scroll-mt-4">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+                <span className="flex items-center gap-2">
+                  <svg
+                    viewBox="0 0 20 20"
+                    className="h-3 w-3 shrink-0 text-zinc-400 transition-transform group-open:rotate-90"
+                    fill="currentColor"
+                  >
+                    <path d="M6 4l8 6-8 6V4z" />
+                  </svg>
+                  <h3 className="font-medium">{a.title}</h3>
+                </span>
                 <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
                   {ARTIFACT_TYPE_LABELS[a.artifact_type] ?? a.artifact_type}
                 </span>
-              </div>
+              </summary>
               <p className="mt-1 text-xs text-zinc-500">
                 {a.external_tool && <>via {a.external_tool} · </>}
                 {new Date(a.created_at).toLocaleString()}
@@ -141,7 +153,7 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
               >
                 Add a note about this artifact
               </Link>
-            </div>
+            </details>
           ))}
           {artifacts.length === 0 && <p className="text-sm text-zinc-500">No artifacts attached yet.</p>}
         </div>

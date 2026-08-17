@@ -86,6 +86,31 @@ export async function toggleDeliverableAction(workstreamId: string, index: numbe
   revalidatePath(`/projects/${workstream.project_id}/workstreams/${workstreamId}`)
 }
 
+// Same curator+ gate as toggleDeliverableAction -- the outcome summary is a
+// reviewed claim about what the evidence shows, not a self-report.
+export async function updateWorkstreamSummaryAction(workstreamId: string, summary: string) {
+  const { supabase } = await requireUser()
+
+  const { data: workstream, error: fetchError } = await supabase
+    .from('project_workstreams')
+    .select('project_id')
+    .eq('id', workstreamId)
+    .single()
+  if (fetchError || !workstream) throw fetchError ?? new ProjectValidationError('Workstream not found')
+
+  const { data, error } = await supabase
+    .from('project_workstreams')
+    .update({ summary: summary.trim() || null })
+    .eq('id', workstreamId)
+    .select('id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new ProjectValidationError('You do not have permission to update this workstream')
+  }
+
+  revalidatePath(`/projects/${workstream.project_id}/workstreams/${workstreamId}`)
+}
+
 // Broader than curator -- the consultant who did the external work is who
 // attaches the evidence (workstream_artifacts_insert_consultant: owner/
 // curator/consultant, excludes viewer).

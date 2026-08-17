@@ -12,7 +12,7 @@ vi.mock('@/lib/auth', async () => {
   }
 })
 
-const { createWorkstreamAction, toggleDeliverableAction, attachArtifactAction } = await import('./workstreams')
+const { createWorkstreamAction, toggleDeliverableAction, updateWorkstreamSummaryAction, attachArtifactAction } = await import('./workstreams')
 
 beforeEach(() => {
   requireUserMock.mockReset()
@@ -94,6 +94,29 @@ describe('toggleDeliverableAction', () => {
     requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' }, supabase })
 
     await expect(toggleDeliverableAction('ws-1', 0)).rejects.toThrow('permission')
+  })
+})
+
+describe('updateWorkstreamSummaryAction', () => {
+  it('trims the summary and stores null for a blank value', async () => {
+    const supabase = createFakeSupabase({
+      project_workstreams: [{ data: { project_id: 'p-1' }, error: null }, { data: [{ id: 'ws-1' }], error: null }],
+    })
+    requireUserMock.mockResolvedValue({ supabase })
+
+    await updateWorkstreamSummaryAction('ws-1', '   ')
+
+    const update = supabase._calls.find((c) => c.table === 'project_workstreams' && c.method === 'update')
+    expect(update?.args).toEqual({ summary: null })
+  })
+
+  it('throws a clear error when RLS silently rejects the update (zero rows matched)', async () => {
+    const supabase = createFakeSupabase({
+      project_workstreams: [{ data: { project_id: 'p-1' }, error: null }, { data: [], error: null }],
+    })
+    requireUserMock.mockResolvedValue({ supabase })
+
+    await expect(updateWorkstreamSummaryAction('ws-1', 'Found 30 capabilities.')).rejects.toThrow('permission')
   })
 })
 
