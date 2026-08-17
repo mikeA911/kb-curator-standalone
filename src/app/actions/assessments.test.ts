@@ -195,6 +195,31 @@ describe('saveAssessmentResponseAction', () => {
     ])
   })
 
+  it('skips blank answers rather than upserting empty rows -- a form submitting all 10 questions with only 1 filled in should not mark 10 as answered', async () => {
+    const supabase = createFakeSupabase({
+      system_assessment_versions: [{ data: { project_id: 'p-1' }, error: null }],
+      assessment_responses: [{ data: { id: 'r-1' }, error: null }],
+      assessment_answers: [{ data: null, error: null }],
+    })
+    requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' }, supabase })
+
+    await saveAssessmentResponseAction({
+      assessmentVersionId: 'v-1',
+      participantLabel: 'Claude Code',
+      answers: [
+        { questionId: 'q-1', answer: 'Yes, via RLS.', classification: 'CONFIRMED', evidence: 'lib.ts:10' },
+        { questionId: 'q-2', answer: '', classification: undefined, evidence: '' },
+        { questionId: 'q-3', answer: '   ', classification: undefined, evidence: '' },
+      ],
+      markCompleted: false,
+    })
+
+    const answersUpsert = supabase._calls.find((c) => c.table === 'assessment_answers' && c.method === 'upsert')
+    expect(answersUpsert?.args).toEqual([
+      { response_id: 'r-1', question_id: 'q-1', project_id: 'p-1', answer: 'Yes, via RLS.', classification: 'CONFIRMED', evidence: 'lib.ts:10' },
+    ])
+  })
+
   it('marks the response completed when markCompleted is true', async () => {
     const supabase = createFakeSupabase({
       system_assessment_versions: [{ data: { project_id: 'p-1' }, error: null }],

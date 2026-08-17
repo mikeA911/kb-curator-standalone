@@ -222,9 +222,10 @@ export async function saveAssessmentResponseAction(input: {
     .single()
   if (responseError || !response) throw responseError ?? new ProjectValidationError('Failed to save response')
 
-  if (input.answers.length > 0) {
+  const answeredQuestions = input.answers.filter((a) => a.answer.trim())
+  if (answeredQuestions.length > 0) {
     const { error: answersError } = await supabase.from('assessment_answers').upsert(
-      input.answers.map((a) => ({
+      answeredQuestions.map((a) => ({
         response_id: response.id,
         question_id: a.questionId,
         project_id: version.project_id,
