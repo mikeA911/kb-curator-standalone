@@ -2,10 +2,12 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listArtifacts } from '@/lib/projects/workstreams'
+import { listAssessmentSummariesForProject } from '@/lib/projects/assessments'
 import type { ArtifactType, ProjectWorkstream } from '@/types/database'
 import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist'
 import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
 import { WorkstreamSummaryForm } from '@/components/projects/WorkstreamSummaryForm'
+import { SystemUnderstandingCard } from '@/components/projects/SystemUnderstandingCard'
 import { Markdown } from '@/components/shared/Markdown'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
@@ -28,7 +30,10 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
   const workstream = workstreamRow as ProjectWorkstream | null
   if (!project || !workstream) notFound()
 
-  const artifacts = await listArtifacts(supabase, workstreamId)
+  const [artifacts, assessmentSummaries] = await Promise.all([
+    listArtifacts(supabase, workstreamId),
+    listAssessmentSummariesForProject(supabase, id),
+  ])
 
   const {
     data: { user },
@@ -101,6 +106,8 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
           <DeliverableChecklist workstreamId={workstream.id} deliverables={workstream.deliverables} canEdit={canEdit} />
         </div>
       </section>
+
+      <SystemUnderstandingCard projectId={id} summaries={assessmentSummaries} canCreate={canEdit} />
 
       <section className="flex flex-col gap-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Artifacts</h2>

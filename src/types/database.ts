@@ -528,6 +528,111 @@ export interface WorkstreamArtifact {
   created_at: string
 }
 
+// ============================================
+// Workstream System Understanding Assessment
+// ============================================
+
+// A curator-authored, versioned set of standardized questions every
+// "participant" (an external AI tool/method) answers after independently
+// examining a system -- testing whether they understood it, not just
+// whether they produced plausible artifacts. Deliberately reusable, not
+// specific to OpenAPI/CareCall. See docs/ design note for the full model.
+export interface SystemAssessment {
+  id: string
+  project_id: string
+  // Soft/optional link to the originating workstream -- not used for
+  // access control. An assessment spans every workstream/participant in
+  // the project (Claude Code and ChatGPT/Codex are separate *workstreams*
+  // in this app, but the same assessment).
+  workstream_id: string | null
+  name: string
+  description: string | null
+  current_version_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+export type SystemAssessmentInsert = Omit<SystemAssessment, 'id' | 'created_at' | 'updated_at' | 'current_version_id'> &
+  Partial<Pick<SystemAssessment, 'current_version_id'>>
+export type SystemAssessmentUpdate = Partial<Omit<SystemAssessment, 'id' | 'created_at' | 'project_id'>>
+
+// "Immutable once active" (no silent edits after a version has responses)
+// is enforced in the action layer, not by a status-derived RLS/trigger
+// rule -- see the migration's RLS section comment.
+export type SystemAssessmentVersionStatus = 'draft' | 'active' | 'retired'
+
+export interface SystemAssessmentVersion {
+  id: string
+  assessment_id: string
+  project_id: string
+  version_number: number
+  // How a participant should answer -- versioned alongside the questions
+  // so a response can always be traced to exactly what was asked and how.
+  instructions: string
+  status: SystemAssessmentVersionStatus
+  created_by: string | null
+  created_at: string
+}
+export type SystemAssessmentVersionInsert = Omit<SystemAssessmentVersion, 'id' | 'created_at' | 'status'> &
+  Partial<Pick<SystemAssessmentVersion, 'status'>>
+
+export interface SystemAssessmentQuestion {
+  id: string
+  assessment_version_id: string
+  project_id: string
+  sequence: number
+  title: string
+  question: string
+  category: string | null
+  guidance: string | null
+}
+export type SystemAssessmentQuestionInsert = Omit<SystemAssessmentQuestion, 'id'>
+
+export type AssessmentResponseStatus = 'in_progress' | 'completed'
+
+// A response belongs to a participant/method, not to a workstream --
+// participant_label is descriptive metadata (e.g. "Claude Code"), not a
+// workstream FK. See the migration comment for why.
+export interface AssessmentResponse {
+  id: string
+  assessment_version_id: string
+  project_id: string
+  participant_label: string
+  external_tool: string | null
+  model: string | null
+  repository_ref: string | null
+  status: AssessmentResponseStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+export type AssessmentResponseInsert = Omit<
+  AssessmentResponse,
+  'id' | 'created_at' | 'updated_at' | 'status' | 'external_tool' | 'model' | 'repository_ref'
+> &
+  Partial<Pick<AssessmentResponse, 'status' | 'external_tool' | 'model' | 'repository_ref'>>
+export type AssessmentResponseUpdate = Partial<Omit<AssessmentResponse, 'id' | 'created_at' | 'project_id' | 'assessment_version_id'>>
+
+export type AnswerClassification = 'CONFIRMED' | 'INFERRED' | 'UNKNOWN'
+
+// One row per question per response -- not one giant Markdown blob -- so
+// individual questions stay independently reviewable/scoreable later.
+// Evidence stays inline free text in this pass, not a normalized table.
+export interface AssessmentAnswer {
+  id: string
+  response_id: string
+  question_id: string
+  project_id: string
+  answer: string
+  classification: AnswerClassification | null
+  evidence: string | null
+  created_at: string
+  updated_at: string
+}
+export type AssessmentAnswerInsert = Omit<AssessmentAnswer, 'id' | 'created_at' | 'updated_at' | 'classification' | 'evidence'> &
+  Partial<Pick<AssessmentAnswer, 'classification' | 'evidence'>>
+export type AssessmentAnswerUpdate = Partial<Pick<AssessmentAnswer, 'answer' | 'classification' | 'evidence'>>
+
 export type EvalDatasetStatus = 'draft' | 'active' | 'archived'
 export type EvalDifficulty = 'easy' | 'medium' | 'hard'
 export type EvalRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -1127,6 +1232,11 @@ export interface Database {
       project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
+      system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
+      system_assessment_versions: { Row: SystemAssessmentVersion; Insert: SystemAssessmentVersionInsert; Update: Partial<SystemAssessmentVersion>; Relationships: [] }
+      system_assessment_questions: { Row: SystemAssessmentQuestion; Insert: SystemAssessmentQuestionInsert; Update: Partial<SystemAssessmentQuestion>; Relationships: [] }
+      assessment_responses: { Row: AssessmentResponse; Insert: AssessmentResponseInsert; Update: AssessmentResponseUpdate; Relationships: [] }
+      assessment_answers: { Row: AssessmentAnswer; Insert: AssessmentAnswerInsert; Update: AssessmentAnswerUpdate; Relationships: [] }
       ai_providers: { Row: AIProviderRow; Insert: AIProviderInsert; Update: AIProviderUpdate; Relationships: [] }
       ai_models: { Row: AIModelRow; Insert: AIModelInsert; Update: AIModelUpdate; Relationships: [] }
       graphs: { Row: Graph; Insert: GraphInsert; Update: GraphUpdate; Relationships: [] }
