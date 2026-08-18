@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getPublicProjectBySlug } from '@/lib/projects/public'
 import { getPublicWorkstreamById, listPublicArtifacts, listPublicAssessmentSummariesForProject } from '@/lib/projects/public-workstreams'
 import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist'
+import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
 import { Markdown } from '@/components/shared/Markdown'
 import type { ArtifactType } from '@/types/database'
 
@@ -154,8 +155,13 @@ export default async function PublicWorkstreamDetailPage({
                 {new Date(a.created_at).toLocaleString()}
               </p>
               {a.content && (
-                <div className="mt-2 rounded border border-zinc-100 bg-zinc-50 p-3">
-                  <Markdown text={a.content} />
+                <div className="mt-2">
+                  <div className="mb-1 flex justify-end">
+                    <CopyArtifactButton title={a.title} content={a.content} />
+                  </div>
+                  <div className="rounded border border-zinc-100 bg-zinc-50 p-3">
+                    <Markdown text={a.content} />
+                  </div>
                 </div>
               )}
               {a.external_url &&

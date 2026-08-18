@@ -8,6 +8,7 @@ import { DeliverableChecklist } from '@/components/projects/DeliverableChecklist
 import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
 import { WorkstreamSummaryForm } from '@/components/projects/WorkstreamSummaryForm'
 import { SystemUnderstandingCard } from '@/components/projects/SystemUnderstandingCard'
+import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
 import { Markdown } from '@/components/shared/Markdown'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
@@ -141,8 +142,13 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
                 {new Date(a.created_at).toLocaleString()}
               </p>
               {a.content && (
-                <div className="mt-2 rounded border border-zinc-100 bg-zinc-50 p-3">
-                  <Markdown text={a.content} />
+                <div className="mt-2">
+                  <div className="mb-1 flex justify-end">
+                    <CopyArtifactButton title={a.title} content={a.content} />
+                  </div>
+                  <div className="rounded border border-zinc-100 bg-zinc-50 p-3">
+                    <Markdown text={a.content} />
+                  </div>
                 </div>
               )}
               {a.external_url && (
