@@ -2,15 +2,20 @@ import 'server-only'
 import OpenAI from 'openai'
 import type {
   AIProvider,
+  ChatMessage,
   EmbedInput,
   EmbedResult,
+  GenerateChatInput,
+  GenerateChatResult,
   GenerateStructuredInput,
   GenerateStructuredResult,
   GenerateTextInput,
   GenerateTextResult,
+  ToolCall,
 } from './provider'
+import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions'
 import { AIProviderError } from './provider'
-import { extractJsonObject } from './json-extract'
+import { extractJsonObject, parseToolArguments } from './json-extract'
 
 export interface DiscoveredModel {
   id: string
@@ -84,6 +89,76 @@ export class OpenAICompatibleProvider implements AIProvider {
       }
     } catch (err) {
       throw new AIProviderError(this.name, 'generate_structured', `${this.name} generateStructured failed to produce valid output: ${raw}`, err)
+    }
+  }
+
+  async generateChat(input: GenerateChatInput): Promise<GenerateChatResult> {
+    const model = this.requireModel(input.model)
+    try {
+      const messages: ChatCompletionMessageParam[] = [
+        ...(input.system ? [{ role: 'system' as const, content: input.system }] : []),
+        ...input.messages.map((m): ChatCompletionMessageParam => {
+          if (m.role === 'tool') {
+            return { role: 'tool', tool_call_id: m.toolCallId ?? '', content: m.content }
+          }
+          if (m.role === 'assistant') {
+            return {
+              role: 'assistant',
+              content: m.content || null,
+              ...(m.toolCalls?.length
+                ? {
+                    tool_calls: m.toolCalls.map((tc) => ({
+                      id: tc.id,
+                      type: 'function' as const,
+                      function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+                    })),
+                  }
+                : {}),
+            }
+          }
+          return { role: 'user', content: m.content }
+        }),
+      ]
+
+      const tools: ChatCompletionTool[] | undefined = input.tools?.length
+        ? input.tools.map((t) => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.parameters as Record<string, unknown> },
+          }))
+        : undefined
+
+      const res = await this.client.chat.completions.create({
+        model,
+        messages,
+        tools,
+        max_completion_tokens: input.maxOutputTokens,
+      })
+
+      const responseMessage = res.choices[0]?.message
+      const toolCalls: ToolCall[] = (responseMessage?.tool_calls ?? [])
+        .filter((tc) => tc.type === 'function')
+        .map((tc) => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: parseToolArguments(tc.function.arguments),
+        }))
+
+      const message: ChatMessage = {
+        role: 'assistant',
+        content: responseMessage?.content ?? '',
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      }
+
+      return {
+        message,
+        model,
+        usage: {
+          inputTokens: res.usage?.prompt_tokens ?? null,
+          outputTokens: res.usage?.completion_tokens ?? null,
+        },
+      }
+    } catch (err) {
+      throw new AIProviderError(this.name, 'generate_chat', `${this.name} generateChat failed`, err)
     }
   }
 

@@ -44,6 +44,50 @@ export interface GenerateStructuredResult<T> {
   usage: TokenUsage
 }
 
+// M6D: multi-turn, tool-calling chat -- additive to the interface, existing
+// generateText/generateStructured/embed callers are untouched. A ToolCall's
+// `arguments` and a tool result's `content` are both caller-defined JSON;
+// this interface doesn't know or care what a "tool" is, just how to carry
+// one across a provider's own function-calling wire format.
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface ToolSpec {
+  name: string
+  description: string
+  // A JSON Schema object (e.g. from zod's `z.toJSONSchema()`), not a zod
+  // schema itself -- keeps this interface independent of any particular
+  // schema library.
+  parameters: unknown
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'tool'
+  // Empty/omitted on an assistant message that is purely a tool call.
+  content: string
+  toolCalls?: ToolCall[]
+  // Required on a 'tool' role message -- which call this is the result of.
+  toolCallId?: string
+  toolName?: string
+}
+
+export interface GenerateChatInput {
+  messages: ChatMessage[]
+  system?: string
+  tools?: ToolSpec[]
+  maxOutputTokens?: number
+  model?: string
+}
+
+export interface GenerateChatResult {
+  message: ChatMessage
+  model: string
+  usage: TokenUsage
+}
+
 export interface EmbedInput {
   text: string
   model?: string
@@ -67,7 +111,7 @@ export type ProviderErrorCode =
 export class AIProviderError extends Error {
   constructor(
     public readonly provider: string,
-    public readonly operation: 'generate_text' | 'generate_structured' | 'embed',
+    public readonly operation: 'generate_text' | 'generate_structured' | 'generate_chat' | 'embed',
     message: string,
     public readonly cause?: unknown,
     public readonly errorCode: ProviderErrorCode = classifyProviderError(cause)
@@ -108,5 +152,6 @@ export interface AIProvider {
   readonly name: string
   generateText(input: GenerateTextInput): Promise<GenerateTextResult>
   generateStructured<T>(input: GenerateStructuredInput<T>): Promise<GenerateStructuredResult<T>>
+  generateChat(input: GenerateChatInput): Promise<GenerateChatResult>
   embed(input: EmbedInput): Promise<EmbedResult>
 }

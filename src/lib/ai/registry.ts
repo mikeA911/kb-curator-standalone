@@ -92,7 +92,7 @@ export async function getDefaultModel(
 // Called once at the top of an eval run rather than scattered provider-name
 // checks throughout the pipeline -- validates the model actually selected
 // for a slot can do what that slot needs before any API call is made.
-export function assertModelCapability(model: AIModelRow, need: 'generation' | 'embedding' | 'structured_output') {
+export function assertModelCapability(model: AIModelRow, need: 'generation' | 'embedding' | 'structured_output' | 'tools') {
   if (need === 'generation' && model.model_type !== 'generation') {
     throw new AIConfigError(`Model "${model.model_id}" is a ${model.model_type} model and cannot be used for generation`)
   }
@@ -101,6 +101,9 @@ export function assertModelCapability(model: AIModelRow, need: 'generation' | 'e
   }
   if (need === 'structured_output' && !model.supports_structured_output) {
     throw new AIConfigError(`Model "${model.model_id}" does not support structured output`)
+  }
+  if (need === 'tools' && !model.supports_tools) {
+    throw new AIConfigError(`Model "${model.model_id}" does not support tool calling`)
   }
   if (!model.enabled) {
     throw new AIConfigError(`Model "${model.model_id}" is disabled`)
@@ -212,5 +215,20 @@ export async function getActiveStructuredOutputProvider(
   logContext: LogContext = {}
 ): Promise<AIProvider> {
   const { provider, model } = await getDefaultStructuredOutputModel(supabase)
+  return withLogging(buildProviderClient(provider, model.model_id), logContext)
+}
+
+// M6D: the Assistant's chat provider. Tool-calling is a capability of the
+// default GENERATION model (there's no separate 'chat' model_type), same
+// relationship generation has to structured_output -- so this reuses
+// getDefaultModel('generation') and then asserts the resolved model
+// actually supports tools, surfacing a clear admin-config error instead of
+// a confusing runtime failure if the current default doesn't.
+export async function getActiveChatProvider(
+  supabase: SupabaseClient<Database>,
+  logContext: LogContext = {}
+): Promise<AIProvider> {
+  const { provider, model } = await getDefaultModel(supabase, 'generation')
+  assertModelCapability(model, 'tools')
   return withLogging(buildProviderClient(provider, model.model_id), logContext)
 }

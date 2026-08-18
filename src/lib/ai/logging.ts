@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type {
   AIProvider,
   EmbedInput,
+  GenerateChatInput,
   GenerateStructuredInput,
   GenerateTextInput,
 } from './provider'
@@ -32,7 +33,7 @@ export interface LogContext {
 // see the ai_operation_logs RLS policy, which has no client insert path).
 export function withLogging(provider: AIProvider, context: LogContext = {}): AIProvider {
   const record = async (
-    operation: 'generate_text' | 'generate_structured' | 'embed',
+    operation: 'generate_text' | 'generate_structured' | 'generate_chat' | 'embed',
     model: string,
     startedAt: number,
     outcome: { success: true; inputTokens: number | null; outputTokens: number | null } | { success: false; error: string }
@@ -85,6 +86,18 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         return result
       } catch (err) {
         await record('generate_structured', 'unknown', startedAt, { success: false, error: (err as Error).message })
+        throw err
+      }
+    },
+
+    async generateChat(input: GenerateChatInput) {
+      const startedAt = Date.now()
+      try {
+        const result = await provider.generateChat(input)
+        await record('generate_chat', result.model, startedAt, { success: true, ...result.usage })
+        return result
+      } catch (err) {
+        await record('generate_chat', 'unknown', startedAt, { success: false, error: (err as Error).message })
         throw err
       }
     },

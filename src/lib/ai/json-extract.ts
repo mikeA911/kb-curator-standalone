@@ -46,3 +46,12 @@ export function extractJsonObject(raw: string): unknown {
 
   throw new SyntaxError(`Unbalanced JSON object in: ${raw}`)
 }
+
+// Tool-call arguments come back from a provider as a JSON-encoded string
+// (OpenAI/Groq's ChatCompletionMessageToolCall.function.arguments) -- an
+// empty string means "no arguments", not malformed JSON, which a bare
+// extractJsonObject call would otherwise throw on.
+export function parseToolArguments(raw: string): Record<string, unknown> {
+  if (!raw.trim()) return {}
+  return extractJsonObject(raw) as Record<string, unknown>
+}

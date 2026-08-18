@@ -26,6 +26,7 @@ function fakeGenerationProvider(): AIProvider {
     name: 'test-generation',
     generateText: vi.fn().mockResolvedValue({ text: 'a grounded answer', model: 'gen-model', usage: { inputTokens: 5, outputTokens: 5 } }),
     generateStructured: vi.fn().mockResolvedValue({ data: { revised_query: 'a better query' }, model: 'gen-model', usage: { inputTokens: 2, outputTokens: 2 } }),
+    generateChat: vi.fn(),
     embed: vi.fn().mockResolvedValue({ embedding: [0], model: 'embed-model', dimensions: 1, usage: { inputTokens: 1, outputTokens: 0 } }),
   }
 }
@@ -51,6 +52,7 @@ function fakeJudgeProvider(scoreSequence: number[]): AIProvider {
         usage: { inputTokens: 3, outputTokens: 3 },
       }
     }),
+    generateChat: vi.fn(),
     embed: vi.fn(),
   }
 }

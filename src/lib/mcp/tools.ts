@@ -1,10 +1,11 @@
 import 'server-only'
 import { z } from 'zod'
-import { listArticles } from '@/lib/wiki/queries'
 import { listProjectNotes } from '@/lib/projects/notes'
 import * as workbenchProjects from '@/lib/workbench/projects'
 import * as workbenchWorkstreams from '@/lib/workbench/workstreams'
+import { getActiveEmbeddingProvider } from '@/lib/ai'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
+import type { Database } from '@/types/database'
 
 // M5F Phase D: the internal MCP tool contract. Each tool wraps an existing,
 // already-permission-checked service function -- this module never adds a
@@ -13,16 +14,6 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 // src/lib/{curator,wiki,projects}/*, not duplicated here). Transport-
 // independent: callTool is called directly in-process by Phase E's future
 // Assistant; nothing here assumes an MCP SDK transport exists.
-
-const WikiCategorySchema = z.enum([
-  'foundations',
-  'knowledge_engineering',
-  'agent_engineering',
-  'reliability',
-  'governance',
-  'improvement',
-  'platform_handbook',
-])
 
 const ArtifactTypeSchema = z.enum([
   'capability_inventory',
@@ -52,15 +43,30 @@ interface ToolDefinition<TInput, TOutput> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tools: Record<string, ToolDefinition<any, any>> = {
   search_wiki: {
-    description: 'Search platform Wiki articles by title/description substring, optionally scoped to a category.',
-    inputSchema: z.object({ query: z.string(), category: WikiCategorySchema.optional() }),
+    description: 'Semantic search over approved platform Wiki articles -- finds conceptually related content, not just literal keyword matches.',
+    // match_wiki_vectors has no category parameter (confirmed) -- dropped
+    // here rather than silently ignored if a caller tried to pass one.
+    inputSchema: z.object({ query: z.string(), limit: z.number().int().min(1).max(10).default(5) }),
     outputSchema: z.object({
-      articles: z.array(z.object({ id: z.string(), slug: z.string(), title: z.string(), shortDescription: z.string().nullable() })),
+      articles: z.array(z.object({ articleId: z.string(), slug: z.string(), title: z.string(), similarity: z.number() })),
     }),
-    handler: async (ctx, input: { query: string; category?: z.infer<typeof WikiCategorySchema> }) => {
-      const articles = await listArticles(ctx.supabase, { search: input.query, category: input.category })
+    handler: async (ctx, input: { query: string; limit: number }) => {
+      const embeddingProvider = await getActiveEmbeddingProvider(ctx.supabase, { requestedBy: ctx.user.id })
+      const { embedding } = await embeddingProvider.embed({ text: input.query })
+      const { data, error } = await ctx.supabase.rpc('match_wiki_vectors', {
+        query_embedding: embedding,
+        match_threshold: 0,
+        match_count: input.limit,
+      })
+      if (error) throw error
+      type Row = Database['public']['Functions']['match_wiki_vectors']['Returns'][number]
       return {
-        articles: articles.map((a) => ({ id: a.id, slug: a.slug, title: a.title, shortDescription: a.short_description })),
+        articles: (data ?? []).map((m: Row) => ({
+          articleId: m.wiki_article_id,
+          slug: m.article_slug,
+          title: m.article_title,
+          similarity: m.similarity,
+        })),
       }
     },
   },
@@ -170,7 +176,7 @@ const tools: Record<string, ToolDefinition<any, any>> = {
       externalUrl: z.string().optional(),
       notes: z.string().optional(),
     }),
-    outputSchema: z.object({ attached: z.literal(true) }),
+    outputSchema: z.object({ attached: z.literal(true), artifactId: z.string() }),
     handler: async (
       ctx,
       input: {
@@ -183,8 +189,8 @@ const tools: Record<string, ToolDefinition<any, any>> = {
         notes?: string
       }
     ) => {
-      await workbenchWorkstreams.attachArtifact(ctx, input)
-      return { attached: true as const }
+      const result = await workbenchWorkstreams.attachArtifact(ctx, input)
+      return { attached: true as const, artifactId: result.artifactId }
     },
   },
 }
@@ -199,4 +205,11 @@ export async function callTool(ctx: WorkbenchCallerContext, name: string, rawInp
 
 export function listTools(): { name: string; description: string }[] {
   return Object.entries(tools).map(([name, t]) => ({ name, description: t.description }))
+}
+
+// What generateChat's `tools` param is built from -- z.toJSONSchema turns
+// each tool's zod input schema into the JSON Schema shape both Gemini's
+// parametersJsonSchema and OpenAI's function.parameters expect.
+export function getToolSpecs(): { name: string; description: string; parameters: unknown }[] {
+  return Object.entries(tools).map(([name, t]) => ({ name, description: t.description, parameters: z.toJSONSchema(t.inputSchema) }))
 }

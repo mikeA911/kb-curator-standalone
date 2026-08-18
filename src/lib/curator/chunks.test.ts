@@ -11,6 +11,9 @@ const fakeProvider: AIProvider = {
   async generateStructured() {
     throw new Error('not used')
   },
+  async generateChat() {
+    throw new Error('not used')
+  },
   async embed() {
     return { embedding: [0.1, 0.2, 0.3], model: 'fake-embed', dimensions: 3, usage: { inputTokens: 5, outputTokens: null } }
   },

@@ -138,7 +138,7 @@ describe('attachArtifactAction', () => {
   it('inserts through the RLS-scoped client -- workstream_artifacts_insert_consultant is the real gate', async () => {
     const supabase = createFakeSupabase({
       project_workstreams: [{ data: { project_id: 'p-1' }, error: null }],
-      workstream_artifacts: [{ data: null, error: null }],
+      workstream_artifacts: [{ data: { id: 'artifact-1' }, error: null }],
     })
     requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' }, supabase })
 
@@ -170,7 +170,7 @@ describe('attachArtifactAction', () => {
   it('accepts a github.com PR link', async () => {
     const supabase = createFakeSupabase({
       project_workstreams: [{ data: { project_id: 'p-1' }, error: null }],
-      workstream_artifacts: [{ data: null, error: null }],
+      workstream_artifacts: [{ data: { id: 'artifact-1' }, error: null }],
     })
     requireUserMock.mockResolvedValue({ profile: { role: 'consultant', id: 'user-1' }, supabase })
 

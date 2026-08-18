@@ -3,6 +3,7 @@ import 'server-only'
 export type { AIProvider } from './provider'
 export { AIProviderError, classifyProviderError } from './provider'
 export type { ProviderErrorCode } from './provider'
+export type { ChatMessage, ToolCall, ToolSpec, GenerateChatInput, GenerateChatResult } from './provider'
 
 // Provider/model resolution now lives in registry.ts (DB-backed registry,
 // replacing the old hard-coded 'openai' | 'gemini' switch) -- this file
@@ -19,4 +20,5 @@ export {
   getActiveProvider,
   getActiveEmbeddingProvider,
   getActiveStructuredOutputProvider,
+  getActiveChatProvider,
 } from './registry'

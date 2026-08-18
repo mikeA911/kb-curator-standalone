@@ -70,6 +70,68 @@ describe('OpenAICompatibleProvider (Groq)', () => {
     await expect(provider.embed({ text: 'hello' })).rejects.toMatchObject({ errorCode: 'model_unavailable' })
   })
 
+  it('satisfies generateChat, returning a plain text reply with no tool calls', async () => {
+    createCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'Hello there.', tool_calls: undefined } }],
+      usage: { prompt_tokens: 10, completion_tokens: 4 },
+    })
+    const provider = new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1', 'openai/gpt-oss-20b')
+
+    const result = await provider.generateChat({ messages: [{ role: 'user', content: 'Hi' }] })
+
+    expect(result.message).toEqual({ role: 'assistant', content: 'Hello there.' })
+    expect(createCompletionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ role: 'user', content: 'Hi' }] })
+    )
+  })
+
+  it('generateChat maps a tool-call response into ToolCall[] with parsed arguments', async () => {
+    createCompletionMock.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_wiki', arguments: '{"query":"RAG"}' } }],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 12, completion_tokens: 6 },
+    })
+    const provider = new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1', 'openai/gpt-oss-20b')
+
+    const result = await provider.generateChat({
+      messages: [{ role: 'user', content: 'What is RAG?' }],
+      tools: [{ name: 'search_wiki', description: 'Search the wiki', parameters: { type: 'object', properties: {} } }],
+    })
+
+    expect(result.message.toolCalls).toEqual([{ id: 'call-1', name: 'search_wiki', arguments: { query: 'RAG' } }])
+    expect(createCompletionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: [{ type: 'function', function: expect.objectContaining({ name: 'search_wiki' }) }] })
+    )
+  })
+
+  it('generateChat sends a tool-role message back with its tool_call_id', async () => {
+    createCompletionMock.mockResolvedValue({
+      choices: [{ message: { content: 'The answer is 4.' } }],
+      usage: { prompt_tokens: 5, completion_tokens: 3 },
+    })
+    const provider = new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1', 'openai/gpt-oss-20b')
+
+    await provider.generateChat({
+      messages: [
+        { role: 'user', content: 'What is 2+2?' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'calc', arguments: {} }] },
+        { role: 'tool', content: '4', toolCallId: 'call-1', toolName: 'calc' },
+      ],
+    })
+
+    expect(createCompletionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call-1', content: '4' }]),
+      })
+    )
+  })
+
   it('discovers models via the OpenAI-compatible /models endpoint without enabling anything', async () => {
     listModelsMock.mockResolvedValue({ data: [{ id: 'openai/gpt-oss-20b' }, { id: 'openai/gpt-oss-120b' }] })
     const provider = new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1')

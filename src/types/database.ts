@@ -458,6 +458,13 @@ export interface Project {
   // visitors, not just the curated public_profile summary. See
   // setPublicFullDetailAction and 20260817120001_public_full_detail.sql.
   public_full_detail: boolean
+  // Provenance -- who/what created this row. 'ui' is the default (and the
+  // only value possible before M6D); 'assistant' is stamped by the chat
+  // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
+  // create_project succeeds, never by the service layer itself.
+  created_via: string
+  assistant_prompt_version: string | null
+  assistant_conversation_id: string | null
   created_at: string
   updated_at: string
 }
@@ -508,6 +515,9 @@ export interface ProjectWorkstream {
   summary: string | null
   deliverables: WorkstreamDeliverable[]
   created_by: string | null
+  created_via: string
+  assistant_prompt_version: string | null
+  assistant_conversation_id: string | null
   created_at: string
   updated_at: string
 }
@@ -533,8 +543,45 @@ export interface WorkstreamArtifact {
   external_url: string | null
   notes: string | null
   created_by: string | null
+  created_via: string
+  assistant_prompt_version: string | null
+  assistant_conversation_id: string | null
   created_at: string
 }
+
+// ============================================
+// Chat / Conversational Workbench Assistant (M6D)
+// ============================================
+
+export interface Conversation {
+  id: string
+  user_id: string
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ConversationInsert = Omit<Conversation, 'id' | 'created_at' | 'updated_at' | 'title'> & Partial<Pick<Conversation, 'title'>>
+export type ConversationUpdate = Partial<Omit<Conversation, 'id' | 'user_id' | 'created_at'>>
+
+export type ChatMessageRole = 'user' | 'assistant' | 'tool'
+
+export interface ChatMessageRow {
+  id: string
+  conversation_id: string
+  user_id: string
+  role: ChatMessageRole
+  content: string | null
+  // Present on an assistant message that requested one or more tool calls.
+  tool_calls: { id: string; name: string; arguments: Record<string, unknown> }[] | null
+  // Present on a 'tool' role message: which call this is the result of.
+  tool_call_id: string | null
+  tool_name: string | null
+  created_at: string
+}
+
+export type ChatMessageInsert = Omit<ChatMessageRow, 'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content'> &
+  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content'>>
 
 // ============================================
 // Workstream System Understanding Assessment
@@ -1126,20 +1173,54 @@ export type EvalResultUpdate = Partial<Omit<EvalResult, 'id' | 'eval_run_id' | '
 // publication state, only publishProjectAction does.
 export type ProjectInsert = Omit<
   Project,
-  'id' | 'created_at' | 'updated_at' | 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal' | 'public_full_detail'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'visibility'
+  | 'public_slug'
+  | 'public_profile'
+  | 'published_at'
+  | 'published_by'
+  | 'goal'
+  | 'public_full_detail'
+  | 'created_via'
+  | 'assistant_prompt_version'
+  | 'assistant_conversation_id'
 > &
-  Partial<Pick<Project, 'visibility' | 'public_slug' | 'public_profile' | 'published_at' | 'published_by' | 'goal' | 'public_full_detail'>>
+  Partial<
+    Pick<
+      Project,
+      | 'visibility'
+      | 'public_slug'
+      | 'public_profile'
+      | 'published_at'
+      | 'published_by'
+      | 'goal'
+      | 'public_full_detail'
+      | 'created_via'
+      | 'assistant_prompt_version'
+      | 'assistant_conversation_id'
+    >
+  >
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 
 export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
 export type ProjectMemberUpdate = Partial<Omit<ProjectMember, 'id' | 'project_id' | 'user_id' | 'created_at'>>
 
-export type ProjectWorkstreamInsert = Omit<ProjectWorkstream, 'id' | 'created_at' | 'updated_at'>
+export type ProjectWorkstreamInsert = Omit<
+  ProjectWorkstream,
+  'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
+> &
+  Partial<Pick<ProjectWorkstream, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'>>
 export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
 
 // No WorkstreamArtifactUpdate -- insert-only, no update/delete RLS policy
 // (see the migration comment: an immutable evidence trail).
-export type WorkstreamArtifactInsert = Omit<WorkstreamArtifact, 'id' | 'created_at'>
+export type WorkstreamArtifactInsert = Omit<
+  WorkstreamArtifact,
+  'id' | 'created_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
+> &
+  Partial<Pick<WorkstreamArtifact, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'>>
 
 export type AIProviderInsert = Omit<AIProviderRow, 'id' | 'created_at' | 'updated_at'>
 export type AIProviderUpdate = Partial<Omit<AIProviderRow, 'id' | 'created_at'>>
@@ -1257,6 +1338,8 @@ export interface Database {
       agents: { Row: Agent; Insert: AgentInsert; Update: AgentUpdate; Relationships: [] }
       agent_versions: { Row: AgentVersion; Insert: AgentVersionInsert; Update: never; Relationships: [] }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }
+      conversations: { Row: Conversation; Insert: ConversationInsert; Update: ConversationUpdate; Relationships: [] }
+      chat_messages: { Row: ChatMessageRow; Insert: ChatMessageInsert; Update: never; Relationships: [] }
     }
     Views: Record<string, never>
     Functions: {

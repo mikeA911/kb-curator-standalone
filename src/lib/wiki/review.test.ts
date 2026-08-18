@@ -54,6 +54,9 @@ describe('embedApprovedVersion', () => {
       generateStructured: async () => {
         throw new Error('unused')
       },
+      generateChat: async () => {
+        throw new Error('unused')
+      },
       embed: async () => {
         throw new Error('provider outage')
       },

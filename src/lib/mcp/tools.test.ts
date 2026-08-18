@@ -1,14 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
-const listArticlesMock = vi.fn()
 const listProjectNotesMock = vi.fn()
 const createProjectMock = vi.fn()
 const approveProjectMock = vi.fn()
 const createWorkstreamMock = vi.fn()
 const attachArtifactMock = vi.fn()
+const getActiveEmbeddingProviderMock = vi.fn()
+const embedMock = vi.fn()
+const rpcMock = vi.fn()
 
-vi.mock('@/lib/wiki/queries', () => ({ listArticles: (...args: unknown[]) => listArticlesMock(...args) }))
 vi.mock('@/lib/projects/notes', () => ({ listProjectNotes: (...args: unknown[]) => listProjectNotesMock(...args) }))
 vi.mock('@/lib/workbench/projects', () => ({
   createProject: (...args: unknown[]) => createProjectMock(...args),
@@ -18,18 +19,26 @@ vi.mock('@/lib/workbench/workstreams', () => ({
   createWorkstream: (...args: unknown[]) => createWorkstreamMock(...args),
   attachArtifact: (...args: unknown[]) => attachArtifactMock(...args),
 }))
+vi.mock('@/lib/ai', () => ({ getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args) }))
 
 const { callTool, listTools } = await import('./tools')
 
-const ctx = { user: { id: 'user-1' }, profile: { id: 'user-1', role: 'admin' }, supabase: {} } as unknown as WorkbenchCallerContext
+const ctx = {
+  user: { id: 'user-1' },
+  profile: { id: 'user-1', role: 'admin' },
+  supabase: { rpc: (...args: unknown[]) => rpcMock(...args) },
+} as unknown as WorkbenchCallerContext
 
 beforeEach(() => {
-  listArticlesMock.mockReset()
   listProjectNotesMock.mockReset()
   createProjectMock.mockReset()
   approveProjectMock.mockReset()
   createWorkstreamMock.mockReset()
   attachArtifactMock.mockReset()
+  getActiveEmbeddingProviderMock.mockReset()
+  embedMock.mockReset()
+  rpcMock.mockReset()
+  getActiveEmbeddingProviderMock.mockResolvedValue({ embed: embedMock })
 })
 
 describe('callTool', () => {
@@ -42,15 +51,18 @@ describe('callTool', () => {
     expect(approveProjectMock).not.toHaveBeenCalled()
   })
 
-  it('search_wiki maps input to listArticles and shapes the output', async () => {
-    listArticlesMock.mockResolvedValue([
-      { id: 'a1', slug: 'a1-slug', title: 'A1', short_description: 'about a1' },
-    ])
+  it('search_wiki embeds the query, calls match_wiki_vectors, and shapes the output', async () => {
+    embedMock.mockResolvedValue({ embedding: [0.1, 0.2, 0.3], model: 'embed-model', dimensions: 3, usage: { inputTokens: 3, outputTokens: 0 } })
+    rpcMock.mockResolvedValue({
+      data: [{ id: 'v1', wiki_version_id: 'ver-1', wiki_article_id: 'a1', content: 'text', similarity: 0.78, article_slug: 'a1-slug', article_title: 'A1' }],
+      error: null,
+    })
 
-    const result = await callTool(ctx, 'search_wiki', { query: 'retrieval', category: 'foundations' })
+    const result = await callTool(ctx, 'search_wiki', { query: 'retrieval' })
 
-    expect(listArticlesMock).toHaveBeenCalledWith(ctx.supabase, { search: 'retrieval', category: 'foundations' })
-    expect(result).toEqual({ articles: [{ id: 'a1', slug: 'a1-slug', title: 'A1', shortDescription: 'about a1' }] })
+    expect(embedMock).toHaveBeenCalledWith({ text: 'retrieval' })
+    expect(rpcMock).toHaveBeenCalledWith('match_wiki_vectors', { query_embedding: [0.1, 0.2, 0.3], match_threshold: 0, match_count: 5 })
+    expect(result).toEqual({ articles: [{ articleId: 'a1', slug: 'a1-slug', title: 'A1', similarity: 0.78 }] })
   })
 
   it('list_project_notes maps input and shapes the output', async () => {
@@ -119,14 +131,14 @@ describe('callTool', () => {
     expect(result).toEqual({ workstreamId: 'ws-1' })
   })
 
-  it('attach_workstream_artifact passes input through unchanged', async () => {
-    attachArtifactMock.mockResolvedValue({ projectId: 'proj-1' })
+  it('attach_workstream_artifact passes input through unchanged and returns the new artifact id', async () => {
+    attachArtifactMock.mockResolvedValue({ projectId: 'proj-1', artifactId: 'artifact-1' })
 
     const input = { workstreamId: 'ws-1', artifactType: 'findings' as const, title: 'Findings', content: 'text' }
     const result = await callTool(ctx, 'attach_workstream_artifact', input)
 
     expect(attachArtifactMock).toHaveBeenCalledWith(ctx, input)
-    expect(result).toEqual({ attached: true })
+    expect(result).toEqual({ attached: true, artifactId: 'artifact-1' })
   })
 })
 

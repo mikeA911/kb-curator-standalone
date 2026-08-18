@@ -143,17 +143,21 @@ export async function attachArtifact(
     .single()
   if (workstreamError || !workstream) throw workstreamError ?? new ProjectValidationError('Workstream not found')
 
-  const { error } = await supabase.from('workstream_artifacts').insert({
-    workstream_id: input.workstreamId,
-    artifact_type: input.artifactType,
-    title: input.title,
-    external_tool: input.externalTool || null,
-    content: input.content || null,
-    external_url: input.externalUrl || null,
-    notes: input.notes || null,
-    created_by: profile.id,
-  })
-  if (error) throw error
+  const { data: artifact, error } = await supabase
+    .from('workstream_artifacts')
+    .insert({
+      workstream_id: input.workstreamId,
+      artifact_type: input.artifactType,
+      title: input.title,
+      external_tool: input.externalTool || null,
+      content: input.content || null,
+      external_url: input.externalUrl || null,
+      notes: input.notes || null,
+      created_by: profile.id,
+    })
+    .select('id')
+    .single()
+  if (error || !artifact) throw error ?? new ProjectValidationError('Failed to attach artifact')
 
-  return { projectId: workstream.project_id }
+  return { projectId: workstream.project_id, artifactId: artifact.id }
 }

@@ -2,13 +2,18 @@ import 'server-only'
 import { GoogleGenAI } from '@google/genai'
 import type {
   AIProvider,
+  ChatMessage,
   EmbedInput,
   EmbedResult,
+  GenerateChatInput,
+  GenerateChatResult,
   GenerateStructuredInput,
   GenerateStructuredResult,
   GenerateTextInput,
   GenerateTextResult,
+  ToolCall,
 } from './provider'
+import type { Content } from '@google/genai'
 import { AIProviderError } from './provider'
 import { extractJsonObject } from './json-extract'
 
@@ -87,6 +92,76 @@ export class GeminiProvider implements AIProvider {
       }
     } catch (err) {
       throw new AIProviderError('gemini', 'generate_structured', `Gemini generateStructured failed to produce valid output: ${raw}`, err)
+    }
+  }
+
+  // Gemini's Content.role only accepts 'user'/'model' (per the SDK's own
+  // type comment) -- there is no distinct 'function' role in this API
+  // version. A tool result therefore goes back as a 'user'-role Content
+  // carrying a functionResponse part, not a separate role.
+  async generateChat(input: GenerateChatInput): Promise<GenerateChatResult> {
+    const model = input.model ?? this.defaultTextModel
+    try {
+      const contents: Content[] = input.messages.map((m) => {
+        if (m.role === 'user') return { role: 'user', parts: [{ text: m.content }] }
+        if (m.role === 'tool') {
+          return {
+            role: 'user',
+            parts: [{ functionResponse: { id: m.toolCallId, name: m.toolName, response: { result: m.content } } }],
+          }
+        }
+        return {
+          role: 'model',
+          parts: [
+            ...(m.content ? [{ text: m.content }] : []),
+            ...(m.toolCalls ?? []).map((tc) => ({ functionCall: { id: tc.id, name: tc.name, args: tc.arguments } })),
+          ],
+        }
+      })
+
+      const res = await this.client.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: input.system,
+          maxOutputTokens: input.maxOutputTokens,
+          thinkingConfig: { thinkingBudget: 0 },
+          tools: input.tools?.length
+            ? [
+                {
+                  functionDeclarations: input.tools.map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    parametersJsonSchema: t.parameters,
+                  })),
+                },
+              ]
+            : undefined,
+        },
+      })
+
+      const toolCalls: ToolCall[] = (res.functionCalls ?? []).map((fc, i) => ({
+        id: fc.id ?? `${fc.name ?? 'call'}-${i}`,
+        name: fc.name ?? '',
+        arguments: fc.args ?? {},
+      }))
+
+      const message: ChatMessage = {
+        role: 'assistant',
+        content: res.text ?? '',
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      }
+
+      return {
+        message,
+        model,
+        usage: {
+          inputTokens: res.usageMetadata?.promptTokenCount ?? null,
+          outputTokens: res.usageMetadata?.candidatesTokenCount ?? null,
+        },
+      }
+    } catch (err) {
+      throw new AIProviderError('gemini', 'generate_chat', 'Gemini generateChat failed', err)
     }
   }
 
