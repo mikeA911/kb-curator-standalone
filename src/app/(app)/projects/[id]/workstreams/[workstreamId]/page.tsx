@@ -18,6 +18,7 @@ const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   evidence_map: 'Evidence Map',
   test_results: 'Test Results',
   findings: 'Findings',
+  design_note: 'Design Note',
   other: 'Other',
 }
 

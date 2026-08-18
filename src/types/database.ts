@@ -518,6 +518,7 @@ export type ArtifactType =
   | 'evidence_map'
   | 'test_results'
   | 'findings'
+  | 'design_note'
   | 'other'
 
 export interface WorkstreamArtifact {
