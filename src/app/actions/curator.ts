@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireRole } from '@/lib/auth'
-import { getActiveProvider } from '@/lib/ai'
+import { getActiveProvider, getActiveEmbeddingProvider } from '@/lib/ai'
 import {
   createUploadedDocument,
   processDocument,
@@ -42,7 +42,7 @@ export async function enrichMoreChunks(documentId: string, docType: string) {
 
 export async function approveChunkAction(chunkId: string, documentId: string, curatorNotes: string | null) {
   const { user, supabase } = await requireRole('curator')
-  const provider = await getActiveProvider(supabase, { documentId, chunkId, requestedBy: user.id })
+  const provider = await getActiveEmbeddingProvider(supabase, { documentId, chunkId, requestedBy: user.id })
   await approveChunk(supabase, provider, { chunkId, curatorNotes, reviewedBy: user.id })
   revalidatePath(`/review/${documentId}`)
 }

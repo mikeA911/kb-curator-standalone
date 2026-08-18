@@ -162,3 +162,18 @@ export async function getActiveProvider(
   const { provider, model } = await getDefaultModel(supabase, 'generation')
   return withLogging(buildProviderClient(provider, model.model_id), logContext)
 }
+
+// The embedding counterpart to getActiveProvider -- resolves whichever
+// provider currently owns the default EMBEDDING model (independent of the
+// default generation model; they're frequently different providers, e.g.
+// Groq for generation + Gemini for embeddings). Chunk approval and Wiki
+// version approval both call .embed() and must use this, not
+// getActiveProvider -- calling .embed() on a generation-only provider
+// throws (some, like Groq, don't support embeddings at all).
+export async function getActiveEmbeddingProvider(
+  supabase: SupabaseClient<Database>,
+  logContext: LogContext = {}
+): Promise<AIProvider> {
+  const { provider, model } = await getDefaultModel(supabase, 'embedding')
+  return withLogging(buildProviderClient(provider, undefined, model.model_id), logContext)
+}

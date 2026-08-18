@@ -17,4 +17,5 @@ export {
   assertModelCapability,
   getProviderByName,
   getActiveProvider,
+  getActiveEmbeddingProvider,
 } from './registry'

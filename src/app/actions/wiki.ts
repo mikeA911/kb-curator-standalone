@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getActiveProvider } from '@/lib/ai'
+import { getActiveProvider, getActiveEmbeddingProvider } from '@/lib/ai'
 import { getQuickHelpBySlug } from '@/lib/wiki/help'
 import {
   createManualDraftArticle,
@@ -225,13 +225,13 @@ export async function approveArticleAction(articleId: string, versionId: string)
 
   // Embedding is best-effort and must never turn a successful approval into
   // a failed request -- see the comment on embedApprovedVersion. That
-  // guarantee previously only covered the embed call itself; getActiveProvider()
+  // guarantee previously only covered the embed call itself; getActiveEmbeddingProvider()
   // sits before it and can throw AIConfigError (no default model, missing API
   // key) just as easily, so it has to be inside the same try/catch.
   try {
     const { data: version } = await admin.from('wiki_versions').select('content').eq('id', versionId).single()
     if (version) {
-      const provider = await getActiveProvider(admin, { requestedBy: user.id })
+      const provider = await getActiveEmbeddingProvider(admin, { requestedBy: user.id })
       await embedApprovedVersion(admin, provider, versionId, version.content)
     }
   } catch (err) {

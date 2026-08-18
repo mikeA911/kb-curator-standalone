@@ -4,7 +4,7 @@ import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 const requireRoleMock = vi.fn()
 const approveWikiVersionMock = vi.fn()
 const embedApprovedVersionMock = vi.fn()
-const getActiveProviderMock = vi.fn()
+const getActiveEmbeddingProviderMock = vi.fn()
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('@/lib/auth', async () => {
@@ -22,9 +22,21 @@ vi.mock('@/lib/wiki/review', async () => {
     embedApprovedVersion: (...args: unknown[]) => embedApprovedVersionMock(...args),
   }
 })
-vi.mock('@/lib/ai', () => ({ getActiveProvider: (...args: unknown[]) => getActiveProviderMock(...args) }))
+const getActiveProviderMock = vi.fn()
+vi.mock('@/lib/ai', () => ({
+  getActiveProvider: (...args: unknown[]) => getActiveProviderMock(...args),
+  getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args),
+}))
 
-const adminSupabase = createFakeSupabase({ wiki_versions: [{ data: { content: 'some content' }, error: null }] })
+// Two identical entries -- the wiki_versions queue is a shared, cursor-based
+// FIFO consumed once per test in this describe block (see fake-supabase.ts),
+// not reset between tests.
+const adminSupabase = createFakeSupabase({
+  wiki_versions: [
+    { data: { content: 'some content' }, error: null },
+    { data: { content: 'some content' }, error: null },
+  ],
+})
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
 
 const { setArticlePublicAction, approveArticleAction } = await import('./wiki')
@@ -34,6 +46,7 @@ beforeEach(() => {
   approveWikiVersionMock.mockReset()
   embedApprovedVersionMock.mockReset()
   getActiveProviderMock.mockReset()
+  getActiveEmbeddingProviderMock.mockReset()
   requireRoleMock.mockResolvedValue({ user: { id: 'admin-1' } })
   approveWikiVersionMock.mockResolvedValue(undefined)
 })
@@ -63,11 +76,22 @@ describe('setArticlePublicAction', () => {
 
 describe('approveArticleAction', () => {
   it('still succeeds when the AI provider lookup fails -- embedding is best-effort, not a gate on approval', async () => {
-    getActiveProviderMock.mockRejectedValue(new Error('No default generation model configured'))
+    getActiveEmbeddingProviderMock.mockRejectedValue(new Error('No default embedding model configured'))
 
     await expect(approveArticleAction('article-1', 'version-1')).resolves.toBeUndefined()
 
     expect(approveWikiVersionMock).toHaveBeenCalledWith(adminSupabase, 'article-1', 'version-1', 'admin-1')
     expect(embedApprovedVersionMock).not.toHaveBeenCalled()
+  })
+
+  it('resolves the embedding provider, not the generation one -- some generation-only providers (e.g. Groq) cannot embed at all', async () => {
+    const embeddingProvider = { name: 'embedding-provider' }
+    getActiveEmbeddingProviderMock.mockResolvedValue(embeddingProvider)
+
+    await approveArticleAction('article-1', 'version-1')
+
+    expect(getActiveEmbeddingProviderMock).toHaveBeenCalled()
+    expect(getActiveProviderMock).not.toHaveBeenCalled()
+    expect(embedApprovedVersionMock).toHaveBeenCalledWith(adminSupabase, embeddingProvider, 'version-1', 'some content')
   })
 })
