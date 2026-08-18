@@ -28,6 +28,19 @@ describe('linkSource', () => {
     const source = await linkSource(supabase, { wikiVersionId: 'version-1', sourceType: 'external', notes: 'a paper' })
     expect(source.source_type).toBe('external')
   })
+
+  it('links a version to a workstream artifact (M6A Handbook sourcing)', async () => {
+    const supabase = createFakeSupabase({
+      wiki_sources: [{ data: { id: 'source-3', workstream_artifact_id: 'artifact-1' }, error: null }],
+    }) as never
+
+    const source = await linkSource(supabase, {
+      wikiVersionId: 'version-1',
+      workstreamArtifactId: 'artifact-1',
+      sourceType: 'workstream_artifact',
+    })
+    expect(source.workstream_artifact_id).toBe('artifact-1')
+  })
 })
 
 describe('getSourcesForVersion', () => {

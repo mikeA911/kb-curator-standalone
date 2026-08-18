@@ -204,11 +204,12 @@ export type WikiCategoryId =
   | 'reliability'
   | 'governance'
   | 'improvement'
+  | 'platform_handbook'
 
 export type WikiArticleStatus = 'draft' | 'review' | 'approved' | 'archived'
 export type WikiVerificationStatus = 'unverified' | 'verified' | 'needs_review'
 export type WikiGeneratedBy = 'human' | 'ai_assisted'
-export type WikiSourceType = 'document' | 'chunk' | 'external'
+export type WikiSourceType = 'document' | 'chunk' | 'external' | 'workstream_artifact'
 
 export interface WikiCategory {
   id: WikiCategoryId
@@ -264,6 +265,7 @@ export interface WikiSource {
   wiki_version_id: string
   document_id: string | null
   chunk_id: string | null
+  workstream_artifact_id: string | null
   source_type: WikiSourceType
   relationship: string | null
   notes: string | null

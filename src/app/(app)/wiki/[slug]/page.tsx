@@ -91,6 +91,7 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
                       <span>
                         {s.document ? `${s.document.original_filename} (${s.document.doc_type})` : null}
                         {s.chunk ? `Chunk #${s.chunk.chunk_index}${s.chunk.source_page ? `, page ${s.chunk.source_page}` : ''}` : null}
+                        {s.workstream_artifact ? `Project artifact: ${s.workstream_artifact.title}` : null}
                         {s.source_type === 'external' && 'External source'}
                         {s.relationship && <span className="text-zinc-400"> — {s.relationship}</span>}
                         {s.notes && <span className="block text-xs text-zinc-500">{s.notes}</span>}

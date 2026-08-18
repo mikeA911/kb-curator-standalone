@@ -65,19 +65,28 @@ export async function createManualArticleAction(input: {
   return { articleId: article.id, slug: article.slug }
 }
 
-export async function createAIAssistedDraftAction(input: {
-  topic: string
-  category: WikiCategoryId
-  chunkIds: string[]
-}) {
+export async function createAIAssistedDraftAction(
+  input:
+    | { topic: string; category: WikiCategoryId; chunkIds: string[]; workstreamArtifactId?: undefined }
+    | { topic: string; category: WikiCategoryId; workstreamArtifactId: string; chunkIds?: undefined }
+) {
   const { user, supabase } = await requireRole('curator')
 
-  if (input.chunkIds.length === 0) throw new WikiValidationError('Select at least one source chunk')
+  if (input.workstreamArtifactId) {
+    return createAIAssistedDraftFromArtifact(supabase, user.id, {
+      topic: input.topic,
+      category: input.category,
+      workstreamArtifactId: input.workstreamArtifactId,
+    })
+  }
+
+  const chunkIds = input.chunkIds ?? []
+  if (chunkIds.length === 0) throw new WikiValidationError('Select at least one source chunk')
 
   const { data: chunks, error } = await supabase
     .from('document_chunks')
     .select('id, document_id, chunk_text, source_page, review_status')
-    .in('id', input.chunkIds)
+    .in('id', chunkIds)
   if (error) throw error
 
   const unapproved = (chunks ?? []).filter((c) => c.review_status !== 'approved')
@@ -117,7 +126,7 @@ export async function createAIAssistedDraftAction(input: {
     limitations: draft.limitations ?? null,
     aiProvider: provider.name,
     aiModel: draft.model,
-    sourceChunkIds: input.chunkIds,
+    sourceChunkIds: chunkIds,
     createdBy: user.id,
   })
 
@@ -129,6 +138,59 @@ export async function createAIAssistedDraftAction(input: {
       relationship: 'ai_synthesis_input',
     })
   }
+
+  revalidatePath('/wiki')
+  return { articleId: article.id, slug: article.slug }
+}
+
+// Second source mode for AI-assisted drafts: synthesize from a single
+// workstream_artifacts row (e.g. a project's self-analysis output) instead
+// of document_chunks -- the primary path for Handbook articles grounded in
+// implementation evidence (M5F Phase A). Fetched with the caller's own
+// RLS-scoped client, so workstream_artifacts_select_member naturally
+// restricts this to artifacts the caller can actually see.
+async function createAIAssistedDraftFromArtifact(
+  supabase: Awaited<ReturnType<typeof requireRole>>['supabase'],
+  userId: string,
+  input: { topic: string; category: WikiCategoryId; workstreamArtifactId: string }
+) {
+  const { data: artifact, error } = await supabase
+    .from('workstream_artifacts')
+    .select('id, title, content')
+    .eq('id', input.workstreamArtifactId)
+    .single()
+  if (error || !artifact) throw error ?? new WikiValidationError('Artifact not found')
+  if (!artifact.content) throw new WikiValidationError('This artifact has no content to synthesize from (it is a link-only artifact)')
+
+  const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: userId })
+
+  const draft = await synthesizeWikiDraft(provider, {
+    topic: input.topic,
+    category: input.category,
+    chunks: [{ id: artifact.id, text: artifact.content, documentName: artifact.title }],
+  })
+
+  const { article, version } = await createAIAssistedArticle(supabase, {
+    slug: slugify(draft.title),
+    title: draft.title,
+    category: input.category,
+    shortDescription: draft.short_description,
+    quickHelp: draft.quick_help,
+    content: draft.content,
+    implementationNotes: draft.implementation_notes ?? null,
+    limitations: draft.limitations ?? null,
+    aiProvider: provider.name,
+    aiModel: draft.model,
+    sourceChunkIds: null,
+    createdBy: userId,
+  })
+
+  await linkSource(supabase, {
+    wikiVersionId: version.id,
+    workstreamArtifactId: artifact.id,
+    sourceType: 'workstream_artifact',
+    relationship: 'ai_synthesis_input',
+  })
 
   revalidatePath('/wiki')
   return { articleId: article.id, slug: article.slug }

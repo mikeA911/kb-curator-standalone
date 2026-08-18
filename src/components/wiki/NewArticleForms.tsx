@@ -13,12 +13,21 @@ interface ApprovedChunk {
   document: { original_filename: string; doc_type: string } | null
 }
 
+interface SourceArtifact {
+  id: string
+  title: string
+  workstreamName: string | null
+  projectName: string | null
+}
+
 export function NewArticleForms({
   categories,
   approvedChunks,
+  artifacts,
 }: {
   categories: WikiCategory[]
   approvedChunks: ApprovedChunk[]
+  artifacts: SourceArtifact[]
 }) {
   const [mode, setMode] = useState<'manual' | 'ai'>('manual')
 
@@ -42,7 +51,7 @@ export function NewArticleForms({
       {mode === 'manual' ? (
         <ManualForm categories={categories} />
       ) : (
-        <AIAssistedForm categories={categories} approvedChunks={approvedChunks} />
+        <AIAssistedForm categories={categories} approvedChunks={approvedChunks} artifacts={artifacts} />
       )}
     </div>
   )
@@ -144,11 +153,21 @@ function ManualForm({ categories }: { categories: WikiCategory[] }) {
   )
 }
 
-function AIAssistedForm({ categories, approvedChunks }: { categories: WikiCategory[]; approvedChunks: ApprovedChunk[] }) {
+function AIAssistedForm({
+  categories,
+  approvedChunks,
+  artifacts,
+}: {
+  categories: WikiCategory[]
+  approvedChunks: ApprovedChunk[]
+  artifacts: SourceArtifact[]
+}) {
   const router = useRouter()
   const [topic, setTopic] = useState('')
   const [category, setCategory] = useState<WikiCategoryId>(categories[0]?.id ?? 'foundations')
+  const [sourceMode, setSourceMode] = useState<'chunks' | 'artifact'>('chunks')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [artifactId, setArtifactId] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -164,13 +183,20 @@ function AIAssistedForm({ categories, approvedChunks }: { categories: WikiCatego
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    if (selected.size === 0) {
+    if (sourceMode === 'chunks' && selected.size === 0) {
       setError('Select at least one approved chunk as source evidence')
+      return
+    }
+    if (sourceMode === 'artifact' && !artifactId) {
+      setError('Select a project artifact as source evidence')
       return
     }
     setSubmitting(true)
     try {
-      const result = await createAIAssistedDraftAction({ topic, category, chunkIds: [...selected] })
+      const result =
+        sourceMode === 'chunks'
+          ? await createAIAssistedDraftAction({ topic, category, chunkIds: [...selected] })
+          : await createAIAssistedDraftAction({ topic, category, workstreamArtifactId: artifactId })
       router.push(`/wiki/${result.slug}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate draft')
@@ -190,23 +216,54 @@ function AIAssistedForm({ categories, approvedChunks }: { categories: WikiCatego
           ))}
         </select>
       </Field>
-      <Field label={`Source chunks (${selected.size} selected — only approved chunks are eligible)`}>
-        <div className="max-h-72 overflow-y-auto rounded border border-zinc-300">
-          {approvedChunks.length === 0 && <p className="p-3 text-sm text-zinc-500">No approved chunks yet.</p>}
-          {approvedChunks.map((chunk) => (
-            <label key={chunk.id} className="flex cursor-pointer items-start gap-2 border-b border-zinc-100 p-2 text-sm last:border-0 hover:bg-zinc-50">
-              <input type="checkbox" checked={selected.has(chunk.id)} onChange={() => toggle(chunk.id)} className="mt-1" />
-              <span>
-                <span className="block text-xs text-zinc-500">
-                  {chunk.document?.original_filename ?? 'Unknown document'}
-                  {chunk.source_page ? ` · page ${chunk.source_page}` : ''}
+      <div className="flex gap-2 text-xs">
+        <button
+          type="button"
+          onClick={() => setSourceMode('chunks')}
+          className={`rounded-full px-2 py-1 ${sourceMode === 'chunks' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-700'}`}
+        >
+          From approved document chunks
+        </button>
+        <button
+          type="button"
+          onClick={() => setSourceMode('artifact')}
+          className={`rounded-full px-2 py-1 ${sourceMode === 'artifact' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-700'}`}
+        >
+          From a project artifact
+        </button>
+      </div>
+      {sourceMode === 'chunks' ? (
+        <Field label={`Source chunks (${selected.size} selected — only approved chunks are eligible)`}>
+          <div className="max-h-72 overflow-y-auto rounded border border-zinc-300">
+            {approvedChunks.length === 0 && <p className="p-3 text-sm text-zinc-500">No approved chunks yet.</p>}
+            {approvedChunks.map((chunk) => (
+              <label key={chunk.id} className="flex cursor-pointer items-start gap-2 border-b border-zinc-100 p-2 text-sm last:border-0 hover:bg-zinc-50">
+                <input type="checkbox" checked={selected.has(chunk.id)} onChange={() => toggle(chunk.id)} className="mt-1" />
+                <span>
+                  <span className="block text-xs text-zinc-500">
+                    {chunk.document?.original_filename ?? 'Unknown document'}
+                    {chunk.source_page ? ` · page ${chunk.source_page}` : ''}
+                  </span>
+                  <span className="line-clamp-2 text-zinc-700">{chunk.chunk_text}</span>
                 </span>
-                <span className="line-clamp-2 text-zinc-700">{chunk.chunk_text}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </Field>
+              </label>
+            ))}
+          </div>
+        </Field>
+      ) : (
+        <Field label="Source artifact (from a project you're a member of)">
+          <select value={artifactId} onChange={(e) => setArtifactId(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm">
+            <option value="">Select an artifact…</option>
+            {artifacts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.title}
+                {a.projectName ? ` — ${a.projectName}${a.workstreamName ? ` / ${a.workstreamName}` : ''}` : ''}
+              </option>
+            ))}
+          </select>
+          {artifacts.length === 0 && <p className="mt-1 text-xs text-zinc-500">No eligible artifacts visible to you yet.</p>}
+        </Field>
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button disabled={submitting} className="self-start rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
         {submitting ? 'Generating draft…' : 'Generate draft'}

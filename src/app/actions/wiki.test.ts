@@ -39,7 +39,7 @@ const adminSupabase = createFakeSupabase({
 })
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
 
-const { setArticlePublicAction, approveArticleAction } = await import('./wiki')
+const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction } = await import('./wiki')
 
 beforeEach(() => {
   requireRoleMock.mockReset()
@@ -93,5 +93,58 @@ describe('approveArticleAction', () => {
     expect(getActiveEmbeddingProviderMock).toHaveBeenCalled()
     expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
     expect(embedApprovedVersionMock).toHaveBeenCalledWith(adminSupabase, embeddingProvider, 'version-1', 'some content')
+  })
+})
+
+describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)', () => {
+  const draftFields = {
+    title: 'How KB Sandbox Is Organized',
+    short_description: 'A short overview',
+    quick_help: 'Quick help text',
+    content: '# Content',
+    implementation_notes: undefined,
+    limitations: undefined,
+  }
+
+  it('synthesizes from a workstream_artifacts row and links it as source_type workstream_artifact', async () => {
+    const supabase = createFakeSupabase({
+      workstream_artifacts: [{ data: { id: 'artifact-1', title: 'Capability Inventory', content: 'evidence text' }, error: null }],
+      wiki_articles: [
+        { data: null, error: null }, // slug-availability check
+        { data: { id: 'article-1', slug: 'how-kb-sandbox-is-organized' }, error: null }, // insert
+      ],
+      wiki_versions: [{ data: { id: 'version-1' }, error: null }],
+      wiki_sources: [{ data: { id: 'source-1' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+    const generateStructured = vi.fn().mockResolvedValue({ data: draftFields, model: 'test-model' })
+    getActiveStructuredOutputProviderMock.mockResolvedValue({ name: 'test-provider', generateStructured })
+
+    const result = await createAIAssistedDraftAction({
+      topic: 'How KB Sandbox Is Organized',
+      category: 'platform_handbook',
+      workstreamArtifactId: 'artifact-1',
+    })
+
+    expect(result).toEqual({ articleId: 'article-1', slug: 'how-kb-sandbox-is-organized' })
+    expect(generateStructured).toHaveBeenCalled()
+    const sourceInsert = supabase._calls.find((c) => c.table === 'wiki_sources' && c.method === 'insert')
+    expect(sourceInsert?.args).toMatchObject({
+      wiki_version_id: 'version-1',
+      workstream_artifact_id: 'artifact-1',
+      source_type: 'workstream_artifact',
+    })
+  })
+
+  it('rejects a link-only artifact (no content to synthesize from)', async () => {
+    const supabase = createFakeSupabase({
+      workstream_artifacts: [{ data: { id: 'artifact-2', title: 'External PR link', content: null }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+
+    await expect(
+      createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-2' })
+    ).rejects.toThrow('link-only artifact')
+    expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
   })
 })

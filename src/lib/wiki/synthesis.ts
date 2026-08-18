@@ -50,6 +50,12 @@ export async function synthesizeWikiDraft(
       '- implementation_notes: practical notes for someone implementing this (optional)\n' +
       '- limitations: known limitations or open questions (optional)',
     schema: WikiDraftSchema,
+    // Left unset, some providers truncate before the closing brace on a full
+    // article-length response (observed live: content alone can run several
+    // thousand words, more so when synthesizing from a whole workstream
+    // artifact rather than a short chunk) -- the model then produces
+    // well-formed-but-incomplete JSON that fails to parse.
+    maxOutputTokens: 8192,
   })
 
   return { ...data, model }

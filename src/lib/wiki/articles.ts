@@ -72,7 +72,7 @@ export interface CreateAIAssistedArticleInput extends DraftContentInput {
   shortDescription?: string | null
   aiProvider: string
   aiModel: string
-  sourceChunkIds: string[]
+  sourceChunkIds?: string[] | null
   createdBy: string
 }
 
