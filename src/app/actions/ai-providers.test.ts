@@ -19,6 +19,7 @@ const {
   discoverModelsAction,
   updateModelEnabledAction,
   setDefaultModelAction,
+  setDefaultStructuredOutputModelAction,
 } = await import('./ai-providers')
 
 beforeEach(() => {
@@ -86,6 +87,32 @@ describe('updateModelEnabledAction / setDefaultModelAction', () => {
 
     expect(requireRoleMock).toHaveBeenCalledTimes(2)
     expect(requireRoleMock).toHaveBeenCalledWith('admin')
+  })
+})
+
+describe('setDefaultStructuredOutputModelAction', () => {
+  it('requires admin, unsets the previous global default, then sets the new one -- not scoped by model_type', async () => {
+    const supabase = createFakeSupabase({ ai_models: [{ data: null, error: null }, { data: null, error: null }] })
+    requireRoleMock.mockResolvedValue({ supabase })
+
+    await setDefaultStructuredOutputModelAction('model-2', 'provider-1')
+
+    expect(requireRoleMock).toHaveBeenCalledWith('admin')
+    const [unset, set] = supabase._calls.filter((c) => c.table === 'ai_models' && c.method === 'update')
+    expect(unset.args).toEqual({ is_default_structured_output: false })
+    expect(set.args).toEqual({ is_default_structured_output: true })
+  })
+
+  it('maps the capability check-constraint violation to a clear error, not a raw Postgres one', async () => {
+    const supabase = createFakeSupabase({
+      ai_models: [
+        { data: null, error: null },
+        { data: null, error: Object.assign(new Error('violates check constraint'), { code: '23514' }) },
+      ],
+    })
+    requireRoleMock.mockResolvedValue({ supabase })
+
+    await expect(setDefaultStructuredOutputModelAction('model-2', 'provider-1')).rejects.toThrow('does not support structured output')
   })
 })
 

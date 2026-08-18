@@ -690,6 +690,9 @@ export interface AIModelRow {
   model_type: AIModelType
   enabled: boolean
   is_default: boolean
+  // Independent of is_default -- see 20260818090001_ai_models_structured_output_default.sql.
+  // Only meaningful (and only settable) when supports_structured_output is true.
+  is_default_structured_output: boolean
   context_window: number | null
   max_output_tokens: number | null
   input_cost_per_million: number | null

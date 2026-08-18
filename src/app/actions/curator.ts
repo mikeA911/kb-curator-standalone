@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireRole } from '@/lib/auth'
-import { getActiveProvider, getActiveEmbeddingProvider } from '@/lib/ai'
+import { getActiveEmbeddingProvider, getActiveStructuredOutputProvider } from '@/lib/ai'
 import {
   createUploadedDocument,
   processDocument,
@@ -25,7 +25,7 @@ export async function uploadAndProcessDocument(formData: FormData) {
 
   await processDocument(supabase, doc.id)
 
-  const provider = await getActiveProvider(supabase, { documentId: doc.id, requestedBy: user.id })
+  const provider = await getActiveStructuredOutputProvider(supabase, { documentId: doc.id, requestedBy: user.id })
   await enrichDocumentChunks(supabase, provider, doc.id, docType, 10)
 
   revalidatePath('/dashboard')
@@ -34,7 +34,7 @@ export async function uploadAndProcessDocument(formData: FormData) {
 
 export async function enrichMoreChunks(documentId: string, docType: string) {
   const { user, supabase } = await requireRole('curator')
-  const provider = await getActiveProvider(supabase, { documentId, requestedBy: user.id })
+  const provider = await getActiveStructuredOutputProvider(supabase, { documentId, requestedBy: user.id })
   const result = await enrichDocumentChunks(supabase, provider, documentId, docType, 10)
   revalidatePath(`/review/${documentId}`)
   return result

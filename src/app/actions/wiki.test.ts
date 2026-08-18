@@ -22,10 +22,10 @@ vi.mock('@/lib/wiki/review', async () => {
     embedApprovedVersion: (...args: unknown[]) => embedApprovedVersionMock(...args),
   }
 })
-const getActiveProviderMock = vi.fn()
+const getActiveStructuredOutputProviderMock = vi.fn()
 vi.mock('@/lib/ai', () => ({
-  getActiveProvider: (...args: unknown[]) => getActiveProviderMock(...args),
   getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args),
+  getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
 }))
 
 // Two identical entries -- the wiki_versions queue is a shared, cursor-based
@@ -45,7 +45,7 @@ beforeEach(() => {
   requireRoleMock.mockReset()
   approveWikiVersionMock.mockReset()
   embedApprovedVersionMock.mockReset()
-  getActiveProviderMock.mockReset()
+  getActiveStructuredOutputProviderMock.mockReset()
   getActiveEmbeddingProviderMock.mockReset()
   requireRoleMock.mockResolvedValue({ user: { id: 'admin-1' } })
   approveWikiVersionMock.mockResolvedValue(undefined)
@@ -84,14 +84,14 @@ describe('approveArticleAction', () => {
     expect(embedApprovedVersionMock).not.toHaveBeenCalled()
   })
 
-  it('resolves the embedding provider, not the generation one -- some generation-only providers (e.g. Groq) cannot embed at all', async () => {
+  it('resolves the embedding provider, not generation or structured-output -- some generation-only providers (e.g. Groq) cannot embed at all', async () => {
     const embeddingProvider = { name: 'embedding-provider' }
     getActiveEmbeddingProviderMock.mockResolvedValue(embeddingProvider)
 
     await approveArticleAction('article-1', 'version-1')
 
     expect(getActiveEmbeddingProviderMock).toHaveBeenCalled()
-    expect(getActiveProviderMock).not.toHaveBeenCalled()
+    expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
     expect(embedApprovedVersionMock).toHaveBeenCalledWith(adminSupabase, embeddingProvider, 'version-1', 'some content')
   })
 })

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getActiveProvider, getActiveEmbeddingProvider } from '@/lib/ai'
+import { getActiveEmbeddingProvider, getActiveStructuredOutputProvider } from '@/lib/ai'
 import { getQuickHelpBySlug } from '@/lib/wiki/help'
 import {
   createManualDraftArticle,
@@ -93,7 +93,7 @@ export async function createAIAssistedDraftAction(input: {
   if (docsError) throw docsError
   const documentNameById = new Map((sourceDocuments ?? []).map((d) => [d.id, d.original_filename]))
 
-  const provider = await getActiveProvider(supabase, { requestedBy: user.id })
+  const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: user.id })
 
   const draft = await synthesizeWikiDraft(provider, {
     topic: input.topic,

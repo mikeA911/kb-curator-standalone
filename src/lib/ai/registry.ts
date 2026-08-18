@@ -149,12 +149,12 @@ export async function getProviderByName(
   return withLogging(buildProviderClient(provider), logContext)
 }
 
-// The app-wide default, used by chunk enrichment and Wiki synthesis --
-// replaces the old settings.ai_provider key. Resolves to whichever provider
-// currently owns the default generation model in the registry (e.g. Groq),
-// with that model pre-filled as the provider instance's default so callers
-// that don't pass `model` explicitly (enrichment/synthesis never do) still
-// get the right one.
+// The app-wide default for plain text generation -- replaces the old
+// settings.ai_provider key. Resolves to whichever provider currently owns
+// the default generation model in the registry (e.g. Groq), with that
+// model pre-filled as the provider instance's default so callers that
+// don't pass `model` explicitly still get the right one. Not used for
+// embedding or structured-output tasks -- see the two siblings below.
 export async function getActiveProvider(
   supabase: SupabaseClient<Database>,
   logContext: LogContext = {}
@@ -176,4 +176,41 @@ export async function getActiveEmbeddingProvider(
 ): Promise<AIProvider> {
   const { provider, model } = await getDefaultModel(supabase, 'embedding')
   return withLogging(buildProviderClient(provider, undefined, model.model_id), logContext)
+}
+
+// The structured-output counterpart to getActiveProvider/getActiveEmbeddingProvider.
+// Structured output (reliable JSON extraction) is a CAPABILITY of a
+// generation model (supports_structured_output), not its own model_type,
+// so this resolves is_default_structured_output rather than filtering by
+// model_type -- independent of both the plain generation default and the
+// embedding default. Chunk enrichment (topic/subtopic/key_concepts JSON)
+// and AI-assisted Wiki draft synthesis both need this: the model best
+// suited for a good prose Wiki draft is not necessarily the model best
+// suited for reliably-parseable structured extraction.
+export async function getDefaultStructuredOutputModel(
+  supabase: SupabaseClient<Database>
+): Promise<{ provider: AIProviderRow; model: AIModelRow }> {
+  const { data: model, error: modelError } = await supabase
+    .from('ai_models')
+    .select('*')
+    .eq('is_default_structured_output', true)
+    .single()
+  if (modelError || !model) throw new AIConfigError('No default structured-output model configured')
+
+  const { data: provider, error: providerError } = await supabase
+    .from('ai_providers')
+    .select('*')
+    .eq('id', model.provider_id)
+    .single()
+  if (providerError || !provider) throw new AIConfigError("Default structured-output model's provider is missing")
+
+  return { provider, model }
+}
+
+export async function getActiveStructuredOutputProvider(
+  supabase: SupabaseClient<Database>,
+  logContext: LogContext = {}
+): Promise<AIProvider> {
+  const { provider, model } = await getDefaultStructuredOutputModel(supabase)
+  return withLogging(buildProviderClient(provider, model.model_id), logContext)
 }

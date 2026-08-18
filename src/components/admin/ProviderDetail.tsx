@@ -6,6 +6,7 @@ import type { AIModelRow, AIModelStatus, AIProviderRow } from '@/types/database'
 import {
   discoverModelsAction,
   setDefaultModelAction,
+  setDefaultStructuredOutputModelAction,
   updateModelEnabledAction,
   updateModelStatusAction,
   updateProviderEnabledAction,
@@ -119,6 +120,9 @@ export function ProviderDetail({
                   <div className="flex items-center gap-2 font-medium">
                     {m.display_name}
                     {m.is_default && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">default</span>}
+                    {m.is_default_structured_output && (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-800">default (structured)</span>
+                    )}
                     {m.status === 'deprecated' && (
                       <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-800">
                         deprecated{m.deprecation_date ? ` (${m.deprecation_date})` : ''}
@@ -151,6 +155,15 @@ export function ProviderDetail({
                       className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-50"
                     >
                       Set as default
+                    </button>
+                  )}
+                  {m.supports_structured_output && !m.is_default_structured_output && (
+                    <button
+                      disabled={isPending}
+                      onClick={() => run(() => setDefaultStructuredOutputModelAction(m.id, provider.id))}
+                      className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-50"
+                    >
+                      Set as default (structured)
                     </button>
                   )}
                   <select

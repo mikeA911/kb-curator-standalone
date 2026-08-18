@@ -63,6 +63,7 @@ export async function createModelAction(input: CreateModelInput) {
     model_type: input.modelType,
     enabled: true,
     is_default: false,
+    is_default_structured_output: false,
     context_window: input.contextWindow,
     max_output_tokens: input.maxOutputTokens,
     input_cost_per_million: null,
@@ -98,6 +99,23 @@ export async function setDefaultModelAction(modelId: string, providerId: string,
   await supabase.from('ai_models').update({ is_default: false }).eq('model_type', modelType).eq('is_default', true)
   const { error } = await supabase.from('ai_models').update({ is_default: true }).eq('id', modelId)
   if (error) throw error
+  revalidatePath(`/admin/providers/${providerId}`)
+}
+
+// Independent of setDefaultModelAction/is_default -- see the migration
+// comment on is_default_structured_output. Not scoped by model_type (unlike
+// setDefaultModelAction) since it's a single global flag, not one-per-type;
+// the DB check constraint (ai_models_default_structured_output_requires_capability)
+// is the real guard against picking a model that doesn't support it, this
+// just turns that into a readable error instead of a raw Postgres one.
+export async function setDefaultStructuredOutputModelAction(modelId: string, providerId: string) {
+  const { supabase } = await requireRole('admin')
+  await supabase.from('ai_models').update({ is_default_structured_output: false }).eq('is_default_structured_output', true)
+  const { error } = await supabase.from('ai_models').update({ is_default_structured_output: true }).eq('id', modelId)
+  if (error) {
+    if (error.code === '23514') throw new AIConfigError('This model does not support structured output')
+    throw error
+  }
   revalidatePath(`/admin/providers/${providerId}`)
 }
 

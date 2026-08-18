@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { getActiveProvider, getActiveEmbeddingProvider, AIConfigError } from './index'
+import { getActiveProvider, getActiveEmbeddingProvider, getActiveStructuredOutputProvider, AIConfigError } from './index'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 
 function defaultGenerationModelFixture() {
@@ -97,5 +97,40 @@ describe('getActiveEmbeddingProvider', () => {
   it('throws a clear config error instead of silently defaulting when no embedding model is configured', async () => {
     const supabase = createFakeSupabase({ ai_models: [{ data: null, error: null }] }) as never
     await expect(getActiveEmbeddingProvider(supabase)).rejects.toBeInstanceOf(AIConfigError)
+  })
+})
+
+describe('getActiveStructuredOutputProvider', () => {
+  beforeEach(() => {
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('builds a provider for whichever model is_default_structured_output=true, independent of is_default', async () => {
+    process.env.OPENAI_API_KEY = 'test-key'
+    const supabase = createFakeSupabase({
+      ai_models: [{ data: { id: 'm-1', provider_id: 'p-1', model_id: 'gpt-4o-mini', model_type: 'generation' }, error: null }],
+      ai_providers: [
+        {
+          data: {
+            id: 'p-1',
+            name: 'openai',
+            provider_type: 'openai',
+            display_name: 'OpenAI',
+            base_url: null,
+            api_key_env_var: 'OPENAI_API_KEY',
+            enabled: true,
+          },
+          error: null,
+        },
+      ],
+    }) as never
+
+    const provider = await getActiveStructuredOutputProvider(supabase)
+    expect(provider.name).toBe('openai')
+  })
+
+  it('throws a clear config error instead of silently defaulting when no structured-output model is configured', async () => {
+    const supabase = createFakeSupabase({ ai_models: [{ data: null, error: null }] }) as never
+    await expect(getActiveStructuredOutputProvider(supabase)).rejects.toBeInstanceOf(AIConfigError)
   })
 })

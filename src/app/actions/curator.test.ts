@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const requireRoleMock = vi.fn()
-const getActiveProviderMock = vi.fn()
 const getActiveEmbeddingProviderMock = vi.fn()
+const getActiveStructuredOutputProviderMock = vi.fn()
 const enrichDocumentChunksMock = vi.fn()
 const approveChunkMock = vi.fn()
 
@@ -15,8 +15,8 @@ vi.mock('@/lib/auth', async () => {
   }
 })
 vi.mock('@/lib/ai', () => ({
-  getActiveProvider: (...args: unknown[]) => getActiveProviderMock(...args),
   getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args),
+  getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
 }))
 vi.mock('@/lib/curator/documents', () => ({
   createUploadedDocument: vi.fn(),
@@ -37,14 +37,14 @@ const { enrichMoreChunks, approveChunkAction } = await import('./curator')
 
 beforeEach(() => {
   requireRoleMock.mockReset()
-  getActiveProviderMock.mockReset()
   getActiveEmbeddingProviderMock.mockReset()
+  getActiveStructuredOutputProviderMock.mockReset()
   enrichDocumentChunksMock.mockReset()
   approveChunkMock.mockReset()
 })
 
 describe('approveChunkAction', () => {
-  it('resolves the embedding provider, not the generation one -- some generation-only providers (e.g. Groq) cannot embed at all', async () => {
+  it('resolves the embedding provider, not generation or structured-output -- some generation-only providers (e.g. Groq) cannot embed at all', async () => {
     const supabase = {}
     requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
     const embeddingProvider = { name: 'embedding-provider' }
@@ -53,7 +53,7 @@ describe('approveChunkAction', () => {
     await approveChunkAction('chunk-1', 'doc-1', 'looks good')
 
     expect(getActiveEmbeddingProviderMock).toHaveBeenCalled()
-    expect(getActiveProviderMock).not.toHaveBeenCalled()
+    expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
     expect(approveChunkMock).toHaveBeenCalledWith(supabase, embeddingProvider, {
       chunkId: 'chunk-1',
       curatorNotes: 'looks good',
@@ -63,17 +63,17 @@ describe('approveChunkAction', () => {
 })
 
 describe('enrichMoreChunks', () => {
-  it('resolves the generation provider -- enrichment (topic/key concepts) needs generation, not embedding', async () => {
+  it('resolves the structured-output provider, not plain generation or embedding -- enrichment extracts topic/key_concepts as JSON', async () => {
     const supabase = {}
     requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
-    const generationProvider = { name: 'generation-provider' }
-    getActiveProviderMock.mockResolvedValue(generationProvider)
+    const structuredProvider = { name: 'structured-output-provider' }
+    getActiveStructuredOutputProviderMock.mockResolvedValue(structuredProvider)
     enrichDocumentChunksMock.mockResolvedValue({ enriched: 0 })
 
     await enrichMoreChunks('doc-1', 'billing')
 
-    expect(getActiveProviderMock).toHaveBeenCalled()
+    expect(getActiveStructuredOutputProviderMock).toHaveBeenCalled()
     expect(getActiveEmbeddingProviderMock).not.toHaveBeenCalled()
-    expect(enrichDocumentChunksMock).toHaveBeenCalledWith(supabase, generationProvider, 'doc-1', 'billing', 10)
+    expect(enrichDocumentChunksMock).toHaveBeenCalledWith(supabase, structuredProvider, 'doc-1', 'billing', 10)
   })
 })

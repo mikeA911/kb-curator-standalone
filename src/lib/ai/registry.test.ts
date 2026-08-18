@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { getDefaultModel, assertModelCapability, AIConfigError } from './registry'
+import { getDefaultModel, getDefaultStructuredOutputModel, assertModelCapability, AIConfigError } from './registry'
 import type { AIModelRow } from '@/types/database'
 
 function model(overrides: Partial<AIModelRow> = {}): AIModelRow {
@@ -12,6 +12,7 @@ function model(overrides: Partial<AIModelRow> = {}): AIModelRow {
     model_type: 'generation',
     enabled: true,
     is_default: true,
+    is_default_structured_output: false,
     context_window: null,
     max_output_tokens: null,
     input_cost_per_million: null,
@@ -61,6 +62,30 @@ describe('getDefaultModel', () => {
     }) as never
 
     await expect(getDefaultModel(supabase, 'embedding')).rejects.toBeInstanceOf(AIConfigError)
+  })
+})
+
+describe('getDefaultStructuredOutputModel', () => {
+  it('resolves is_default_structured_output independently of is_default -- a different model can own each', async () => {
+    const supabase = createFakeSupabase({
+      ai_models: [
+        {
+          data: model({ id: 'structured-1', provider_id: 'openai-provider', model_id: 'gpt-4o-mini', model_type: 'generation', is_default: false }),
+          error: null,
+        },
+      ],
+      ai_providers: [{ data: { id: 'openai-provider', name: 'openai' }, error: null }],
+    }) as never
+
+    const { provider, model: resolvedModel } = await getDefaultStructuredOutputModel(supabase)
+
+    expect(provider.name).toBe('openai')
+    expect(resolvedModel.model_id).toBe('gpt-4o-mini')
+  })
+
+  it('throws a clear config error when no structured-output default is configured', async () => {
+    const supabase = createFakeSupabase({ ai_models: [{ data: null, error: null }] }) as never
+    await expect(getDefaultStructuredOutputModel(supabase)).rejects.toBeInstanceOf(AIConfigError)
   })
 })
 

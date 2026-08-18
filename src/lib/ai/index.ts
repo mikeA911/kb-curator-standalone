@@ -18,4 +18,5 @@ export {
   getProviderByName,
   getActiveProvider,
   getActiveEmbeddingProvider,
+  getActiveStructuredOutputProvider,
 } from './registry'
