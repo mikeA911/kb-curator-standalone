@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
 import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
+import { ApproveProjectButton } from '@/components/projects/ApproveProjectButton'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
 
@@ -40,6 +41,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
   const canCurateWorkstreams = canManage || viewerMembership?.role === 'curator'
+  // Same bar as approveProjectAction's own check -- curator or admin, by
+  // either role system (platform role, or project role on this project).
+  const canApprove =
+    viewerProfile?.role === 'admin' ||
+    viewerProfile?.role === 'curator' ||
+    viewerMembership?.role === 'owner' ||
+    viewerMembership?.role === 'curator'
+  // "Draft" means "not yet approved" -- shown only to the creator or to
+  // someone who could approve it. Everyone else sees no status badge while
+  // it's in draft, matching the same rule on the Projects list page.
+  const showStatusBadge = project.status !== 'draft' || project.owner_id === user?.id || canApprove
 
   return (
     <div className="flex flex-col gap-8">
@@ -47,7 +59,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold">{project.name}</h1>
-            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{project.status}</span>
+            {project.visibility === 'public' && project.published_at && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Published</span>
+            )}
+            {showStatusBadge && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{project.status}</span>
+            )}
+            {canApprove && project.status === 'draft' && <ApproveProjectButton projectId={project.id} />}
           </div>
           {canManage && (
             <div className="flex items-center gap-3">

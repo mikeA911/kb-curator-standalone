@@ -107,6 +107,37 @@ export async function updateProjectNotesAction(projectId: string, notes: string)
   revalidatePath(`/projects/${projectId}`)
 }
 
+// Draft -> completed, i.e. "not yet approved" -> "approved". Curator or
+// admin, by either role system: platform role (curator/admin) OR project
+// role (owner/curator for this specific project) -- same bar as
+// canCurateWorkstreams on the project page. Uses the service-role client
+// deliberately, not a new RLS policy: projects_update_managers (the
+// existing UPDATE policy) is owner-or-admin only, and widening it to admit
+// curators would let a project curator edit ANY column on the row (notes,
+// goal, public_profile, ...), not just status -- RLS is row-level, not
+// column-level. The permission check below is the real gate for this one
+// narrow column.
+export async function approveProjectAction(projectId: string) {
+  const { user, profile, supabase } = await requireUser()
+
+  const { data: membership } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', projectId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  const canApprove =
+    profile.role === 'admin' || profile.role === 'curator' || membership?.role === 'owner' || membership?.role === 'curator'
+  if (!canApprove) throw new AuthError('Only a curator or admin can approve this project')
+
+  const admin = createAdminClient()
+  const { error } = await admin.from('projects').update({ status: 'completed' }).eq('id', projectId)
+  if (error) throw error
+  revalidatePath('/projects')
+  revalidatePath(`/projects/${projectId}`)
+}
+
 // Shared method/approach, common to every workstream in the project -- see
 // the `goal` column comment on the Project type. Same owner/admin-only gate
 // as updateProjectNotesAction (projects_update_managers).

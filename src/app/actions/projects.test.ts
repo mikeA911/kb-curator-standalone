@@ -21,6 +21,7 @@ const {
   attachKnowledgeBaseAction,
   updateProjectNotesAction,
   updateProjectGoalAction,
+  approveProjectAction,
   searchProfilesByEmailAction,
   addProjectMemberAction,
   transferOwnershipAction,
@@ -186,6 +187,63 @@ describe('updateProjectGoalAction', () => {
 
     const update = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
     expect(update?.args).toEqual({ goal: null })
+  })
+})
+
+describe('approveProjectAction', () => {
+  it('rejects a plain consultant with no project role', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+
+    await expect(approveProjectAction('project-1')).rejects.toThrow('Only a curator or admin')
+  })
+
+  it('allows a platform admin with no project membership at all', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'admin' }, supabase })
+    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+
+    await approveProjectAction('project-1')
+
+    const update = adminSupabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(update?.args).toEqual({ status: 'completed' })
+  })
+
+  it('allows a platform curator with no project membership at all', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'curator' }, supabase })
+    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+
+    await approveProjectAction('project-1')
+
+    expect(adminSupabase._calls.find((c) => c.table === 'projects' && c.method === 'update')?.args).toEqual({ status: 'completed' })
+  })
+
+  it('allows a project owner whose platform role is merely consultant', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+
+    await approveProjectAction('project-1')
+
+    expect(adminSupabase._calls.find((c) => c.table === 'projects' && c.method === 'update')?.args).toEqual({ status: 'completed' })
+  })
+
+  it('allows a project curator whose platform role is merely consultant', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'curator' }, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+
+    await approveProjectAction('project-1')
+
+    expect(adminSupabase._calls.find((c) => c.table === 'projects' && c.method === 'update')?.args).toEqual({ status: 'completed' })
+  })
+
+  it('rejects a project member whose role is merely consultant/viewer', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'viewer' }, error: null }] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+
+    await expect(approveProjectAction('project-1')).rejects.toThrow('Only a curator or admin')
   })
 })
 
