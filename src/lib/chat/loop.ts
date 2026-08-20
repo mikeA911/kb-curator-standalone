@@ -4,6 +4,8 @@ import type { ChatMessage } from '@/lib/ai'
 import { callTool, getToolSpecs } from '@/lib/mcp/tools'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { createConversation, listMessages, appendMessage } from './conversations'
+import { composeWorkingContext } from './context'
+import { getConversationSummary, maybeRefreshSummary } from './summary'
 
 // Version string stamped onto anything the Assistant creates
 // (created_via='assistant') -- bump when the system prompt or tool set
@@ -87,6 +89,9 @@ export async function runAssistantTurn(
     toolCallId: r.tool_call_id ?? undefined,
     toolName: r.tool_name ?? undefined,
   }))
+  // A brand-new conversation can't have a summary yet -- only fetched when
+  // continuing an existing one, same conditioning as priorRows above.
+  const existingSummary = conversationId ? await getConversationSummary(ctx.supabase, conversationId) : null
 
   history.push({ role: 'user', content: userMessage })
   await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'user', content: userMessage })
@@ -103,10 +108,23 @@ export async function runAssistantTurn(
   // searching and answer, rather than a silent no-op.
   const SEARCH_WIKI_LIMIT = 2
   let searchWikiCalls = 0
+  // Recomputed each iteration -- cheap (pure, in-memory) and the current
+  // turn keeps growing as tool round-trips are appended to `history`.
+  // Sticky across iterations: once truncation has happened once this turn,
+  // treat the turn as truncated for the summary-refresh decision below even
+  // if a later iteration's smaller working set wouldn't trip it again.
+  let contextWasTruncated = false
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    const working = composeWorkingContext({
+      history,
+      summary: existingSummary,
+      contextWindow: chatProvider.contextWindow,
+      maxOutputTokens: chatProvider.maxOutputTokens,
+    })
+    contextWasTruncated = contextWasTruncated || working.wasTruncated
     const result = await chatProvider.provider.generateChat({
-      messages: history,
+      messages: working.messages,
       system: SYSTEM_PROMPT,
       tools,
       maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
@@ -124,6 +142,7 @@ export async function runAssistantTurn(
 
     if (!result.message.toolCalls || result.message.toolCalls.length === 0) {
       const embeddingModelDisplayName = toolsUsed.has('search_wiki') ? (await getDefaultModel(ctx.supabase, 'embedding')).model.display_name : undefined
+      await maybeRefreshSummary(ctx, conversation.id, contextWasTruncated)
       return {
         conversationId: conversation.id,
         reply: result.message.content,

@@ -10,6 +10,8 @@ const createConversationMock = vi.fn()
 const listMessagesMock = vi.fn()
 const appendMessageMock = vi.fn()
 const updateMock = vi.fn()
+const getConversationSummaryMock = vi.fn()
+const maybeRefreshSummaryMock = vi.fn()
 
 vi.mock('@/lib/ai', () => ({
   resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
@@ -23,6 +25,13 @@ vi.mock('./conversations', () => ({
   createConversation: (...args: unknown[]) => createConversationMock(...args),
   listMessages: (...args: unknown[]) => listMessagesMock(...args),
   appendMessage: (...args: unknown[]) => appendMessageMock(...args),
+}))
+// composeWorkingContext (./context) is left unmocked -- pure and cheap, and
+// these tiny fixture histories never approach its budget, so it passes
+// `history` through unchanged. Only the summary side effects are mocked.
+vi.mock('./summary', () => ({
+  getConversationSummary: (...args: unknown[]) => getConversationSummaryMock(...args),
+  maybeRefreshSummary: (...args: unknown[]) => maybeRefreshSummaryMock(...args),
 }))
 
 const { runAssistantTurn } = await import('./loop')
@@ -41,10 +50,11 @@ const CHAT_PROVIDER_INFO = {
   modelId: 'openai/gpt-oss-20b',
   modelDisplayName: 'GPT-OSS 20B',
 }
-// maxOutputTokens is deliberately not in this fixture -- it's read for the
-// generateChat call but never surfaced on AssistantTurnResult, and several
-// assertions below build their expected value via `...CHAT_PROVIDER_INFO`.
-const RESOLVED_CHAT_PROVIDER = { ...CHAT_PROVIDER_INFO, maxOutputTokens: 2048 }
+// maxOutputTokens/contextWindow are deliberately not in this fixture --
+// they're read for generateChat/composeWorkingContext but never surfaced on
+// AssistantTurnResult, and several assertions below build their expected
+// value via `...CHAT_PROVIDER_INFO`.
+const RESOLVED_CHAT_PROVIDER = { ...CHAT_PROVIDER_INFO, maxOutputTokens: 2048, contextWindow: 8192 }
 
 beforeEach(() => {
   resolveChatProviderMock.mockReset()
@@ -56,6 +66,8 @@ beforeEach(() => {
   listMessagesMock.mockReset()
   appendMessageMock.mockReset()
   updateMock.mockReset()
+  getConversationSummaryMock.mockReset()
+  maybeRefreshSummaryMock.mockReset()
 
   resolveChatProviderMock.mockResolvedValue({ provider: { generateChat: generateChatMock }, ...RESOLVED_CHAT_PROVIDER })
   getDefaultModelMock.mockResolvedValue({ provider: { name: 'gemini' }, model: { display_name: 'Gemini Embedding' } })
@@ -64,6 +76,8 @@ beforeEach(() => {
   listMessagesMock.mockResolvedValue([])
   appendMessageMock.mockResolvedValue(undefined)
   updateMock.mockReturnValue({ eq: () => Promise.resolve({ error: null }) })
+  getConversationSummaryMock.mockResolvedValue(null)
+  maybeRefreshSummaryMock.mockResolvedValue(undefined)
 })
 
 describe('runAssistantTurn', () => {
@@ -84,6 +98,11 @@ describe('runAssistantTurn', () => {
     expect(generateChatMock).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 2048 }))
     expect(callToolMock).not.toHaveBeenCalled()
     expect(getDefaultModelMock).not.toHaveBeenCalled()
+    // A brand-new conversation (conversationId param was null) can't have a
+    // summary yet -- not even looked up.
+    expect(getConversationSummaryMock).not.toHaveBeenCalled()
+    // Refreshed after a successful reply, with the turn's truncation status.
+    expect(maybeRefreshSummaryMock).toHaveBeenCalledWith(expect.anything(), 'conv-1', false)
   })
 
   it('passes an explicit model selection straight through to resolveChatProvider', async () => {
@@ -163,6 +182,9 @@ describe('runAssistantTurn', () => {
 
     expect(result.reply).toMatch(/wasn't able to finish/i)
     expect(generateChatMock).toHaveBeenCalledTimes(8)
+    // The summary is only refreshed after a successful reply, not the
+    // iteration-cap fallback.
+    expect(maybeRefreshSummaryMock).not.toHaveBeenCalled()
   })
 
   it('refuses a 3rd search_wiki call in the same turn without invoking the real tool', async () => {
@@ -219,6 +241,7 @@ describe('runAssistantTurn', () => {
 
     expect(result.conversationId).toBe('conv-1')
     expect(createConversationMock).not.toHaveBeenCalled()
+    expect(getConversationSummaryMock).toHaveBeenCalledWith(expect.anything(), 'conv-1')
     expect(capturedMessages).toEqual([
       { role: 'user', content: 'earlier question', toolCalls: undefined, toolCallId: undefined, toolName: undefined },
       { role: 'assistant', content: 'earlier answer', toolCalls: undefined, toolCallId: undefined, toolName: undefined },

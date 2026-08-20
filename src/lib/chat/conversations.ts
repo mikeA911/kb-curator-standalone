@@ -8,6 +8,73 @@ export async function createConversation(supabase: SupabaseClient<Database>, use
   return data
 }
 
+// An empty result IS the first-use signal the onboarding UI checks for --
+// no separate "is this a new user" boolean needed.
+export async function listRecentConversations(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  limit = 10
+): Promise<Conversation[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('user_id', userId)
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(limit)
+  if (error) throw error
+  return data ?? []
+}
+
+export interface DisplayMessage {
+  role: 'user' | 'assistant'
+  content: string
+  providerDisplayName?: string
+  modelDisplayName?: string
+  toolsUsed?: string[]
+}
+
+// Turns persisted rows back into the same shape ChatPanel renders live.
+// Pure/synchronous: display-name resolution is passed in as a lookup rather
+// than queried here, so this stays trivially unit-testable. A provider/model
+// no longer in the lookup (renamed or removed since) falls back to the raw
+// identifier stored on the row -- provenance is never silently dropped.
+export function toDisplayMessages(
+  rows: ChatMessageRow[],
+  displayNameByKey: Map<string, { providerDisplayName: string; modelDisplayName: string }>
+): DisplayMessage[] {
+  const out: DisplayMessage[] = []
+  let pendingTools = new Set<string>()
+
+  for (const row of rows) {
+    if (row.role === 'user') {
+      out.push({ role: 'user', content: row.content ?? '' })
+      continue
+    }
+    if (row.role === 'tool') continue
+
+    // An assistant row carrying tool_calls is an intermediate step, never
+    // the final reply (runAssistantTurn only stops the loop once a reply
+    // has no tool calls) -- fold its tool names into the next real reply.
+    if (row.tool_calls && row.tool_calls.length > 0) {
+      for (const call of row.tool_calls) pendingTools.add(call.name)
+      continue
+    }
+
+    const key = row.provider && row.model ? `${row.provider}::${row.model}` : null
+    const names = key ? displayNameByKey.get(key) : undefined
+    out.push({
+      role: 'assistant',
+      content: row.content ?? '',
+      providerDisplayName: names?.providerDisplayName ?? row.provider ?? undefined,
+      modelDisplayName: names?.modelDisplayName ?? row.model ?? undefined,
+      toolsUsed: pendingTools.size > 0 ? [...pendingTools] : undefined,
+    })
+    pendingTools = new Set()
+  }
+
+  return out
+}
+
 export async function listMessages(supabase: SupabaseClient<Database>, conversationId: string): Promise<ChatMessageRow[]> {
   const { data, error } = await supabase
     .from('chat_messages')

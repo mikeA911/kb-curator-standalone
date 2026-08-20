@@ -554,15 +554,50 @@ export interface WorkstreamArtifact {
 // Chat / Conversational Workbench Assistant (M6D)
 // ============================================
 
+// The doc's own list of summary fields (dev-request-assistant-first-use-onboarding-and-history.md):
+// objective, confirmed requirements, decisions, open questions, records
+// created, evidence referenced, and the likely next action.
+export interface ConversationSummary {
+  objective: string
+  confirmedRequirements: string[]
+  decisions: string[]
+  openQuestions: string[]
+  createdRecords: string[]
+  referencedEvidence: string[]
+  nextAction: string
+}
+
 export interface Conversation {
   id: string
   user_id: string
   title: string | null
   created_at: string
   updated_at: string
+  // Bumped by a trigger on every chat_messages insert (see
+  // 20260820130001_chat_history_and_summary.sql) -- lets conversation
+  // history be listed/resumed by recency without joining chat_messages.
+  last_message_at: string | null
+  // Rolling per-conversation summary (Stage 2) -- see maybeRefreshSummary in
+  // src/lib/chat/summary.ts. summary_through_message_id is set null, not
+  // cascaded, if that message is ever deleted.
+  summary_json: ConversationSummary | null
+  summary_through_message_id: string | null
+  summary_updated_at: string | null
+  summary_provider: string | null
+  summary_model: string | null
+  summary_version: string | null
 }
 
-export type ConversationInsert = Omit<Conversation, 'id' | 'created_at' | 'updated_at' | 'title'> & Partial<Pick<Conversation, 'title'>>
+export type ConversationInsert = Omit<
+  Conversation,
+  'id' | 'created_at' | 'updated_at' | 'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+> &
+  Partial<
+    Pick<
+      Conversation,
+      'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+    >
+  >
 export type ConversationUpdate = Partial<Omit<Conversation, 'id' | 'user_id' | 'created_at'>>
 
 export type ChatMessageRole = 'user' | 'assistant' | 'tool'
