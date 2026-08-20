@@ -1,6 +1,13 @@
-# M5F — Workbench Assistant, OpenAPI & MCP Foundation: Architecture & Design Note
+# Workbench Service Layer & Conversational Assistant
 
-Status: **design document, not implemented**. Produced for handoff to a coding AI session that has no memory of the conversation that produced it.
+Status: **implemented**. Originally produced for handoff to a coding AI session that had no memory of the conversation that produced it; retained here as the as-built reference for the service layer, MCP tool contract, and chat Assistant.
+
+## Implementation status (as of 2026-08-20)
+
+- **Phase A (Handbook Wiki), Phase C (service layer), Phase D (MCP contract), Phase E (Assistant)** — all shipped. `src/lib/workbench/{projects,workstreams,ai-providers,identity}.ts`, `src/lib/mcp/tools.ts`, `conversations`/`chat_messages` schema, chat panel UI.
+- Both identity-resolution paths from §5.3 exist — cookie-based (live) and bearer-token (`resolveCallerIdentityFromToken`, built and tested, genuinely unused until an external MCP transport exists — that's intentional, not a gap).
+- §10's deferrals remain correctly unbuilt: streaming, external MCP transport, autonomous code-writing.
+- Superseded/extended by two follow-on design notes: [Assistant Identity, Provenance & the Document-First Principle](./assistant-identity-provenance-design.md) and [Guided Workbench Methods & Requirement Reasoning](./guided-workbench-methods-design.md).
 
 ## 1. Purpose & how to use this doc
 
@@ -162,7 +169,9 @@ Add these **only to the specific tables the Assistant gains write access to** as
 
 ## 9. Recommended sequencing
 
-**A → C → D → E**, each independently shippable and human-reviewed before the next begins — mirroring the review gate already used between Phase B and this document. Suggested milestone labels, consistent with this project's existing M-numbering: **M6A** (Handbook), **M6B** (Workbench API/service layer — reusing the project's established convention of lettering sub-milestones within a numbered phase, not to be confused with the already-shipped Phase B of M5F), **M6C** (MCP contract), **M6D** (Assistant). Provenance fields (§8) land as part of M6D, not as their own milestone.
+**A → C → D → E**, each independently shippable and human-reviewed before the next begins — mirroring the review gate already used between Phase B and this document. Provenance fields (§8) land as part of Phase E, not as their own milestone.
+
+*(This section originally proposed M-numbered sub-milestone labels for A/C/D/E. Those labels collided with the platform's own public roadmap numbering — see the Implementation status note at the top of this document — and have been dropped in favor of the plain phase letters used throughout this doc.)*
 
 Rationale for this order: Phase A is self-contained (reuses ~100% of existing Wiki infrastructure, no architectural forks) and delivers value on its own regardless of whether C/D/E ever ship. Phase C is a prerequisite for both D and E (both need the service layer and the caller-context/identity work). Phase D is a relatively small, well-scoped contract definition once C exists. Phase E is the largest and most novel piece, and depends on both C (tools to call) and D (the contract shape those tool-calls target) — building it last means its riskiest new work (streaming, tool-calling, chat schema) is the only genuinely novel infrastructure left by the time it starts.
 

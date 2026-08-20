@@ -1,5 +1,23 @@
-Design Note — M5 Workbench Wizards & Guided Use Cases
+# Guided Workbench Methods & Requirement Reasoning
+
 Revised: 18 Workbench Methods with Requirements
+
+Status: **implemented** (as Handbook content + Assistant reasoning, not dedicated code — see status note below).
+
+## Implementation status (as of 2026-08-20)
+
+- 19 Handbook articles shipped: all 16 method articles (UC1–15, UC18), 3 cross-cutting references (Repository Requirements, Requirement States, Method Dependency Map), plus Requirements sections added to the pre-existing Code Review and Refactoring Plan articles and an updated Workbench Methods Overview.
+- The system prompt (`src/lib/chat/loop.ts`) teaches the Assistant to search the Handbook, check a method's Required inputs, ask for what's missing, and name a prerequisite method by name — verified live against this note's own MCP-server/OpenAPI-spec worked example (§23).
+- **Gap — no per-project Requirement Status tracking.** §25 describes Available/Needed/Optional/Can-be-produced-elsewhere as a status model; today the Assistant reasons about this conversationally each turn. Nothing is computed or persisted.
+- **Gap — no project-level knowledge retrieval.** §28's three-level retrieval order (Approved Project Knowledge → Evidence/Artifacts → Platform Knowledge → Conversation) can't exist yet — there is no vector store over project evidence/artifacts, only the platform Wiki (`search_wiki`).
+- **Interpretation, not a gap — no dedicated Wizard UI.** §30's diagram implies method-selection/requirement-checking screens; per this note's own §29 ("do not hard-code eighteen giant conversational flows"), this was built as Handbook content + Assistant reasoning only, with zero new UI screens.
+- **Operational note.** The reasoning above sometimes needs two `search_wiki` round trips; the platform's *default* Assistant model (Groq GPT-OSS 20B) occasionally can't finish inside the tool-call budget and falls back to asking the user to rephrase. Groq GPT-OSS 120B has handled every case tested cleanly.
+- UC18 (Experiment Replication/Application) has no dedicated "duplicate workstream" tool — by design, consistent with every other method here having no dedicated code, per §22's own "How to do this today" guidance in that article.
+
+This note's own numbering (its title called it "M5"; it was implemented under the internal label "M7") collided with the platform's public roadmap, where M5–M7 already mean something else entirely (Apply / Deploy / Govern). See [Workbench Service Layer & Conversational Assistant](./workbench-service-layer-and-assistant-design.md) for where that numbering came from.
+
+---
+
 1. Purpose
 KB Sandbox provides guided Workbench Methods for recurring AI engineering, knowledge, evaluation, and modernization activities.
 A method is not simply an automated AI task.
