@@ -165,6 +165,42 @@ describe('runAssistantTurn', () => {
     expect(generateChatMock).toHaveBeenCalledTimes(8)
   })
 
+  it('refuses a 3rd search_wiki call in the same turn without invoking the real tool', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_wiki', arguments: { query: 'first' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-2', name: 'search_wiki', arguments: { query: 'second' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-3', name: 'search_wiki', arguments: { query: 'third' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: 'Answering with what I found.' },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+    callToolMock.mockResolvedValue({ articles: [] })
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'Find me the right method')
+
+    expect(result.reply).toBe('Answering with what I found.')
+    // Only the first two search_wiki calls actually ran the real tool
+    // (embedding + RPC) -- the 3rd was refused in-process, for free.
+    expect(callToolMock).toHaveBeenCalledTimes(2)
+    const refusalMessage = appendMessageMock.mock.calls
+      .map(([, args]) => args)
+      .find((args) => args.toolCallId === 'call-3')
+    expect(refusalMessage.content).toContain('already been called 2 times')
+  })
+
   it('continues an existing conversation by loading its prior history first', async () => {
     listMessagesMock.mockResolvedValue([
       { role: 'user', content: 'earlier question', tool_calls: null, tool_call_id: null, tool_name: null },

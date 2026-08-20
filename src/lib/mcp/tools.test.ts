@@ -9,6 +9,7 @@ const attachArtifactMock = vi.fn()
 const getActiveEmbeddingProviderMock = vi.fn()
 const embedMock = vi.fn()
 const rpcMock = vi.fn()
+const wikiArticlesInMock = vi.fn()
 
 vi.mock('@/lib/projects/notes', () => ({ listProjectNotes: (...args: unknown[]) => listProjectNotesMock(...args) }))
 vi.mock('@/lib/workbench/projects', () => ({
@@ -26,7 +27,10 @@ const { callTool, listTools } = await import('./tools')
 const ctx = {
   user: { id: 'user-1' },
   profile: { id: 'user-1', role: 'admin' },
-  supabase: { rpc: (...args: unknown[]) => rpcMock(...args) },
+  supabase: {
+    rpc: (...args: unknown[]) => rpcMock(...args),
+    from: () => ({ select: () => ({ in: (...inArgs: unknown[]) => wikiArticlesInMock(...inArgs) }) }),
+  },
 } as unknown as WorkbenchCallerContext
 
 beforeEach(() => {
@@ -38,7 +42,9 @@ beforeEach(() => {
   getActiveEmbeddingProviderMock.mockReset()
   embedMock.mockReset()
   rpcMock.mockReset()
+  wikiArticlesInMock.mockReset()
   getActiveEmbeddingProviderMock.mockResolvedValue({ embed: embedMock })
+  wikiArticlesInMock.mockResolvedValue({ data: [] })
 })
 
 describe('callTool', () => {
@@ -51,18 +57,36 @@ describe('callTool', () => {
     expect(approveProjectMock).not.toHaveBeenCalled()
   })
 
-  it('search_wiki embeds the query, calls match_wiki_vectors, and shapes the output', async () => {
+  it('search_wiki embeds the query, calls match_wiki_vectors, and shapes the output with content and category', async () => {
     embedMock.mockResolvedValue({ embedding: [0.1, 0.2, 0.3], model: 'embed-model', dimensions: 3, usage: { inputTokens: 3, outputTokens: 0 } })
     rpcMock.mockResolvedValue({
       data: [{ id: 'v1', wiki_version_id: 'ver-1', wiki_article_id: 'a1', content: 'text', similarity: 0.78, article_slug: 'a1-slug', article_title: 'A1' }],
       error: null,
     })
+    wikiArticlesInMock.mockResolvedValue({ data: [{ id: 'a1', category: 'platform_handbook' }] })
 
     const result = await callTool(ctx, 'search_wiki', { query: 'retrieval' })
 
     expect(embedMock).toHaveBeenCalledWith({ text: 'retrieval' })
     expect(rpcMock).toHaveBeenCalledWith('match_wiki_vectors', { query_embedding: [0.1, 0.2, 0.3], match_threshold: 0, match_count: 5 })
-    expect(result).toEqual({ articles: [{ articleId: 'a1', slug: 'a1-slug', title: 'A1', similarity: 0.78 }] })
+    expect(wikiArticlesInMock).toHaveBeenCalledWith('id', ['a1'])
+    expect(result).toEqual({
+      articles: [{ articleId: 'a1', slug: 'a1-slug', title: 'A1', category: 'platform_handbook', similarity: 0.78, content: 'text' }],
+    })
+  })
+
+  it('search_wiki truncates content over 4000 characters', async () => {
+    embedMock.mockResolvedValue({ embedding: [0.1], model: 'embed-model', dimensions: 1, usage: { inputTokens: 1, outputTokens: 0 } })
+    const longContent = 'x'.repeat(5000)
+    rpcMock.mockResolvedValue({
+      data: [{ id: 'v1', wiki_version_id: 'ver-1', wiki_article_id: 'a1', content: longContent, similarity: 0.5, article_slug: 'a1-slug', article_title: 'A1' }],
+      error: null,
+    })
+
+    const result = (await callTool(ctx, 'search_wiki', { query: 'retrieval' })) as { articles: { content: string }[] }
+
+    expect(result.articles[0].content).toHaveLength(4001)
+    expect(result.articles[0].content.endsWith('…')).toBe(true)
   })
 
   it('list_project_notes maps input and shapes the output', async () => {

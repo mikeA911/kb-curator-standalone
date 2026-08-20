@@ -44,12 +44,22 @@ interface ToolDefinition<TInput, TOutput> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tools: Record<string, ToolDefinition<any, any>> = {
   search_wiki: {
-    description: 'Semantic search over approved platform Wiki articles -- finds conceptually related content, not just literal keyword matches.',
+    description:
+      'Semantic search over approved platform Wiki articles -- finds conceptually related content, not just literal keyword matches. Returns each matched article\'s full content (including, for Workbench Handbook articles, its Requirements/Deliverables/Boundary sections), not just a title -- one search is normally enough to both find the right method and read what it requires.',
     // match_wiki_vectors has no category parameter (confirmed) -- dropped
     // here rather than silently ignored if a caller tried to pass one.
     inputSchema: z.object({ query: z.string(), limit: z.number().int().min(1).max(10).default(5) }),
     outputSchema: z.object({
-      articles: z.array(z.object({ articleId: z.string(), slug: z.string(), title: z.string(), similarity: z.number() })),
+      articles: z.array(
+        z.object({
+          articleId: z.string(),
+          slug: z.string(),
+          title: z.string(),
+          category: z.string().nullable(),
+          similarity: z.number(),
+          content: z.string(),
+        })
+      ),
     }),
     handler: async (ctx, input: { query: string; limit: number }) => {
       const embeddingProvider = await getActiveEmbeddingProvider(ctx.supabase, { requestedBy: ctx.user.id })
@@ -61,12 +71,29 @@ const tools: Record<string, ToolDefinition<any, any>> = {
       })
       if (error) throw error
       type Row = Database['public']['Functions']['match_wiki_vectors']['Returns'][number]
+      const rows: Row[] = data ?? []
+
+      // match_wiki_vectors doesn't carry category -- one follow-up query
+      // against wiki_articles rather than widening a shared RPC also used
+      // by src/lib/eval/retrieval.ts.
+      const articleIds = [...new Set(rows.map((m) => m.wiki_article_id))]
+      const { data: articleRows } = articleIds.length
+        ? await ctx.supabase.from('wiki_articles').select('id, category').in('id', articleIds)
+        : { data: [] as { id: string; category: string }[] }
+      const categoryById = new Map((articleRows ?? []).map((a) => [a.id, a.category]))
+
+      // Capped, not truncated to nothing -- bounds worst-case context size
+      // if a future Handbook article is unusually long, while every current
+      // article (a few hundred words) comes through whole.
+      const MAX_CONTENT_CHARS = 4000
       return {
-        articles: (data ?? []).map((m: Row) => ({
+        articles: rows.map((m) => ({
           articleId: m.wiki_article_id,
           slug: m.article_slug,
           title: m.article_title,
+          category: categoryById.get(m.wiki_article_id) ?? null,
           similarity: m.similarity,
+          content: m.content.length > MAX_CONTENT_CHARS ? `${m.content.slice(0, MAX_CONTENT_CHARS)}…` : m.content,
         })),
       }
     },

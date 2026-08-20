@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The in-app browser reaches this development server through the machine's
+  // LAN address rather than localhost. Keep the exception narrow: this only
+  // affects Next's development-only asset and endpoint origin checks.
+  allowedDevOrigins: ["192.168.8.102"],
   experimental: {
     // Default 1MB is well under the 5MB icon cap validateIconFile enforces
     // (src/lib/branding.ts) -- without raising this, a valid upload under
