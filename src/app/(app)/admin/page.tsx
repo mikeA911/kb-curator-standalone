@@ -4,9 +4,10 @@ import { KBManagement } from '@/components/admin/KBManagement'
 import { CurationQueueManager } from '@/components/admin/CurationQueueManager'
 import { UserManagement } from '@/components/admin/UserManagement'
 import { AIProvidersList } from '@/components/admin/AIProvidersList'
+import { ModelAssignmentsSummary } from '@/components/admin/ModelAssignmentsSummary'
 import { PendingApprovals } from '@/components/admin/PendingApprovals'
 import { AdminTabs } from '@/components/admin/AdminTabs'
-import { listProviders, listModels } from '@/lib/ai'
+import { listProviders, listModels, listChatCapableModels, listStructuredOutputCapableModels, toRoleOption } from '@/lib/ai'
 import { env } from '@/lib/env'
 import { SectionHero } from '@/components/SectionHero'
 import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
@@ -24,20 +25,35 @@ export default async function AdminPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile || profile.role !== 'admin') redirect('/dashboard')
 
-  const [{ data: knowledgeBases }, { data: queue }, { data: profiles }, { data: pendingDocs }, aiProviders, aiModels, unpublishedWikiArticles, brandingUrls] =
-    await Promise.all([
-      supabase.from('knowledge_bases').select('*').order('name'),
-      supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('*').order('email'),
-      supabase.from('documents').select('*').eq('processing_status', 'submitted').order('upload_date'),
-      listProviders(supabase),
-      listModels(supabase),
-      listUnpublishedArticles(supabase),
-      getBrandingUrls(supabase),
-    ])
+  const [
+    { data: knowledgeBases },
+    { data: queue },
+    { data: profiles },
+    { data: pendingDocs },
+    aiProviders,
+    aiModels,
+    unpublishedWikiArticles,
+    brandingUrls,
+    conversationalOptions,
+    structuredOutputOptions,
+  ] = await Promise.all([
+    supabase.from('knowledge_bases').select('*').order('name'),
+    supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
+    supabase.from('profiles').select('*').order('email'),
+    supabase.from('documents').select('*').eq('processing_status', 'submitted').order('upload_date'),
+    listProviders(supabase),
+    listModels(supabase),
+    listUnpublishedArticles(supabase),
+    getBrandingUrls(supabase),
+    listChatCapableModels(supabase),
+    listStructuredOutputCapableModels(supabase),
+  ])
 
   // Checked server-side only -- reports Configured/Missing, never the value.
   const configuredByProvider = Object.fromEntries(aiProviders.map((p) => [p.id, Boolean(env.byName(p.api_key_env_var))]))
+
+  const currentConversationalModel = aiModels.find((m) => m.model_type === 'generation' && m.is_default)
+  const currentStructuredOutputModel = aiModels.find((m) => m.is_default_structured_output)
 
   return (
     <div className="flex flex-col gap-6">
@@ -58,7 +74,21 @@ export default async function AdminPage() {
           {
             id: 'ai',
             label: 'AI Config',
-            content: <AIProvidersList providers={aiProviders} models={aiModels} configuredByProvider={configuredByProvider} />,
+            content: (
+              <div className="flex flex-col gap-4">
+                <ModelAssignmentsSummary
+                  conversational={{
+                    current: currentConversationalModel ? toRoleOption(currentConversationalModel, aiProviders) : null,
+                    options: conversationalOptions,
+                  }}
+                  structuredOutput={{
+                    current: currentStructuredOutputModel ? toRoleOption(currentStructuredOutputModel, aiProviders) : null,
+                    options: structuredOutputOptions,
+                  }}
+                />
+                <AIProvidersList providers={aiProviders} models={aiModels} configuredByProvider={configuredByProvider} />
+              </div>
+            ),
           },
           { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
         ]}

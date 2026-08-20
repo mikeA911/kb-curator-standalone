@@ -15,6 +15,25 @@ export class AIConfigError extends Error {
   }
 }
 
+// Pure, synchronous shaping helper -- no query of its own, since the two
+// admin pages that need this (AdminPage, the provider detail page) already
+// have the full providers/models arrays loaded for other reasons. Used to
+// build the "current assignment" shown by ModelAssignmentsSummary from
+// whichever ai_models row has is_default / is_default_structured_output set.
+export function toRoleOption(
+  model: AIModelRow,
+  providers: AIProviderRow[]
+): { providerDbId: string; modelDbId: string; providerDisplayName: string; modelDisplayName: string } | null {
+  const provider = providers.find((p) => p.id === model.provider_id)
+  if (!provider) return null
+  return {
+    providerDbId: provider.id,
+    modelDbId: model.id,
+    providerDisplayName: provider.display_name,
+    modelDisplayName: model.display_name,
+  }
+}
+
 export async function listProviders(
   supabase: SupabaseClient<Database>,
   opts: { enabledOnly?: boolean } = {}
@@ -258,11 +277,18 @@ export async function resolveChatProvider(
 // generation-type models that support tool calling. Naturally excludes
 // disabled providers/models and embedding-only models (design note §4) --
 // no separate filtering logic needed beyond the flags already on each row.
+// modelDbId/providerDbId (the ai_models.id/ai_providers.id row ids) are
+// carried alongside the business providerName/modelId so the same option
+// list can also drive the admin "Model assignments" summary, whose change
+// actions (setDefaultModelAction et al) take row ids, not business ids --
+// the chat picker itself only ever uses providerName/modelId.
 export interface ChatModelOption {
   providerName: string
   providerDisplayName: string
+  providerDbId: string
   modelId: string
   modelDisplayName: string
+  modelDbId: string
   isDefault: boolean
 }
 
@@ -280,9 +306,39 @@ export async function listChatCapableModels(supabase: SupabaseClient<Database>):
     options.push({
       providerName: provider.name,
       providerDisplayName: provider.display_name,
+      providerDbId: provider.id,
       modelId: model.model_id,
       modelDisplayName: model.display_name,
+      modelDbId: model.id,
       isDefault: model.is_default,
+    })
+  }
+  return options
+}
+
+// Same shape and filtering pattern as listChatCapableModels, for the
+// structured-output role instead of the conversational one -- powers the
+// admin "Model assignments" summary's structured-output dropdown. isDefault
+// here means is_default_structured_output, not the generation is_default.
+export async function listStructuredOutputCapableModels(supabase: SupabaseClient<Database>): Promise<ChatModelOption[]> {
+  const [providers, models] = await Promise.all([
+    listProviders(supabase, { enabledOnly: true }),
+    listModels(supabase, { modelType: 'generation', enabledOnly: true }),
+  ])
+  const providerById = new Map(providers.map((p) => [p.id, p]))
+  const options: ChatModelOption[] = []
+  for (const model of models) {
+    if (!model.supports_structured_output) continue
+    const provider = providerById.get(model.provider_id)
+    if (!provider) continue
+    options.push({
+      providerName: provider.name,
+      providerDisplayName: provider.display_name,
+      providerDbId: provider.id,
+      modelId: model.model_id,
+      modelDisplayName: model.display_name,
+      modelDbId: model.id,
+      isDefault: model.is_default_structured_output,
     })
   }
   return options

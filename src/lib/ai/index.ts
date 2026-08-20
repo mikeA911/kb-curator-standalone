@@ -11,6 +11,7 @@ export type { ChatMessage, ToolCall, ToolSpec, GenerateChatInput, GenerateChatRe
 // uses.
 export {
   AIConfigError,
+  toRoleOption,
   listProviders,
   listModels,
   resolveModel,
@@ -22,5 +23,6 @@ export {
   getActiveStructuredOutputProvider,
   resolveChatProvider,
   listChatCapableModels,
+  listStructuredOutputCapableModels,
 } from './registry'
 export type { ChatProviderInfo, ChatModelOption } from './registry'

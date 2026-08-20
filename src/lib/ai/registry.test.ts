@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { getDefaultModel, getDefaultStructuredOutputModel, assertModelCapability, listChatCapableModels, AIConfigError } from './registry'
+import {
+  getDefaultModel,
+  getDefaultStructuredOutputModel,
+  assertModelCapability,
+  listChatCapableModels,
+  listStructuredOutputCapableModels,
+  AIConfigError,
+} from './registry'
 import type { AIModelRow, AIProviderRow } from '@/types/database'
 
 function provider(overrides: Partial<AIProviderRow> = {}): AIProviderRow {
@@ -124,7 +131,47 @@ describe('listChatCapableModels', () => {
     const options = await listChatCapableModels(supabase)
 
     expect(options).toEqual([
-      { providerName: 'groq', providerDisplayName: 'Groq', modelId: 'openai/gpt-oss-20b', modelDisplayName: 'GPT-4o mini', isDefault: true },
+      {
+        providerName: 'groq',
+        providerDisplayName: 'Groq',
+        providerDbId: 'groq-provider',
+        modelId: 'openai/gpt-oss-20b',
+        modelDisplayName: 'GPT-4o mini',
+        modelDbId: 'm1',
+        isDefault: true,
+      },
+    ])
+  })
+})
+
+describe('listStructuredOutputCapableModels', () => {
+  it('drops models that do not support structured output and models whose provider is not in the enabled-providers list', async () => {
+    const supabase = createFakeSupabase({
+      ai_providers: [{ data: [provider({ id: 'groq-provider', name: 'groq' })], error: null }],
+      ai_models: [
+        {
+          data: [
+            model({ id: 'm1', provider_id: 'groq-provider', model_id: 'openai/gpt-oss-120b', supports_structured_output: true, is_default_structured_output: true }),
+            model({ id: 'm2', provider_id: 'groq-provider', model_id: 'no-structured-model', supports_structured_output: false }),
+            model({ id: 'm3', provider_id: 'disabled-provider', model_id: 'orphaned-model', supports_structured_output: true }),
+          ],
+          error: null,
+        },
+      ],
+    }) as never
+
+    const options = await listStructuredOutputCapableModels(supabase)
+
+    expect(options).toEqual([
+      {
+        providerName: 'groq',
+        providerDisplayName: 'Groq',
+        providerDbId: 'groq-provider',
+        modelId: 'openai/gpt-oss-120b',
+        modelDisplayName: 'GPT-4o mini',
+        modelDbId: 'm1',
+        isDefault: true,
+      },
     ])
   })
 })
