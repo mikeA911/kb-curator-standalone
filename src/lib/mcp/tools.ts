@@ -24,6 +24,7 @@ const ArtifactTypeSchema = z.enum([
   'test_results',
   'findings',
   'design_note',
+  'implementation_handoff',
   'other',
 ])
 

@@ -20,6 +20,7 @@ const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   test_results: 'Test Results',
   findings: 'Findings',
   design_note: 'Design Note',
+  implementation_handoff: 'Implementation Handoff',
   other: 'Other',
 }
 

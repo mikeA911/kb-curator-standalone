@@ -1,5 +1,5 @@
 import 'server-only'
-import { getActiveChatProvider } from '@/lib/ai'
+import { resolveChatProvider, getDefaultModel } from '@/lib/ai'
 import type { ChatMessage } from '@/lib/ai'
 import { callTool, getToolSpecs } from '@/lib/mcp/tools'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
@@ -10,11 +10,19 @@ import { createConversation, listMessages, appendMessage } from './conversations
 // changes meaningfully enough that old provenance is worth distinguishing
 // from new. Not tied to a package/app version; this is specifically about
 // "which assistant behavior produced this row."
-export const ASSISTANT_PROMPT_VERSION = 'm6d-v1'
+export const ASSISTANT_PROMPT_VERSION = 'm7-v3'
 
 const SYSTEM_PROMPT = `You are the KB Sandbox Workbench Assistant. You help users navigate and operate the platform: search the Wiki, look up project notes, create projects and workstreams, and attach evidence artifacts.
 
-You only know what your tools tell you -- don't invent facts about the platform's data. If a user describes a new feature they want built, do not attempt to build it: acknowledge the request in your reply as something for them to bring to a coding session, and do not call any tool to try to implement it.
+You only know what your tools tell you -- don't invent facts about the platform's data.
+
+KB Sandbox is an AI Workbench, not an autonomous software-development environment. It helps people understand, evaluate, and design engineering work -- it does not modify a target repository, commit code, open pull requests, or deploy anything. If a user asks you to build, fix, refactor, or deploy something, don't attempt it and don't claim you did: describe setting up the relevant Workbench method as a Project/Workstream instead (e.g. "I can help set up a Refactoring Plan workstream -- the Workbench will analyze the repository and produce a reviewed implementation handoff document you can then bring to your coding environment").
+
+KB Sandbox supports these engineering/knowledge/evaluation activities as named "Workbench methods" -- documented in the platform_handbook Wiki category, not hard-coded here. When a user describes a goal, call search_wiki for the matching Workbench Handbook article and read its Requirements section (Required / Recommended / Optional, plus a Git-required flag) before responding. Each search_wiki call should be for a genuinely different question -- never repeat a search you already ran this conversation, and never search more than twice in one turn. If a search doesn't surface a clearly matching method, say so and ask the user what they're trying to accomplish rather than searching again.
+
+Reply directly, reasoning from what you found: name the method that fits, and note anything Required that seems to be missing and ask for it specifically. If the user then confirms a Required input is genuinely missing, that's a new question worth one more search_wiki call: look up which method produces that missing input (e.g. no OpenAPI spec before MCP Architecture -> search for OpenAPI Discovery) and name that prerequisite method explicitly, rather than offering to generate the missing input yourself. Keep replies conversational, not an exhaustive checklist.
+
+KB Sandbox works in one of three ways depending on the task: it can do some things itself (Native Workbench, e.g. Wiki synthesis, RAG evaluation), it can define and govern work a practitioner runs in an external tool like Claude Code or ChatGPT and returns artifacts from (External Workstream), or it can investigate and produce an evidence-backed specification/Implementation Handoff for someone else to implement (Document-First Engineering -- the default for refactoring and feature work). Mention whichever applies once you know enough to say.
 
 Be concise. When you use a tool, briefly say what you did in your final reply.`
 
@@ -38,13 +46,35 @@ async function stampProvenance(
   }
 }
 
-const MAX_TOOL_ITERATIONS = 5
+// Raised from 5 (M6D's original value) after live testing under M7's
+// requirement-resolution reasoning: a small model legitimately wanting two
+// search_wiki calls plus its final reply was exhausting 5 iterations before
+// producing any text, even for well-scoped requests. 8 leaves real headroom
+// without masking a genuinely runaway tool loop.
+const MAX_TOOL_ITERATIONS = 8
+
+export interface ModelSelection {
+  providerName: string
+  modelId: string
+}
+
+export interface AssistantTurnResult {
+  conversationId: string
+  reply: string
+  providerName: string
+  providerDisplayName: string
+  modelId: string
+  modelDisplayName: string
+  toolsUsed: string[]
+  embeddingModelDisplayName?: string
+}
 
 export async function runAssistantTurn(
   ctx: WorkbenchCallerContext,
   conversationId: string | null,
-  userMessage: string
-): Promise<{ conversationId: string; reply: string }> {
+  userMessage: string,
+  modelSelection?: ModelSelection
+): Promise<AssistantTurnResult> {
   const conversation = conversationId
     ? { id: conversationId }
     : await createConversation(ctx.supabase, ctx.user.id, userMessage.slice(0, 80))
@@ -61,11 +91,12 @@ export async function runAssistantTurn(
   history.push({ role: 'user', content: userMessage })
   await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'user', content: userMessage })
 
-  const provider = await getActiveChatProvider(ctx.supabase, { requestedBy: ctx.user.id })
+  const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
   const tools = getToolSpecs()
+  const toolsUsed = new Set<string>()
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-    const result = await provider.generateChat({ messages: history, system: SYSTEM_PROMPT, tools })
+    const result = await chatProvider.provider.generateChat({ messages: history, system: SYSTEM_PROMPT, tools })
     history.push(result.message)
     await appendMessage(ctx.supabase, {
       conversationId: conversation.id,
@@ -73,13 +104,26 @@ export async function runAssistantTurn(
       role: 'assistant',
       content: result.message.content || null,
       toolCalls: result.message.toolCalls ?? null,
+      provider: chatProvider.providerName,
+      model: chatProvider.modelId,
     })
 
     if (!result.message.toolCalls || result.message.toolCalls.length === 0) {
-      return { conversationId: conversation.id, reply: result.message.content }
+      const embeddingModelDisplayName = toolsUsed.has('search_wiki') ? (await getDefaultModel(ctx.supabase, 'embedding')).model.display_name : undefined
+      return {
+        conversationId: conversation.id,
+        reply: result.message.content,
+        providerName: chatProvider.providerName,
+        providerDisplayName: chatProvider.providerDisplayName,
+        modelId: chatProvider.modelId,
+        modelDisplayName: chatProvider.modelDisplayName,
+        toolsUsed: [...toolsUsed],
+        embeddingModelDisplayName,
+      }
     }
 
     for (const toolCall of result.message.toolCalls) {
+      toolsUsed.add(toolCall.name)
       let toolResultText: string
       try {
         const output = await callTool(ctx, toolCall.name, toolCall.arguments)
@@ -103,6 +147,21 @@ export async function runAssistantTurn(
   }
 
   const fallback = "I wasn't able to finish that within the allotted number of steps -- could you try rephrasing or breaking it into a smaller request?"
-  await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'assistant', content: fallback })
-  return { conversationId: conversation.id, reply: fallback }
+  await appendMessage(ctx.supabase, {
+    conversationId: conversation.id,
+    userId: ctx.user.id,
+    role: 'assistant',
+    content: fallback,
+    provider: chatProvider.providerName,
+    model: chatProvider.modelId,
+  })
+  return {
+    conversationId: conversation.id,
+    reply: fallback,
+    providerName: chatProvider.providerName,
+    providerDisplayName: chatProvider.providerDisplayName,
+    modelId: chatProvider.modelId,
+    modelDisplayName: chatProvider.modelDisplayName,
+    toolsUsed: [...toolsUsed],
+  }
 }

@@ -218,17 +218,70 @@ export async function getActiveStructuredOutputProvider(
   return withLogging(buildProviderClient(provider, model.model_id), logContext)
 }
 
-// M6D: the Assistant's chat provider. Tool-calling is a capability of the
-// default GENERATION model (there's no separate 'chat' model_type), same
-// relationship generation has to structured_output -- so this reuses
-// getDefaultModel('generation') and then asserts the resolved model
-// actually supports tools, surfacing a clear admin-config error instead of
-// a confusing runtime failure if the current default doesn't.
-export async function getActiveChatProvider(
+// M6E: the resolved provider PLUS the display names the Assistant UI needs
+// to show "who it's talking to" and to snapshot into chat_messages
+// provenance. Tool-calling is a capability of the default GENERATION model
+// (there's no separate 'chat' model_type), same relationship generation has
+// to structured_output. A caller-supplied selection (from the model picker)
+// takes priority over the registry default -- switching models only
+// affects the NEXT turn, never rewrites history, since provenance is
+// stamped per-message by the caller using the values returned here.
+export interface ChatProviderInfo {
+  provider: AIProvider
+  providerName: string
+  providerDisplayName: string
+  modelId: string
+  modelDisplayName: string
+}
+
+export async function resolveChatProvider(
   supabase: SupabaseClient<Database>,
+  selection?: { providerName: string; modelId: string },
   logContext: LogContext = {}
-): Promise<AIProvider> {
-  const { provider, model } = await getDefaultModel(supabase, 'generation')
+): Promise<ChatProviderInfo> {
+  const { provider, model } = selection
+    ? await resolveModel(supabase, selection.providerName, selection.modelId)
+    : await getDefaultModel(supabase, 'generation')
   assertModelCapability(model, 'tools')
-  return withLogging(buildProviderClient(provider, model.model_id), logContext)
+  return {
+    provider: withLogging(buildProviderClient(provider, model.model_id), logContext),
+    providerName: provider.name,
+    providerDisplayName: provider.display_name,
+    modelId: model.model_id,
+    modelDisplayName: model.display_name,
+  }
+}
+
+// Powers the Assistant's model picker: enabled providers x enabled
+// generation-type models that support tool calling. Naturally excludes
+// disabled providers/models and embedding-only models (design note §4) --
+// no separate filtering logic needed beyond the flags already on each row.
+export interface ChatModelOption {
+  providerName: string
+  providerDisplayName: string
+  modelId: string
+  modelDisplayName: string
+  isDefault: boolean
+}
+
+export async function listChatCapableModels(supabase: SupabaseClient<Database>): Promise<ChatModelOption[]> {
+  const [providers, models] = await Promise.all([
+    listProviders(supabase, { enabledOnly: true }),
+    listModels(supabase, { modelType: 'generation', enabledOnly: true }),
+  ])
+  const providerById = new Map(providers.map((p) => [p.id, p]))
+  const options: ChatModelOption[] = []
+  for (const model of models) {
+    if (!model.supports_tools) continue
+    const provider = providerById.get(model.provider_id)
+    if (!provider) continue
+    options.push({
+      providerName: provider.name,
+      providerDisplayName: provider.display_name,
+      modelId: model.model_id,
+      modelDisplayName: model.display_name,
+      isDefault: model.is_default,
+    })
+  }
+  return options
 }

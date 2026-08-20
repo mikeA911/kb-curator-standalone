@@ -20,5 +20,7 @@ export {
   getActiveProvider,
   getActiveEmbeddingProvider,
   getActiveStructuredOutputProvider,
-  getActiveChatProvider,
+  resolveChatProvider,
+  listChatCapableModels,
 } from './registry'
+export type { ChatProviderInfo, ChatModelOption } from './registry'

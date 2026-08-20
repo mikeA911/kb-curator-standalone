@@ -531,6 +531,7 @@ export type ArtifactType =
   | 'test_results'
   | 'findings'
   | 'design_note'
+  | 'implementation_handoff'
   | 'other'
 
 export interface WorkstreamArtifact {
@@ -577,11 +578,20 @@ export interface ChatMessageRow {
   // Present on a 'tool' role message: which call this is the result of.
   tool_call_id: string | null
   tool_name: string | null
+  // M6E: plain-text provenance snapshot (raw provider name / model_id),
+  // set only on assistant-role rows -- same convention as
+  // wiki_versions.ai_provider/.ai_model, deliberately not an FK so
+  // historical rows stay accurate if the model is later renamed/disabled.
+  provider: string | null
+  model: string | null
   created_at: string
 }
 
-export type ChatMessageInsert = Omit<ChatMessageRow, 'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content'> &
-  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content'>>
+export type ChatMessageInsert = Omit<
+  ChatMessageRow,
+  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model'
+> &
+  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model'>>
 
 // ============================================
 // Workstream System Understanding Assessment
