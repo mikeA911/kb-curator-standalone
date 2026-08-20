@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { ProfileForm } from '@/components/ProfileForm'
+import { getDefaultStructuredOutputModel } from '@/lib/ai'
 import type { Profile, UserRole } from '@/types/database'
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -21,6 +22,17 @@ export default async function ProfilePage() {
   const { data: profileRow } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profileRow) redirect('/login')
   const profile = profileRow as Profile
+
+  // Best-effort: the journal disclosure names the real current
+  // structured-output model, but a missing AI config shouldn't break the
+  // rest of the profile page -- just fall back to a generic label.
+  let journalModelLabel = "the platform's configured AI model"
+  try {
+    const { provider, model } = await getDefaultStructuredOutputModel(supabase)
+    journalModelLabel = `${provider.display_name} / ${model.display_name}`
+  } catch {
+    // handled by the fallback label above
+  }
 
   return (
     <div className="flex max-w-lg flex-col gap-8">
@@ -49,6 +61,20 @@ export default async function ProfilePage() {
         )}
         <Row label="Member since" value={new Date(profile.created_at).toLocaleDateString()} />
       </div>
+
+      {profile.role !== 'anonymous' && (
+        <div className="rounded border border-zinc-200 bg-white p-4 text-sm">
+          <span className="font-medium">Journal</span>
+          <p className="mt-1 text-zinc-500">
+            Download a private, reflective summary of your last 30 days of Assistant conversations as a Word document. AI ({journalModelLabel})
+            will read and summarize those conversations to write it. This document is generated fresh each time, is never saved by KB Sandbox,
+            and does not become Assistant memory -- only you can see or download it, unless you choose to share the file yourself.
+          </p>
+          <a href="/profile/journal" className="mt-2 inline-block rounded border border-zinc-300 px-3 py-1.5 text-sm hover:border-zinc-400">
+            Download my journal (DOCX)
+          </a>
+        </div>
+      )}
 
       {profile.role === 'admin' && (
         <Link href="/admin" className="rounded border border-zinc-300 bg-white p-4 text-sm hover:border-zinc-400">

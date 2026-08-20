@@ -21,6 +21,7 @@ export {
   getActiveProvider,
   getActiveEmbeddingProvider,
   getActiveStructuredOutputProvider,
+  getDefaultStructuredOutputModel,
   resolveChatProvider,
   listChatCapableModels,
   listStructuredOutputCapableModels,
