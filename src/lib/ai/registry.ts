@@ -232,6 +232,7 @@ export interface ChatProviderInfo {
   providerDisplayName: string
   modelId: string
   modelDisplayName: string
+  maxOutputTokens: number | null
 }
 
 export async function resolveChatProvider(
@@ -249,6 +250,7 @@ export async function resolveChatProvider(
     providerDisplayName: provider.display_name,
     modelId: model.model_id,
     modelDisplayName: model.display_name,
+    maxOutputTokens: model.max_output_tokens,
   }
 }
 

@@ -41,6 +41,10 @@ const CHAT_PROVIDER_INFO = {
   modelId: 'openai/gpt-oss-20b',
   modelDisplayName: 'GPT-OSS 20B',
 }
+// maxOutputTokens is deliberately not in this fixture -- it's read for the
+// generateChat call but never surfaced on AssistantTurnResult, and several
+// assertions below build their expected value via `...CHAT_PROVIDER_INFO`.
+const RESOLVED_CHAT_PROVIDER = { ...CHAT_PROVIDER_INFO, maxOutputTokens: 2048 }
 
 beforeEach(() => {
   resolveChatProviderMock.mockReset()
@@ -53,7 +57,7 @@ beforeEach(() => {
   appendMessageMock.mockReset()
   updateMock.mockReset()
 
-  resolveChatProviderMock.mockResolvedValue({ provider: { generateChat: generateChatMock }, ...CHAT_PROVIDER_INFO })
+  resolveChatProviderMock.mockResolvedValue({ provider: { generateChat: generateChatMock }, ...RESOLVED_CHAT_PROVIDER })
   getDefaultModelMock.mockResolvedValue({ provider: { name: 'gemini' }, model: { display_name: 'Gemini Embedding' } })
   getToolSpecsMock.mockReturnValue([])
   createConversationMock.mockResolvedValue({ id: 'conv-1' })
@@ -74,6 +78,10 @@ describe('runAssistantTurn', () => {
 
     expect(result).toEqual({ conversationId: 'conv-1', reply: 'KB Sandbox is a knowledge platform.', toolsUsed: [], ...CHAT_PROVIDER_INFO })
     expect(generateChatMock).toHaveBeenCalledTimes(1)
+    // The model's configured max_output_tokens (RESOLVED_CHAT_PROVIDER.maxOutputTokens)
+    // must reach the actual provider call -- this is what makes an admin-set
+    // cap (e.g. to control cost on a new provider) actually take effect.
+    expect(generateChatMock).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 2048 }))
     expect(callToolMock).not.toHaveBeenCalled()
     expect(getDefaultModelMock).not.toHaveBeenCalled()
   })

@@ -96,7 +96,12 @@ export async function runAssistantTurn(
   const toolsUsed = new Set<string>()
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-    const result = await chatProvider.provider.generateChat({ messages: history, system: SYSTEM_PROMPT, tools })
+    const result = await chatProvider.provider.generateChat({
+      messages: history,
+      system: SYSTEM_PROMPT,
+      tools,
+      maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
+    })
     history.push(result.message)
     await appendMessage(ctx.supabase, {
       conversationId: conversation.id,
