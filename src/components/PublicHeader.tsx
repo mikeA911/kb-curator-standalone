@@ -24,6 +24,7 @@ export function PublicHeader({ isAuthenticated, logoUrl }: { isAuthenticated: bo
                 collide. "Wiki" is the label the design note wants. */}
             <Link href="/knowledge" className="hover:text-zinc-900">Wiki</Link>
             <Link href="/examples" className="hover:text-zinc-900">Examples</Link>
+            <Link href="/blog" className="hover:text-zinc-900">Blog</Link>
           </nav>
         </div>
         <div className="text-sm text-zinc-600">

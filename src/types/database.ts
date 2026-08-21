@@ -365,6 +365,32 @@ export type TrendingItemInsert = Omit<
   >
 export type TrendingItemUpdate = Partial<Omit<TrendingItem, 'id' | 'created_at'>>
 
+// ============================================
+// Public Blog
+// ============================================
+// Modeled on the Projects/Examples "just publish" pattern (visibility/
+// published_at, one Publish/Unpublish toggle) rather than Wiki's
+// draft/review/approved lifecycle -- see src/app/actions/projects.ts.
+
+export type BlogPostStatus = 'draft' | 'published'
+
+export interface BlogPost {
+  id: string
+  slug: string
+  title: string
+  excerpt: string | null
+  content: string
+  status: BlogPostStatus
+  author_id: string | null
+  published_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type BlogPostInsert = Omit<BlogPost, 'id' | 'created_at' | 'updated_at' | 'status' | 'published_at'> &
+  Partial<Pick<BlogPost, 'status' | 'published_at'>>
+export type BlogPostUpdate = Partial<Omit<BlogPost, 'id' | 'created_at'>>
+
 export interface TrendingComment {
   id: string
   trending_item_id: string
@@ -1388,6 +1414,7 @@ export interface Database {
       }
       wiki_vectors: { Row: WikiVector; Insert: WikiVectorInsert; Update: Partial<WikiVector>; Relationships: [] }
       trending_items: { Row: TrendingItem; Insert: TrendingItemInsert; Update: TrendingItemUpdate; Relationships: [] }
+      blog_posts: { Row: BlogPost; Insert: BlogPostInsert; Update: BlogPostUpdate; Relationships: [] }
       trending_comments: { Row: TrendingComment; Insert: TrendingCommentInsert; Update: Partial<TrendingComment>; Relationships: [] }
       trending_wiki_links: { Row: TrendingWikiLink; Insert: TrendingWikiLinkInsert; Update: Partial<TrendingWikiLink>; Relationships: [] }
       project_notes: { Row: ProjectNote; Insert: ProjectNoteInsert; Update: ProjectNoteUpdate; Relationships: [] }

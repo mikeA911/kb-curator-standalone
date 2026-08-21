@@ -14,6 +14,8 @@ import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
 import { listUnpublishedArticles } from '@/lib/wiki/queries'
 import { BrandingSettings } from '@/components/admin/BrandingSettings'
 import { getBrandingUrls } from '@/lib/branding'
+import { BlogPostsList } from '@/components/admin/BlogPostsList'
+import { listAllPosts } from '@/lib/blog/posts'
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -36,6 +38,7 @@ export default async function AdminPage() {
     brandingUrls,
     conversationalOptions,
     structuredOutputOptions,
+    blogPosts,
   ] = await Promise.all([
     supabase.from('knowledge_bases').select('*').order('name'),
     supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
@@ -47,6 +50,7 @@ export default async function AdminPage() {
     getBrandingUrls(supabase),
     listChatCapableModels(supabase),
     listStructuredOutputCapableModels(supabase),
+    listAllPosts(supabase),
   ])
 
   // Checked server-side only -- reports Configured/Missing, never the value.
@@ -91,6 +95,7 @@ export default async function AdminPage() {
             ),
           },
           { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
+          { id: 'blog', label: 'Blog', content: <BlogPostsList posts={blogPosts} /> },
         ]}
       />
 
