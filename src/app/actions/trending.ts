@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole, AuthError } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createManualDraftArticle, createNextDraftVersion, submitArticleForReview } from '@/lib/wiki/articles'
+import { validateSharedLinkUrl, normalizeUrlForDuplicateDetection } from '@/lib/trending/url-safety'
 import type { WikiCategoryId } from '@/types/database'
 
 function slugify(title: string) {
@@ -14,6 +15,10 @@ function slugify(title: string) {
     .replace(/(^-|-$)/g, '')
 }
 
+export type SubmitTrendingItemResult =
+  | { status: 'created'; id: string }
+  | { status: 'duplicate'; existingItemId: string; existingTitle: string }
+
 export async function submitTrendingItemAction(input: {
   title: string
   sourceUrl: string
@@ -21,28 +26,55 @@ export async function submitTrendingItemAction(input: {
   description: string
   tags: string[]
   projectId: string | null
-}) {
+  // Set once the caller has seen a 'duplicate' result and chosen to submit
+  // anyway (doc: "allow an... exception if genuinely necessary").
+  confirmDuplicate?: boolean
+}): Promise<SubmitTrendingItemResult> {
   const { user, profile, supabase } = await requireUser()
   if (profile.role === 'anonymous') throw new AuthError('Create an account to submit to Trending')
+
+  const sourceUrl = validateSharedLinkUrl(input.sourceUrl)
+  const normalizedSourceUrl = normalizeUrlForDuplicateDetection(sourceUrl)
+  const visibility = input.projectId ? 'project' : 'platform'
+
+  // A found duplicate is returned, not thrown -- a thrown custom error's
+  // extra fields (like the existing item's id) don't reliably survive
+  // Server Action serialization to the client, only Error.message does.
+  if (!input.confirmDuplicate) {
+    let duplicateQuery = supabase
+      .from('trending_items')
+      .select('id, title')
+      .eq('normalized_source_url', normalizedSourceUrl)
+      .eq('status', 'active')
+      .limit(1)
+    duplicateQuery = input.projectId ? duplicateQuery.eq('project_id', input.projectId) : duplicateQuery.eq('visibility', 'platform')
+    const { data: duplicate, error: duplicateError } = await duplicateQuery.maybeSingle()
+    if (duplicateError) throw duplicateError
+    if (duplicate) {
+      return { status: 'duplicate', existingItemId: duplicate.id, existingTitle: duplicate.title }
+    }
+  }
 
   const { data, error } = await supabase
     .from('trending_items')
     .insert({
       title: input.title,
-      source_url: input.sourceUrl,
+      source_url: sourceUrl,
       source_name: input.sourceName,
       description: input.description,
       tags: input.tags,
       submitted_by: user.id,
       project_id: input.projectId,
-      visibility: input.projectId ? 'project' : 'platform',
+      visibility,
+      normalized_source_url: normalizedSourceUrl,
     })
     .select()
     .single()
   if (error) throw error
 
   revalidatePath('/trending')
-  return { id: data.id }
+  revalidatePath('/dashboard')
+  return { status: 'created', id: data.id }
 }
 
 export async function commentOnTrendingItemAction(trendingItemId: string, body: string) {
@@ -95,6 +127,30 @@ export async function archiveTrendingItemAction(trendingItemId: string) {
   const { error } = await supabase.from('trending_items').update({ status: 'archived' }).eq('id', trendingItemId)
   if (error) throw error
 
+  revalidatePath('/trending')
+  revalidatePath(`/trending/${trendingItemId}`)
+}
+
+// The dashboard's Shared Links "Remove" control -- deliberately
+// admin-only, stricter than archiveTrendingItemAction above (curator+),
+// which stays untouched for the existing Trending curation workflow.
+// Recoverable (sets status='archived', same as archive) but stamps a
+// moderation audit trail so the removal itself -- who, when, why -- is
+// never lost, per the doc's "recoverable archive, not physical deletion".
+export async function removeSharedLinkAction(trendingItemId: string, reason?: string) {
+  const { user, supabase } = await requireRole('admin')
+  const { error } = await supabase
+    .from('trending_items')
+    .update({
+      status: 'archived',
+      archived_by: user.id,
+      archived_at: new Date().toISOString(),
+      moderation_reason: reason?.trim() || null,
+    })
+    .eq('id', trendingItemId)
+  if (error) throw error
+
+  revalidatePath('/dashboard')
   revalidatePath('/trending')
   revalidatePath(`/trending/${trendingItemId}`)
 }

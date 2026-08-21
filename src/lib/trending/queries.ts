@@ -119,6 +119,42 @@ export async function listTrendingUnderReview(supabase: SupabaseClient<Database>
   return data ?? []
 }
 
+export interface SharedLinkRow {
+  id: string
+  title: string
+  source_url: string
+  source_name: string | null
+  description: string
+  tags: string[]
+  created_at: string
+  contributorEmail: string | null
+}
+
+// Dashboard "Shared links" card -- platform-visible only (project-scoped
+// items stay on the full Trending page, per the doc), newest first, capped
+// to a small fixed count. Resolves submitted_by -> contributor email via
+// the same two-query pattern already used by listComments above (no
+// embedded select, per that function's comment on Relationships: []).
+export async function listRecentSharedLinks(supabase: SupabaseClient<Database>, limit = 5): Promise<SharedLinkRow[]> {
+  const { data: items, error } = await supabase
+    .from('trending_items')
+    .select('id, title, source_url, source_name, description, tags, submitted_by, created_at')
+    .eq('status', 'active')
+    .eq('visibility', 'platform')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  if (!items || items.length === 0) return []
+
+  const contributorIds = [...new Set(items.map((i) => i.submitted_by).filter((id): id is string => !!id))]
+  const { data: contributors, error: contributorsError } =
+    contributorIds.length > 0 ? await supabase.from('profiles').select('id, email').in('id', contributorIds) : { data: [], error: null }
+  if (contributorsError) throw contributorsError
+
+  const emailById = new Map((contributors ?? []).map((c) => [c.id, c.email]))
+  return items.map((i) => ({ ...i, contributorEmail: i.submitted_by ? (emailById.get(i.submitted_by) ?? null) : null }))
+}
+
 export async function getTrendingStats(supabase: SupabaseClient<Database>) {
   const { data, error } = await supabase.from('trending_items').select('status')
   if (error) throw error

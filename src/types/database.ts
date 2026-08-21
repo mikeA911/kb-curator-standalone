@@ -328,15 +328,41 @@ export interface TrendingItem {
   // Separate axis from status -- see wiki_articles.is_public precedent.
   is_public: boolean
   published_at: string | null
+  // Dashboard Shared Links moderation audit trail -- stamped by
+  // removeSharedLinkAction, the admin-only path (stricter than the existing
+  // curator-or-admin RLS, enforced in application code -- see the migration
+  // comment in 20260821100001_shared_links_moderation.sql).
+  archived_by: string | null
+  archived_at: string | null
+  moderation_reason: string | null
+  // Computed by normalizeUrlForDuplicateDetection (src/lib/trending/url-safety.ts)
+  // at submission time -- never the displayed/stored URL itself.
+  normalized_source_url: string | null
   created_at: string
   updated_at: string
 }
 
 export type TrendingItemInsert = Omit<
   TrendingItem,
-  'id' | 'created_at' | 'updated_at' | 'status' | 'is_public' | 'published_at' | 'visibility' | 'tags'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'status'
+  | 'is_public'
+  | 'published_at'
+  | 'visibility'
+  | 'tags'
+  | 'archived_by'
+  | 'archived_at'
+  | 'moderation_reason'
+  | 'normalized_source_url'
 > &
-  Partial<Pick<TrendingItem, 'status' | 'is_public' | 'published_at' | 'visibility' | 'tags'>>
+  Partial<
+    Pick<
+      TrendingItem,
+      'status' | 'is_public' | 'published_at' | 'visibility' | 'tags' | 'archived_by' | 'archived_at' | 'moderation_reason' | 'normalized_source_url'
+    >
+  >
 export type TrendingItemUpdate = Partial<Omit<TrendingItem, 'id' | 'created_at'>>
 
 export interface TrendingComment {

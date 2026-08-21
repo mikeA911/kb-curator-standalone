@@ -3,11 +3,12 @@ import { createClient } from '@/lib/supabase/server'
 import { SectionHero } from '@/components/SectionHero'
 import { UnpublishedWikiWidget } from '@/components/wiki/UnpublishedWikiWidget'
 import { NotesForYouWidget, type NoteForYouRow } from '@/components/projects/NotesForYouWidget'
+import { SharedLinksWidget } from '@/components/trending/SharedLinksWidget'
 import { listUnpublishedArticles, getWikiStats } from '@/lib/wiki/queries'
 import { getProjectStats } from '@/lib/projects/queries'
 import { getEvalStats } from '@/lib/eval/queries'
 import { getAgentStats } from '@/lib/agent/queries'
-import { getTrendingStats } from '@/lib/trending/queries'
+import { getTrendingStats, listRecentSharedLinks } from '@/lib/trending/queries'
 import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
 import { hasRequiredRole } from '@/lib/auth'
@@ -23,18 +24,44 @@ export default async function DashboardPage() {
     : { data: null }
   const canSeeWikiQueue = profile ? hasRequiredRole(profile.role, 'curator') : false
   const canSeeNotes = !!user && profile?.role !== 'anonymous'
+  // Every active signed-in user, not just curators -- unlike the widgets
+  // above, per the doc's own acceptance criterion #1.
+  const canSeeSharedLinks = !!user && profile?.role !== 'anonymous'
+  const isAdmin = profile?.role === 'admin'
 
-  const [unpublishedWikiArticles, projectStats, wikiStats, evalStats, agentStats, trendingStats, needsAttention, notesForUser] =
-    await Promise.all([
-      canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
-      getProjectStats(supabase),
-      getWikiStats(supabase),
-      getEvalStats(supabase),
-      getAgentStats(supabase),
-      getTrendingStats(supabase),
-      canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
-      canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
-    ])
+  const [
+    unpublishedWikiArticles,
+    projectStats,
+    wikiStats,
+    evalStats,
+    agentStats,
+    trendingStats,
+    needsAttention,
+    notesForUser,
+    sharedLinks,
+  ] = await Promise.all([
+    canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
+    getProjectStats(supabase),
+    getWikiStats(supabase),
+    getEvalStats(supabase),
+    getAgentStats(supabase),
+    getTrendingStats(supabase),
+    canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
+    canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
+    canSeeSharedLinks ? listRecentSharedLinks(supabase) : Promise.resolve([]),
+  ])
+
+  // Same "projects this user actually belongs to" query as trending/new/page.tsx
+  // -- the Add-link form's project picker. A separate step, same pattern as
+  // notesForYou's project-name lookup below.
+  const { data: memberProjects } = canSeeSharedLinks
+    ? await supabase.from('project_members').select('project_id').eq('user_id', user!.id)
+    : { data: [] }
+  const memberProjectIds = (memberProjects ?? []).map((m) => m.project_id)
+  const { data: sharedLinkProjects } =
+    memberProjectIds.length > 0
+      ? await supabase.from('projects').select('id, name').in('id', memberProjectIds).order('name')
+      : { data: [] }
 
   const projectIds = [...new Set(notesForUser.map((n) => n.project_id))]
   const { data: noteProjects } =
@@ -100,6 +127,7 @@ export default async function DashboardPage() {
       )}
 
       {canSeeWikiQueue && <UnpublishedWikiWidget articles={unpublishedWikiArticles} />}
+      {canSeeSharedLinks && <SharedLinksWidget links={sharedLinks} projects={sharedLinkProjects ?? []} isAdmin={isAdmin} />}
       {canSeeNotes && <NotesForYouWidget notes={notesForYou} />}
     </div>
   )

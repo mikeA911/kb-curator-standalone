@@ -39,6 +39,7 @@ const {
   unlinkTrendingWikiAction,
   markUnderReviewAction,
   archiveTrendingItemAction,
+  removeSharedLinkAction,
   setTrendingPublicAction,
   promoteTrendingToWikiAction,
 } = await import('./trending')
@@ -61,7 +62,14 @@ describe('submitTrendingItemAction', () => {
   })
 
   it('inserts through the RLS-scoped client with submitted_by stamped from the session, not the caller', async () => {
-    const supabase = createFakeSupabase({ trending_items: [{ data: { id: 't-1' }, error: null }] })
+    // Two queued trending_items results: the duplicate-check select (none
+    // found), then the actual insert.
+    const supabase = createFakeSupabase({
+      trending_items: [
+        { data: null, error: null },
+        { data: { id: 't-1' }, error: null },
+      ],
+    })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
 
     const result = await submitTrendingItemAction({
@@ -73,13 +81,18 @@ describe('submitTrendingItemAction', () => {
       projectId: null,
     })
 
-    expect(result).toEqual({ id: 't-1' })
+    expect(result).toEqual({ status: 'created', id: 't-1' })
     const insert = supabase._calls.find((c) => c.table === 'trending_items' && c.method === 'insert')
     expect(insert?.args).toMatchObject({ submitted_by: 'user-1', visibility: 'platform' })
   })
 
   it('sets visibility to project when a project is attached', async () => {
-    const supabase = createFakeSupabase({ trending_items: [{ data: { id: 't-1' }, error: null }] })
+    const supabase = createFakeSupabase({
+      trending_items: [
+        { data: null, error: null },
+        { data: { id: 't-1' }, error: null },
+      ],
+    })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
 
     await submitTrendingItemAction({
@@ -93,6 +106,61 @@ describe('submitTrendingItemAction', () => {
 
     const insert = supabase._calls.find((c) => c.table === 'trending_items' && c.method === 'insert')
     expect(insert?.args).toMatchObject({ project_id: 'p-1', visibility: 'project' })
+  })
+
+  it('rejects an invalid URL before touching the database', async () => {
+    const supabase = createFakeSupabase({ trending_items: [] })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+
+    await expect(
+      submitTrendingItemAction({
+        title: 'X',
+        sourceUrl: 'javascript:alert(1)',
+        sourceName: null,
+        description: 'why',
+        tags: [],
+        projectId: null,
+      })
+    ).rejects.toThrow('Only http(s)')
+    expect(supabase._calls).toHaveLength(0)
+  })
+
+  it('returns a duplicate result instead of inserting when an active match already exists', async () => {
+    const supabase = createFakeSupabase({
+      trending_items: [{ data: { id: 'existing-1', title: 'Existing paper' }, error: null }],
+    })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+
+    const result = await submitTrendingItemAction({
+      title: 'New title, same link',
+      sourceUrl: 'https://example.test/paper/',
+      sourceName: null,
+      description: 'why',
+      tags: [],
+      projectId: null,
+    })
+
+    expect(result).toEqual({ status: 'duplicate', existingItemId: 'existing-1', existingTitle: 'Existing paper' })
+    expect(supabase._calls.find((c) => c.method === 'insert')).toBeUndefined()
+  })
+
+  it('inserts anyway when confirmDuplicate is set, even with a duplicate present', async () => {
+    const supabase = createFakeSupabase({
+      trending_items: [{ data: { id: 't-2' }, error: null }],
+    })
+    requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
+
+    const result = await submitTrendingItemAction({
+      title: 'X',
+      sourceUrl: 'https://example.test/paper',
+      sourceName: null,
+      description: 'why',
+      tags: [],
+      projectId: null,
+      confirmDuplicate: true,
+    })
+
+    expect(result).toEqual({ status: 'created', id: 't-2' })
   })
 })
 
@@ -166,6 +234,32 @@ describe('curator-gated status actions', () => {
     expect(requireRoleMock).toHaveBeenCalledWith('curator')
     const update = supabase._calls.find((c) => c.table === 'trending_items' && c.method === 'update')
     expect(update?.args).toEqual({ status: 'archived' })
+  })
+
+  it('removeSharedLinkAction requires admin (stricter than curator-level archive) and stamps a moderation audit trail', async () => {
+    const supabase = createFakeSupabase({ trending_items: [{ data: null, error: null }] })
+    requireRoleMock.mockResolvedValue({ user: { id: 'admin-1' }, supabase })
+
+    await removeSharedLinkAction('t-1', 'Duplicate of an existing entry')
+
+    expect(requireRoleMock).toHaveBeenCalledWith('admin')
+    const update = supabase._calls.find((c) => c.table === 'trending_items' && c.method === 'update')
+    expect(update?.args).toMatchObject({
+      status: 'archived',
+      archived_by: 'admin-1',
+      moderation_reason: 'Duplicate of an existing entry',
+    })
+    expect((update?.args as { archived_at: string }).archived_at).toBeTruthy()
+  })
+
+  it('removeSharedLinkAction stores a null moderation_reason when none is given', async () => {
+    const supabase = createFakeSupabase({ trending_items: [{ data: null, error: null }] })
+    requireRoleMock.mockResolvedValue({ user: { id: 'admin-1' }, supabase })
+
+    await removeSharedLinkAction('t-1')
+
+    const update = supabase._calls.find((c) => c.table === 'trending_items' && c.method === 'update')
+    expect(update?.args).toMatchObject({ moderation_reason: null })
   })
 
   it('setTrendingPublicAction stamps published_at when publishing, clears it when unpublishing', async () => {

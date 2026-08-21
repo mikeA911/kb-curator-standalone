@@ -13,6 +13,7 @@ export function TrendingSubmitForm({ projects }: { projects: { id: string; name:
   const [projectId, setProjectId] = useState('')
   const [tags, setTags] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   function handleSubmit(e: React.FormEvent) {
@@ -24,7 +25,7 @@ export function TrendingSubmitForm({ projects }: { projects: { id: string; name:
     }
     startTransition(async () => {
       try {
-        const { id } = await submitTrendingItemAction({
+        const result = await submitTrendingItemAction({
           title: title.trim(),
           sourceUrl: sourceUrl.trim(),
           sourceName: sourceName.trim() || null,
@@ -34,8 +35,14 @@ export function TrendingSubmitForm({ projects }: { projects: { id: string; name:
             .map((t) => t.trim())
             .filter(Boolean),
           projectId: projectId || null,
+          confirmDuplicate,
         })
-        router.push(`/trending/${id}`)
+        if (result.status === 'duplicate') {
+          setError(`This looks like a duplicate of "${result.existingTitle}". Submit again to add it anyway.`)
+          setConfirmDuplicate(true)
+          return
+        }
+        router.push(`/trending/${result.id}`)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to submit')
       }
@@ -49,7 +56,11 @@ export function TrendingSubmitForm({ projects }: { projects: { id: string; name:
         <input
           type="url"
           value={sourceUrl}
-          onChange={(e) => setSourceUrl(e.target.value)}
+          onChange={(e) => {
+            setSourceUrl(e.target.value)
+            // A changed URL needs a fresh duplicate check, not the earlier confirmation.
+            setConfirmDuplicate(false)
+          }}
           placeholder="https://…"
           className="rounded border border-zinc-300 px-3 py-2 text-sm"
         />
@@ -100,7 +111,7 @@ export function TrendingSubmitForm({ projects }: { projects: { id: string; name:
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <button disabled={isPending} className="self-start rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-        {isPending ? 'Submitting…' : 'Submit to Trending'}
+        {isPending ? 'Submitting…' : confirmDuplicate ? 'Submit anyway' : 'Submit to Trending'}
       </button>
     </form>
   )

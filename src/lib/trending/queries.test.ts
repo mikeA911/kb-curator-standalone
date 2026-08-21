@@ -7,6 +7,7 @@ import {
   listWikiLinks,
   listWikiArticlesForLinking,
   listTrendingUnderReview,
+  listRecentSharedLinks,
   getTrendingStats,
 } from './queries'
 
@@ -116,6 +117,73 @@ describe('listTrendingUnderReview', () => {
     })
     const items = await listTrendingUnderReview(supabase as never)
     expect(items).toEqual([{ id: 't-1', title: 'X', status: 'under_review', created_at: '2026-01-01' }])
+  })
+})
+
+describe('listRecentSharedLinks', () => {
+  it('short-circuits to [] when there are no active platform-visible items', async () => {
+    const supabase = createFakeSupabase({ trending_items: [{ data: [], error: null }] })
+    expect(await listRecentSharedLinks(supabase as never)).toEqual([])
+  })
+
+  it('resolves each item\'s contributor email via a second query, not an embedded select', async () => {
+    const supabase = createFakeSupabase({
+      trending_items: [
+        {
+          data: [
+            {
+              id: 't-1',
+              title: 'Retrieval paper',
+              source_url: 'https://example.test/paper',
+              source_name: 'arXiv',
+              description: 'why it matters',
+              tags: ['RAG'],
+              submitted_by: 'u-1',
+              created_at: '2026-01-01',
+            },
+            {
+              id: 't-2',
+              title: 'Anonymous-ish submission',
+              source_url: 'https://example.test/other',
+              source_name: null,
+              description: 'why',
+              tags: [],
+              submitted_by: null,
+              created_at: '2026-01-02',
+            },
+          ],
+          error: null,
+        },
+      ],
+      profiles: [{ data: [{ id: 'u-1', email: 'a@example.com' }], error: null }],
+    })
+
+    const links = await listRecentSharedLinks(supabase as never)
+
+    expect(links).toEqual([
+      {
+        id: 't-1',
+        title: 'Retrieval paper',
+        source_url: 'https://example.test/paper',
+        source_name: 'arXiv',
+        description: 'why it matters',
+        tags: ['RAG'],
+        submitted_by: 'u-1',
+        created_at: '2026-01-01',
+        contributorEmail: 'a@example.com',
+      },
+      {
+        id: 't-2',
+        title: 'Anonymous-ish submission',
+        source_url: 'https://example.test/other',
+        source_name: null,
+        description: 'why',
+        tags: [],
+        submitted_by: null,
+        created_at: '2026-01-02',
+        contributorEmail: null,
+      },
+    ])
   })
 })
 
