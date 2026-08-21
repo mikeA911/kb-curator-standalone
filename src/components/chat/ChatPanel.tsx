@@ -62,8 +62,15 @@ export function ChatPanel() {
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showShortWelcome, setShowShortWelcome] = useState(false)
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
+  // Synchronous re-entry guard for send()/retry() -- isPending (state) isn't
+  // enough on its own, since a second call can read the pre-update isPending
+  // value from the current render's closure before React flushes the state
+  // change that would disable the button (observed live: a fast double-click
+  // or double-Enter could submit the same turn twice).
+  const sendingRef = useRef(false)
 
   useEffect(() => {
     if (!open || models.length > 0) return
@@ -145,15 +152,9 @@ export function ChatPanel() {
 
   const selectedModel = models.find((m) => modelKey(m) === selectedKey)
 
-  async function send(message: string) {
-    if (!message || isPending) return
-    setError(null)
-    setInput('')
-    setDetailsOpenFor(null)
-    setActivity(null)
-    setShowOnboarding(false)
-    setShowShortWelcome(false)
-    setMessages((prev) => [...prev, { role: 'user', content: message }])
+  // Shared by send() (which has already pushed the user bubble) and retry()
+  // (which must not push a second one for the same failed turn).
+  async function performTurn(message: string) {
     const modelSelection: ModelSelection | undefined = selectedModel
       ? { providerName: selectedModel.providerName, modelId: selectedModel.modelId }
       : undefined
@@ -178,11 +179,39 @@ export function ChatPanel() {
       // A brand-new conversation was just created -- it belongs at the top
       // of History from now on, without waiting for a full reload.
       setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))
+      setLastFailedMessage(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message')
+      // Kept as a durable per-turn failure state (not just a transient
+      // banner) so the user can retry the exact same message rather than
+      // retyping it -- the user's bubble is already visible and stays put.
+      setLastFailedMessage(message)
     } finally {
       setIsPending(false)
+      sendingRef.current = false
     }
+  }
+
+  async function send(message: string) {
+    if (!message || sendingRef.current) return
+    sendingRef.current = true
+    setError(null)
+    setLastFailedMessage(null)
+    setInput('')
+    setDetailsOpenFor(null)
+    setActivity(null)
+    setShowOnboarding(false)
+    setShowShortWelcome(false)
+    setMessages((prev) => [...prev, { role: 'user', content: message }])
+    await performTurn(message)
+  }
+
+  async function retry() {
+    if (!lastFailedMessage || sendingRef.current) return
+    sendingRef.current = true
+    setError(null)
+    setActivity(null)
+    await performTurn(lastFailedMessage)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -196,6 +225,7 @@ export function ChatPanel() {
     setDetailsOpenFor(null)
     setActivity(null)
     setError(null)
+    setLastFailedMessage(null)
     setShowOnboarding(false)
     // Starting a new conversation never replaces prior history -- it only
     // resets local state; the short contextual welcome, not the full
@@ -210,6 +240,7 @@ export function ChatPanel() {
     setDetailsOpenFor(null)
     setActivity(null)
     setError(null)
+    setLastFailedMessage(null)
     setConversationId(conv.id)
     try {
       const msgs = await getConversationMessagesAction(conv.id)
@@ -340,7 +371,21 @@ export function ChatPanel() {
               </div>
             ))}
             {isPending && <p className="text-sm text-zinc-400">{activity ?? (conversationId ? 'Working…' : 'Thinking…')}</p>}
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-red-600">{error}</p>
+                {lastFailedMessage && (
+                  <button
+                    type="button"
+                    onClick={retry}
+                    disabled={isPending}
+                    className="shrink-0 rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <form onSubmit={handleSubmit} className="flex gap-2 border-t border-zinc-200 p-2">
             <input

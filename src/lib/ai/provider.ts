@@ -148,6 +148,17 @@ export function classifyProviderError(err: unknown): ProviderErrorCode {
   return 'unknown'
 }
 
+// The human-readable half of what classifyProviderError classifies --
+// every provider's catch block folds this into its AIProviderError message,
+// which is what actually lands in ai_operation_logs.error_message via
+// withLogging. Before this existed, every provider threw a hard-coded
+// generic string ("groq generateChat failed") and the real SDK error was
+// only ever attached as .cause, never persisted anywhere -- caught live via
+// a real failure that turned out to be undiagnosable after the fact.
+export function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export interface AIProvider {
   readonly name: string
   generateText(input: GenerateTextInput): Promise<GenerateTextResult>

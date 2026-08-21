@@ -3,13 +3,13 @@ import { z } from 'zod'
 
 const createCompletionMock = vi.fn()
 const listModelsMock = vi.fn()
-let capturedConstructorArgs: { apiKey: string; baseURL?: string } | null = null
+let capturedConstructorArgs: { apiKey: string; baseURL?: string; timeout?: number } | null = null
 
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     chat = { completions: { create: (...args: unknown[]) => createCompletionMock(...args) } }
     models = { list: (...args: unknown[]) => listModelsMock(...args) }
-    constructor(args: { apiKey: string; baseURL?: string }) {
+    constructor(args: { apiKey: string; baseURL?: string; timeout?: number }) {
       capturedConstructorArgs = args
     }
   },
@@ -27,7 +27,7 @@ beforeEach(() => {
 describe('OpenAICompatibleProvider (Groq)', () => {
   it('constructs the underlying client with the Groq base URL', () => {
     new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1', 'openai/gpt-oss-20b')
-    expect(capturedConstructorArgs).toEqual({ apiKey: 'test-key', baseURL: 'https://api.groq.com/openai/v1' })
+    expect(capturedConstructorArgs).toEqual({ apiKey: 'test-key', baseURL: 'https://api.groq.com/openai/v1', timeout: 60_000 })
   })
 
   it('satisfies generateText, passing the requested model through to the API call', async () => {
@@ -130,6 +130,16 @@ describe('OpenAICompatibleProvider (Groq)', () => {
         messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call-1', content: '4' }]),
       })
     )
+  })
+
+  it('includes the underlying SDK error in the thrown message, not just a generic string', async () => {
+    createCompletionMock.mockRejectedValue(Object.assign(new Error('429 Too Many Requests'), { status: 429 }))
+    const provider = new OpenAICompatibleProvider('groq', 'test-key', 'https://api.groq.com/openai/v1', 'openai/gpt-oss-20b')
+
+    await expect(provider.generateChat({ messages: [{ role: 'user', content: 'Hi' }] })).rejects.toMatchObject({
+      message: expect.stringContaining('429 Too Many Requests'),
+      errorCode: 'rate_limit',
+    })
   })
 
   it('discovers models via the OpenAI-compatible /models endpoint without enabling anything', async () => {

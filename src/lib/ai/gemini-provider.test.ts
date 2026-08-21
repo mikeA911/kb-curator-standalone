@@ -73,4 +73,14 @@ describe('GeminiProvider.generateChat', () => {
       parts: [{ functionResponse: { id: 'call-1', name: 'calc', response: { result: '4' } } }],
     })
   })
+
+  it('includes the underlying SDK error in the thrown message, not just a generic string', async () => {
+    generateContentMock.mockRejectedValue(Object.assign(new Error('429 RESOURCE_EXHAUSTED'), { status: 429 }))
+    const provider = new GeminiProvider('test-key')
+
+    await expect(provider.generateChat({ messages: [{ role: 'user', content: 'Hi' }] })).rejects.toMatchObject({
+      message: expect.stringContaining('429 RESOURCE_EXHAUSTED'),
+      errorCode: 'rate_limit',
+    })
+  })
 })

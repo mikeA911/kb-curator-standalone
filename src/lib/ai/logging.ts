@@ -1,5 +1,6 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { AIProviderError } from './provider'
 import type {
   AIProvider,
   EmbedInput,
@@ -7,6 +8,14 @@ import type {
   GenerateStructuredInput,
   GenerateTextInput,
 } from './provider'
+
+// Every provider's own catch block already classifies its cause (see
+// classifyProviderError in provider.ts) -- reuse that instead of losing it
+// here. A plain thrown Error (not an AIProviderError) has no such
+// classification, so it's recorded as null rather than a guessed default.
+function errorCodeOf(err: unknown): string | null {
+  return err instanceof AIProviderError ? err.errorCode : null
+}
 
 export interface LogContext {
   documentId?: string
@@ -36,7 +45,9 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
     operation: 'generate_text' | 'generate_structured' | 'generate_chat' | 'embed',
     model: string,
     startedAt: number,
-    outcome: { success: true; inputTokens: number | null; outputTokens: number | null } | { success: false; error: string }
+    outcome:
+      | { success: true; inputTokens: number | null; outputTokens: number | null }
+      | { success: false; error: string; errorCode: string | null }
   ) => {
     const admin = createAdminClient()
     const { data } = await admin
@@ -57,6 +68,7 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         output_tokens: outcome.success ? outcome.outputTokens : null,
         success: outcome.success,
         error_message: outcome.success ? null : outcome.error,
+        error_code: outcome.success ? null : outcome.errorCode,
       })
       .select('id')
       .single()
@@ -73,7 +85,7 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         await record('generate_text', result.model, startedAt, { success: true, ...result.usage })
         return result
       } catch (err) {
-        await record('generate_text', 'unknown', startedAt, { success: false, error: (err as Error).message })
+        await record('generate_text', 'unknown', startedAt, { success: false, error: (err as Error).message, errorCode: errorCodeOf(err) })
         throw err
       }
     },
@@ -85,7 +97,11 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         await record('generate_structured', result.model, startedAt, { success: true, ...result.usage })
         return result
       } catch (err) {
-        await record('generate_structured', 'unknown', startedAt, { success: false, error: (err as Error).message })
+        await record('generate_structured', 'unknown', startedAt, {
+          success: false,
+          error: (err as Error).message,
+          errorCode: errorCodeOf(err),
+        })
         throw err
       }
     },
@@ -97,7 +113,7 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         await record('generate_chat', result.model, startedAt, { success: true, ...result.usage })
         return result
       } catch (err) {
-        await record('generate_chat', 'unknown', startedAt, { success: false, error: (err as Error).message })
+        await record('generate_chat', 'unknown', startedAt, { success: false, error: (err as Error).message, errorCode: errorCodeOf(err) })
         throw err
       }
     },
@@ -109,7 +125,7 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         await record('embed', result.model, startedAt, { success: true, ...result.usage })
         return result
       } catch (err) {
-        await record('embed', 'unknown', startedAt, { success: false, error: (err as Error).message })
+        await record('embed', 'unknown', startedAt, { success: false, error: (err as Error).message, errorCode: errorCodeOf(err) })
         throw err
       }
     },

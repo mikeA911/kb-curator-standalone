@@ -180,6 +180,11 @@ export interface AIOperationLog {
   output_tokens: number | null
   success: boolean
   error_message: string | null
+  // The already-computed classification (rate_limit / quota_exceeded /
+  // model_unavailable / authentication / invalid_request / unknown -- see
+  // classifyProviderError in src/lib/ai/provider.ts), stored alongside the
+  // free-text error_message so a failure category can be queried directly.
+  error_code: string | null
   eval_run_id: string | null
   eval_case_id: string | null
   graph_run_id: string | null

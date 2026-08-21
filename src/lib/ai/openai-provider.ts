@@ -14,7 +14,7 @@ import type {
   ToolCall,
 } from './provider'
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions'
-import { AIProviderError } from './provider'
+import { AIProviderError, describeError } from './provider'
 import { extractJsonObject, parseToolArguments } from './json-extract'
 
 export class OpenAIProvider implements AIProvider {
@@ -26,7 +26,11 @@ export class OpenAIProvider implements AIProvider {
     private defaultTextModel: string = 'gpt-4o-mini',
     private defaultEmbedModel: string = 'text-embedding-3-small'
   ) {
-    this.client = new OpenAI({ apiKey })
+    // 60s per attempt -- the SDK default (10 minutes, retried up to 3x) let
+    // a single stalled call hang silently for up to ~30 minutes with no
+    // visible error, caught live via a Journal generation that never
+    // completed or errored within a 2-minute manual test window.
+    this.client = new OpenAI({ apiKey, timeout: 60_000 })
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextResult> {
@@ -49,7 +53,7 @@ export class OpenAIProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('openai', 'generate_text', 'OpenAI generateText failed', err)
+      throw new AIProviderError('openai', 'generate_text', `OpenAI generateText failed: ${describeError(err)}`, err)
     }
   }
 
@@ -77,7 +81,12 @@ export class OpenAIProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('openai', 'generate_structured', `OpenAI generateStructured failed to produce valid output: ${raw}`, err)
+      throw new AIProviderError(
+        'openai',
+        'generate_structured',
+        `OpenAI generateStructured failed: ${describeError(err)} (raw output: ${raw})`,
+        err
+      )
     }
   }
 
@@ -147,7 +156,7 @@ export class OpenAIProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('openai', 'generate_chat', 'OpenAI generateChat failed', err)
+      throw new AIProviderError('openai', 'generate_chat', `OpenAI generateChat failed: ${describeError(err)}`, err)
     }
   }
 
@@ -163,7 +172,7 @@ export class OpenAIProvider implements AIProvider {
         usage: { inputTokens: res.usage?.prompt_tokens ?? null, outputTokens: null },
       }
     } catch (err) {
-      throw new AIProviderError('openai', 'embed', 'OpenAI embed failed', err)
+      throw new AIProviderError('openai', 'embed', `OpenAI embed failed: ${describeError(err)}`, err)
     }
   }
 }

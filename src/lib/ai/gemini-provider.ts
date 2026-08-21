@@ -14,7 +14,7 @@ import type {
   ToolCall,
 } from './provider'
 import type { Content } from '@google/genai'
-import { AIProviderError } from './provider'
+import { AIProviderError, describeError } from './provider'
 import { extractJsonObject } from './json-extract'
 
 // gemini-embedding-001's native output is much larger than older models';
@@ -32,7 +32,10 @@ export class GeminiProvider implements AIProvider {
     private defaultEmbedModel: string = 'gemini-embedding-001',
     private embedDimensions: number = DEFAULT_EMBED_DIMENSIONS
   ) {
-    this.client = new GoogleGenAI({ apiKey })
+    // 60s per attempt -- see openai-provider.ts's constructor comment for
+    // why an explicit timeout matters (a stalled call with no timeout can
+    // hang far longer than any UI would wait, with no visible error).
+    this.client = new GoogleGenAI({ apiKey, httpOptions: { timeout: 60_000 } })
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextResult> {
@@ -60,7 +63,7 @@ export class GeminiProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('gemini', 'generate_text', 'Gemini generateText failed', err)
+      throw new AIProviderError('gemini', 'generate_text', `Gemini generateText failed: ${describeError(err)}`, err)
     }
   }
 
@@ -91,7 +94,12 @@ export class GeminiProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('gemini', 'generate_structured', `Gemini generateStructured failed to produce valid output: ${raw}`, err)
+      throw new AIProviderError(
+        'gemini',
+        'generate_structured',
+        `Gemini generateStructured failed: ${describeError(err)} (raw output: ${raw})`,
+        err
+      )
     }
   }
 
@@ -161,7 +169,7 @@ export class GeminiProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError('gemini', 'generate_chat', 'Gemini generateChat failed', err)
+      throw new AIProviderError('gemini', 'generate_chat', `Gemini generateChat failed: ${describeError(err)}`, err)
     }
   }
 
@@ -181,7 +189,7 @@ export class GeminiProvider implements AIProvider {
         usage: { inputTokens: null, outputTokens: null },
       }
     } catch (err) {
-      throw new AIProviderError('gemini', 'embed', 'Gemini embed failed', err)
+      throw new AIProviderError('gemini', 'embed', `Gemini embed failed: ${describeError(err)}`, err)
     }
   }
 }

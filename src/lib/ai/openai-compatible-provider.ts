@@ -14,7 +14,7 @@ import type {
   ToolCall,
 } from './provider'
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions'
-import { AIProviderError } from './provider'
+import { AIProviderError, describeError } from './provider'
 import { extractJsonObject, parseToolArguments } from './json-extract'
 
 export interface DiscoveredModel {
@@ -37,7 +37,11 @@ export class OpenAICompatibleProvider implements AIProvider {
     private baseURL: string,
     private defaultTextModel?: string
   ) {
-    this.client = new OpenAI({ apiKey, baseURL })
+    // 60s per attempt -- the SDK default (10 minutes, retried up to 3x) let
+    // a single stalled call hang silently for up to ~30 minutes with no
+    // visible error, caught live via a Journal generation that never
+    // completed or errored within a 2-minute manual test window.
+    this.client = new OpenAI({ apiKey, baseURL, timeout: 60_000 })
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextResult> {
@@ -60,7 +64,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError(this.name, 'generate_text', `${this.name} generateText failed`, err)
+      throw new AIProviderError(this.name, 'generate_text', `${this.name} generateText failed: ${describeError(err)}`, err)
     }
   }
 
@@ -88,7 +92,12 @@ export class OpenAICompatibleProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError(this.name, 'generate_structured', `${this.name} generateStructured failed to produce valid output: ${raw}`, err)
+      throw new AIProviderError(
+        this.name,
+        'generate_structured',
+        `${this.name} generateStructured failed: ${describeError(err)} (raw output: ${raw})`,
+        err
+      )
     }
   }
 
@@ -158,7 +167,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         },
       }
     } catch (err) {
-      throw new AIProviderError(this.name, 'generate_chat', `${this.name} generateChat failed`, err)
+      throw new AIProviderError(this.name, 'generate_chat', `${this.name} generateChat failed: ${describeError(err)}`, err)
     }
   }
 
@@ -182,7 +191,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       const res = await this.client.models.list()
       return res.data.map((m) => ({ id: m.id }))
     } catch (err) {
-      throw new AIProviderError(this.name, 'generate_text', `${this.name} model discovery failed`, err)
+      throw new AIProviderError(this.name, 'generate_text', `${this.name} model discovery failed: ${describeError(err)}`, err)
     }
   }
 
