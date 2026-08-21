@@ -13,6 +13,7 @@ import type { ChatModelOption } from '@/lib/ai'
 import type { ModelSelection } from '@/lib/chat/loop'
 import type { DisplayMessage } from '@/lib/chat/conversations'
 import type { Conversation } from '@/types/database'
+import { Markdown } from '@/components/shared/Markdown'
 
 type PanelMessage = DisplayMessage & { embeddingModelDisplayName?: string }
 
@@ -71,6 +72,12 @@ export function ChatPanel() {
   // change that would disable the button (observed live: a fast double-click
   // or double-Enter could submit the same turn twice).
   const sendingRef = useRef(false)
+  // Set the instant the user starts a new conversation, resumes one, or
+  // sends a message -- their action always wins over a still-in-flight
+  // auto-resume from the effect below (observed live: opening the panel and
+  // acting before the delayed history load finished let the load silently
+  // replace the active conversation once it resolved).
+  const userActedRef = useRef(false)
 
   useEffect(() => {
     if (!open || models.length > 0) return
@@ -97,7 +104,10 @@ export function ChatPanel() {
     listRecentConversationsAction()
       .then(async (list) => {
         if (cancelled) return
+        // The History list itself is always safe to refresh, independent of
+        // whether the active conversation gets auto-resumed below.
         setConversations(list)
+        if (userActedRef.current) return
         if (list.length === 0) {
           setShowOnboarding(true)
           return
@@ -105,7 +115,7 @@ export function ChatPanel() {
         const mostRecent = list[0]
         try {
           const msgs = await getConversationMessagesAction(mostRecent.id)
-          if (cancelled) return
+          if (cancelled || userActedRef.current) return
           setConversationId(mostRecent.id)
           setMessages(msgs)
         } catch {
@@ -195,6 +205,7 @@ export function ChatPanel() {
   async function send(message: string) {
     if (!message || sendingRef.current) return
     sendingRef.current = true
+    userActedRef.current = true
     setError(null)
     setLastFailedMessage(null)
     setInput('')
@@ -220,6 +231,7 @@ export function ChatPanel() {
   }
 
   function handleNewConversation() {
+    userActedRef.current = true
     setConversationId(null)
     setMessages([])
     setDetailsOpenFor(null)
@@ -234,6 +246,7 @@ export function ChatPanel() {
   }
 
   async function handleResume(conv: Conversation) {
+    userActedRef.current = true
     historyDetailsRef.current?.removeAttribute('open')
     setShowOnboarding(false)
     setShowShortWelcome(false)
@@ -334,16 +347,17 @@ export function ChatPanel() {
                 Ask about the platform, search the Wiki, or ask me to create a project or workstream.
               </p>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`text-sm ${m.role === 'user' ? 'text-right' : ''}`}>
-                <span
-                  className={`inline-block max-w-[85%] whitespace-pre-wrap rounded px-2 py-1 ${
-                    m.role === 'user' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-800'
-                  }`}
-                >
-                  {m.content}
-                </span>
-                {m.role === 'assistant' && m.providerDisplayName && (
+            {messages.map((m, i) =>
+              m.role === 'user' ? (
+                <div key={i} className="text-right text-sm">
+                  <span className="inline-block max-w-[85%] whitespace-pre-wrap rounded bg-zinc-900 px-2 py-1 text-white">{m.content}</span>
+                </div>
+              ) : (
+                <div key={i} className="text-sm">
+                  <div className="inline-block max-w-[95%] rounded bg-zinc-100 px-2 py-1">
+                    <Markdown text={m.content} />
+                  </div>
+                  {m.providerDisplayName && (
                   <div className="mt-0.5">
                     <button
                       type="button"
