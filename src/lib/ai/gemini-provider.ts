@@ -122,7 +122,18 @@ export class GeminiProvider implements AIProvider {
           role: 'model',
           parts: [
             ...(m.content ? [{ text: m.content }] : []),
-            ...(m.toolCalls ?? []).map((tc) => ({ functionCall: { id: tc.id, name: tc.name, args: tc.arguments } })),
+            // thoughtSignature must be echoed back on the same part as the
+            // functionCall it belongs to -- Gemini rejects the next request
+            // with "Function call is missing a thought_signature" otherwise
+            // (a thinking model needs to reconstruct the reasoning that led
+            // to that specific call). Absent for calls from a non-thinking
+            // provider's history, if a conversation ever mixes providers.
+            ...(m.toolCalls ?? []).map((tc) => ({
+              functionCall: { id: tc.id, name: tc.name, args: tc.arguments },
+              ...(typeof tc.providerData?.thoughtSignature === 'string'
+                ? { thoughtSignature: tc.providerData.thoughtSignature }
+                : {}),
+            })),
           ],
         }
       })
@@ -148,10 +159,16 @@ export class GeminiProvider implements AIProvider {
         },
       })
 
-      const toolCalls: ToolCall[] = (res.functionCalls ?? []).map((fc, i) => ({
-        id: fc.id ?? `${fc.name ?? 'call'}-${i}`,
-        name: fc.name ?? '',
-        arguments: fc.args ?? {},
+      // Walk the raw parts (not the res.functionCalls convenience getter --
+      // it discards thoughtSignature, which sits on the same Part as
+      // functionCall, not on FunctionCall itself) so each call's signature
+      // can be captured and later echoed back on the same turn's request.
+      const functionCallParts = (res.candidates?.[0]?.content?.parts ?? []).filter((p) => p.functionCall)
+      const toolCalls: ToolCall[] = functionCallParts.map((p, i) => ({
+        id: p.functionCall?.id ?? `${p.functionCall?.name ?? 'call'}-${i}`,
+        name: p.functionCall?.name ?? '',
+        arguments: p.functionCall?.args ?? {},
+        ...(p.thoughtSignature ? { providerData: { thoughtSignature: p.thoughtSignature } } : {}),
       }))
 
       const message: ChatMessage = {

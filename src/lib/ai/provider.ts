@@ -53,6 +53,13 @@ export interface ToolCall {
   id: string
   name: string
   arguments: Record<string, unknown>
+  // Opaque, provider-specific data a provider needs echoed back on a later
+  // turn to correctly resume from this exact call -- e.g. Gemini's
+  // thought_signature (required on any function-call part sent back to a
+  // "thinking" model, or the API rejects the request). Other providers
+  // never set or read this; it round-trips through chat_messages.tool_calls
+  // (jsonb) like the rest of a ToolCall.
+  providerData?: Record<string, unknown>
 }
 
 export interface ToolSpec {

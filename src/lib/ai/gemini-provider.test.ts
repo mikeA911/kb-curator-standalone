@@ -34,7 +34,7 @@ describe('GeminiProvider.generateChat', () => {
   it('maps functionCalls into ToolCall[]', async () => {
     generateContentMock.mockResolvedValue({
       text: '',
-      functionCalls: [{ id: 'call-1', name: 'search_wiki', args: { query: 'RAG' } }],
+      candidates: [{ content: { parts: [{ functionCall: { id: 'call-1', name: 'search_wiki', args: { query: 'RAG' } } }] } }],
       usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 6 },
     })
     const provider = new GeminiProvider('test-key')
@@ -49,6 +49,39 @@ describe('GeminiProvider.generateChat', () => {
     expect(call.config.tools).toEqual([
       { functionDeclarations: [{ name: 'search_wiki', description: 'Search the wiki', parametersJsonSchema: { type: 'object', properties: {} } }] },
     ])
+  })
+
+  it('captures thoughtSignature alongside a function call and echoes it back on the next turn', async () => {
+    generateContentMock.mockResolvedValue({
+      text: '',
+      candidates: [
+        { content: { parts: [{ functionCall: { id: 'call-1', name: 'search_wiki', args: { query: 'RAG' } }, thoughtSignature: 'sig-abc' }] } },
+      ],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 6 },
+    })
+    const provider = new GeminiProvider('test-key')
+
+    const result = await provider.generateChat({ messages: [{ role: 'user', content: 'What is RAG?' }] })
+
+    expect(result.message.toolCalls).toEqual([
+      { id: 'call-1', name: 'search_wiki', arguments: { query: 'RAG' }, providerData: { thoughtSignature: 'sig-abc' } },
+    ])
+
+    // A later turn resuming this same call must echo the signature back on
+    // the same part -- otherwise Gemini rejects the request (this is the
+    // exact live failure the fix addresses).
+    await provider.generateChat({
+      messages: [
+        { role: 'user', content: 'What is RAG?' },
+        { role: 'assistant', content: '', toolCalls: result.message.toolCalls },
+        { role: 'tool', content: '{}', toolCallId: 'call-1', toolName: 'search_wiki' },
+      ],
+    })
+    const secondCall = generateContentMock.mock.calls[1][0]
+    expect(secondCall.contents[1]).toEqual({
+      role: 'model',
+      parts: [{ functionCall: { id: 'call-1', name: 'search_wiki', args: { query: 'RAG' } }, thoughtSignature: 'sig-abc' }],
+    })
   })
 
   it('sends a tool result back as a user-role functionResponse part', async () => {
