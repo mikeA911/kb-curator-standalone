@@ -37,3 +37,7 @@ next-env.d.ts
 
 # scratch files, not meant for version control
 .tmp/
+
+# internal commercial/business documents, not meant for version control
+/deliverables/
+/docs/commercial/
