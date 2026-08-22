@@ -137,12 +137,28 @@ export function ProviderDetail({
                 <div>
                   <div className="flex items-center gap-2 font-medium">
                     {m.display_name}
-                    {m.is_default && (
+                    {m.model_type === 'generation' && m.is_default && (
                       <span
                         title="Used by the Assistant unless the user chooses another model for the next message."
                         className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800"
                       >
                         Conversational default
+                      </span>
+                    )}
+                    {/* is_default is scoped per model_type (a partial unique
+                        index enforces one default per type -- see
+                        src/lib/ai/rls.test.ts), so an embedding model can be
+                        "the" embedding default independently of, and at the
+                        same time as, a generation model being the
+                        conversational default. Label it distinctly rather
+                        than reusing "Conversational default" for a model
+                        that was never eligible for that role. */}
+                    {m.model_type === 'embedding' && m.is_default && (
+                      <span
+                        title="Used for embedding text into vectors -- unrelated to the conversational or structured-output defaults."
+                        className="rounded-full bg-teal-100 px-2 py-0.5 text-xs text-teal-800"
+                      >
+                        Embedding default
                       </span>
                     )}
                     {m.is_default_structured_output && (
@@ -193,7 +209,7 @@ export function ProviderDetail({
                   {/* Only offered when the model actually supports tool calling -- the Assistant
                       requires it (assertModelCapability(model, 'tools')), so offering this for
                       every model regardless would let an admin silently break it at runtime. */}
-                  {!m.is_default && m.supports_tools && (
+                  {m.model_type === 'generation' && !m.is_default && m.supports_tools && (
                     <button
                       disabled={isPending}
                       onClick={() =>

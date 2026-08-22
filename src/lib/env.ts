@@ -19,7 +19,6 @@ export const env = {
   supabaseAnonKey: () => required('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
   supabaseServiceRoleKey: () => required('SUPABASE_SERVICE_ROLE_KEY'),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
-  googleApiKey: () => optional('GOOGLE_API_KEY'),
   groqApiKey: () => optional('GROQ_API_KEY'),
   // Generic lookup for openai_compatible provider rows, whose env var name
   // is admin-configured (ai_providers.api_key_env_var) rather than known at
