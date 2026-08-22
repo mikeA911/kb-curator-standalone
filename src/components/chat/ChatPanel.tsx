@@ -78,6 +78,17 @@ export function ChatPanel() {
   // acting before the delayed history load finished let the load silently
   // replace the active conversation once it resolved).
   const userActedRef = useRef(false)
+  // Identifies which performTurn() call owns the pending/sendingRef/activity
+  // state. Bumped both at the start of every new turn and whenever the user
+  // switches conversations mid-turn (handleResume/handleNewConversation) --
+  // a turn whose number no longer matches is stale and must not touch
+  // shared state when it resolves, however late. Without this, a slow
+  // response from conversation A landed in whichever conversation happened
+  // to be displayed by the time it finished (regression: completion from
+  // one conversation appearing in another after switching History).
+  const turnSeqRef = useRef(0)
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [staleRun, setStaleRun] = useState(false)
 
   useEffect(() => {
     if (!open || models.length > 0) return
@@ -168,9 +179,24 @@ export function ChatPanel() {
     const modelSelection: ModelSelection | undefined = selectedModel
       ? { providerName: selectedModel.providerName, modelId: selectedModel.modelId }
       : undefined
+    turnSeqRef.current += 1
+    const myTurn = turnSeqRef.current
     setIsPending(true)
+    setStaleRun(false)
+    // Purely informational -- the provider call itself is already bounded
+    // (60s per request), so this never invents a failure. It just gives the
+    // user a visible way out if a turn is taking unusually long instead of
+    // leaving "Thinking..." on screen with no recourse (regression: a
+    // completed response only became visible after opening History).
+    staleTimerRef.current = setTimeout(() => {
+      if (myTurn === turnSeqRef.current) setStaleRun(true)
+    }, 30_000)
     try {
       const result = await sendChatMessageAction(conversationId, message, modelSelection)
+      // The user may have switched to a different conversation (or started
+      // a new one) while this was in flight -- a stale turn's result must
+      // never overwrite what's currently displayed.
+      if (myTurn !== turnSeqRef.current) return
       setConversationId(result.conversationId)
       setMessages((prev) => [
         ...prev,
@@ -191,14 +217,39 @@ export function ChatPanel() {
       setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))
       setLastFailedMessage(null)
     } catch (err) {
+      if (myTurn !== turnSeqRef.current) return
       setError(err instanceof Error ? err.message : 'Failed to send message')
       // Kept as a durable per-turn failure state (not just a transient
       // banner) so the user can retry the exact same message rather than
       // retyping it -- the user's bubble is already visible and stays put.
       setLastFailedMessage(message)
     } finally {
-      setIsPending(false)
-      sendingRef.current = false
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+      if (myTurn === turnSeqRef.current) {
+        setIsPending(false)
+        setStaleRun(false)
+        sendingRef.current = false
+      }
+    }
+  }
+
+  // Recovery action for a turn stuck past the stale threshold: reconcile
+  // from the server's own record of the conversation instead of requiring
+  // the user to discover the completed reply by opening History. Also
+  // invalidates the stuck turn so its eventual (possibly very late)
+  // resolution can't re-apply or duplicate anything.
+  async function recoverStuckTurn() {
+    turnSeqRef.current += 1
+    setIsPending(false)
+    setStaleRun(false)
+    sendingRef.current = false
+    if (!conversationId) return
+    try {
+      const msgs = await getConversationMessagesAction(conversationId)
+      setMessages(msgs)
+    } catch {
+      // Reconciliation is best-effort -- if it fails, the user still has
+      // working controls and can simply try again.
     }
   }
 
@@ -230,8 +281,22 @@ export function ChatPanel() {
     await send(input.trim())
   }
 
+  // Any turn in flight for the conversation being left behind must stop
+  // being able to affect what's on screen -- otherwise its late completion
+  // (or its now-orphaned isPending/sendingRef) would either disable the
+  // conversation the user just switched to, or splice its reply into the
+  // wrong conversation's message list once it resolves.
+  function abandonInFlightTurn() {
+    turnSeqRef.current += 1
+    if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+    setIsPending(false)
+    setStaleRun(false)
+    sendingRef.current = false
+  }
+
   function handleNewConversation() {
     userActedRef.current = true
+    abandonInFlightTurn()
     setConversationId(null)
     setMessages([])
     setDetailsOpenFor(null)
@@ -247,6 +312,7 @@ export function ChatPanel() {
 
   async function handleResume(conv: Conversation) {
     userActedRef.current = true
+    abandonInFlightTurn()
     historyDetailsRef.current?.removeAttribute('open')
     setShowOnboarding(false)
     setShowShortWelcome(false)
@@ -384,7 +450,21 @@ export function ChatPanel() {
                 )}
               </div>
             ))}
-            {isPending && <p className="text-sm text-zinc-400">{activity ?? (conversationId ? 'Working…' : 'Thinking…')}</p>}
+            {isPending && !staleRun && <p className="text-sm text-zinc-400">{activity ?? (conversationId ? 'Working…' : 'Thinking…')}</p>}
+            {isPending && staleRun && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-zinc-400">This is taking longer than expected.</p>
+                {conversationId && (
+                  <button
+                    type="button"
+                    onClick={recoverStuckTurn}
+                    className="shrink-0 rounded border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-50"
+                  >
+                    Refresh conversation
+                  </button>
+                )}
+              </div>
+            )}
             {error && (
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-red-600">{error}</p>
