@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import {
   sendChatMessageAction,
@@ -8,6 +9,7 @@ import {
   getChatActivityAction,
   listRecentConversationsAction,
   getConversationMessagesAction,
+  getAssistantOverviewAction,
 } from '@/app/actions/chat'
 import type { ChatModelOption } from '@/lib/ai'
 import type { ModelSelection } from '@/lib/chat/loop'
@@ -16,6 +18,7 @@ import type { Conversation } from '@/types/database'
 import { Markdown } from '@/components/shared/Markdown'
 
 type PanelMessage = DisplayMessage & { embeddingModelDisplayName?: string }
+type AssistantOverview = Awaited<ReturnType<typeof getAssistantOverviewAction>>
 
 function modelKey(m: { providerName: string; modelId: string }): string {
   return `${m.providerName}::${m.modelId}`
@@ -64,6 +67,7 @@ export function ChatPanel() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showShortWelcome, setShowShortWelcome] = useState(false)
   const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
+  const [assistantOverview, setAssistantOverview] = useState<AssistantOverview | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
   // Synchronous re-entry guard for send()/retry() -- isPending (state) isn't
@@ -331,6 +335,19 @@ export function ChatPanel() {
 
   const headerModelLabel = selectedModel ? `${selectedModel.providerDisplayName} · ${selectedModel.modelDisplayName}` : null
 
+  // Lazy-loaded on first open (details' onToggle fires on every open/close,
+  // not just the first) so this popover never costs a Server Action call
+  // just because the chat panel mounted -- same lazy-load spirit as the
+  // model list above.
+  function loadAssistantOverviewOnce() {
+    if (assistantOverview) return
+    getAssistantOverviewAction()
+      .then(setAssistantOverview)
+      .catch(() => {
+        // Best-effort -- the popover just stays empty if this fails.
+      })
+  }
+
   return (
     <div ref={ref} className="fixed bottom-4 right-4 z-50">
       {open ? (
@@ -358,6 +375,53 @@ export function ChatPanel() {
               </select>
             )}
             {!models.length && headerModelLabel && <p className="mt-0.5 text-xs text-zinc-400">{headerModelLabel}</p>}
+            <details className="relative mt-1" onToggle={loadAssistantOverviewOnce}>
+              <summary className="cursor-pointer list-none text-xs text-zinc-400 hover:text-zinc-600">How this Assistant works</summary>
+              <div className="absolute left-0 z-10 mt-1 max-h-96 w-80 overflow-y-auto rounded border border-zinc-200 bg-white p-3 text-xs shadow-lg">
+                {!assistantOverview && <p className="text-zinc-400">Loading…</p>}
+                {assistantOverview && (
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <p className="font-medium text-zinc-800">{assistantOverview.name}</p>
+                      <p className="mt-0.5 text-zinc-600">{assistantOverview.purpose}</p>
+                    </div>
+                    {headerModelLabel && (
+                      <p className="text-zinc-500">
+                        Currently answering with: <span className="text-zinc-700">{headerModelLabel}</span>
+                      </p>
+                    )}
+                    <p className="text-zinc-500">
+                      Prompt version: <span className="text-zinc-700">{assistantOverview.promptVersion}</span>
+                    </p>
+                    <p className="text-zinc-600">{assistantOverview.plainLanguageExplanation}</p>
+                    <p className="text-zinc-500">User → Model → Tools (if needed) → Response</p>
+                    <div>
+                      <p className="font-medium text-zinc-500">Tools</p>
+                      <ul className="mt-0.5 flex flex-col gap-0.5">
+                        {assistantOverview.tools.map((t) => (
+                          <li key={t.name} className="text-zinc-600">
+                            {t.name} — {t.description}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="font-medium text-zinc-500">Guardrails</p>
+                      <ul className="mt-0.5 flex flex-col gap-0.5">
+                        {assistantOverview.guardrails.map((g) => (
+                          <li key={g.label} className="text-zinc-600">
+                            {g.label} — {g.description}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <Link href="/agents/workbench-assistant" className="text-zinc-500 underline hover:text-zinc-700">
+                      View full Agent flow →
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </details>
             {historyLoaded && (
               <div className="mt-1 flex items-center justify-between">
                 <details ref={historyDetailsRef} className="relative">

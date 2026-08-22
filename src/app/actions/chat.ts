@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth'
 import { runAssistantTurn, type ModelSelection } from '@/lib/chat/loop'
 import { getLatestActivityLabel, listRecentConversations, listMessages, toDisplayMessages } from '@/lib/chat/conversations'
 import { listChatCapableModels, listProviders, listModels } from '@/lib/ai'
+import { getAssistantDescriptor } from '@/lib/workbench/assistant-descriptor'
 
 export async function sendChatMessageAction(conversationId: string | null, message: string, modelSelection?: ModelSelection) {
   const ctx = await requireUser()
@@ -50,4 +51,22 @@ export async function getConversationMessagesAction(conversationId: string) {
     })
   )
   return toDisplayMessages(rows, displayNameByKey)
+}
+
+// Ordinary-user-safe subset of the Assistant descriptor, for the chat
+// panel's compact "How this Assistant works" popover. Deliberately never
+// includes tool parametersSchema, the raw system prompt text, or
+// enforcedBy provenance strings -- those are curator/admin-only and only
+// ever shown on the full /agents/workbench-assistant page, not here.
+export async function getAssistantOverviewAction() {
+  await requireUser()
+  const descriptor = getAssistantDescriptor()
+  return {
+    name: descriptor.name,
+    purpose: descriptor.purpose,
+    promptVersion: descriptor.promptVersion,
+    plainLanguageExplanation: descriptor.plainLanguageExplanation,
+    tools: descriptor.tools.map((t) => ({ name: t.name, description: t.description })),
+    guardrails: descriptor.guardrails.map((g) => ({ label: g.label, description: g.description })),
+  }
 }

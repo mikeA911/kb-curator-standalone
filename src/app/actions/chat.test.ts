@@ -9,6 +9,7 @@ const listMessagesMock = vi.fn()
 const toDisplayMessagesMock = vi.fn()
 const listProvidersMock = vi.fn()
 const listModelsMock = vi.fn()
+const getAssistantDescriptorMock = vi.fn()
 
 vi.mock('@/lib/auth', async () => {
   const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')
@@ -26,9 +27,18 @@ vi.mock('@/lib/ai', () => ({
   listProviders: (...args: unknown[]) => listProvidersMock(...args),
   listModels: (...args: unknown[]) => listModelsMock(...args),
 }))
+vi.mock('@/lib/workbench/assistant-descriptor', () => ({
+  getAssistantDescriptor: (...args: unknown[]) => getAssistantDescriptorMock(...args),
+}))
 
-const { sendChatMessageAction, listChatModelsAction, getChatActivityAction, listRecentConversationsAction, getConversationMessagesAction } =
-  await import('./chat')
+const {
+  sendChatMessageAction,
+  listChatModelsAction,
+  getChatActivityAction,
+  listRecentConversationsAction,
+  getConversationMessagesAction,
+  getAssistantOverviewAction,
+} = await import('./chat')
 
 const ctx = { user: { id: 'user-1' }, profile: { role: 'curator' }, supabase: {} }
 
@@ -42,6 +52,7 @@ beforeEach(() => {
   toDisplayMessagesMock.mockReset()
   listProvidersMock.mockReset()
   listModelsMock.mockReset()
+  getAssistantDescriptorMock.mockReset()
   requireUserMock.mockResolvedValue(ctx)
   listProvidersMock.mockResolvedValue([])
   listModelsMock.mockResolvedValue([])
@@ -105,5 +116,53 @@ describe('getConversationMessagesAction', () => {
     const [, lookup] = toDisplayMessagesMock.mock.calls[0]
     expect(lookup.get('groq::openai/gpt-oss-20b')).toEqual({ providerDisplayName: 'Groq', modelDisplayName: 'GPT-OSS 20B' })
     expect(result).toEqual([{ role: 'user', content: 'hi' }])
+  })
+})
+
+describe('getAssistantOverviewAction', () => {
+  const fakeDescriptor = {
+    id: 'workbench-assistant',
+    name: 'Workbench Assistant',
+    purpose: 'Helps users navigate the platform.',
+    status: 'active',
+    owner: 'KB Sandbox platform team',
+    promptVersion: 'm7-v5',
+    modelRole: 'conversational',
+    maxToolIterations: 8,
+    plainLanguageExplanation: 'A single conversational agent with a bounded tool loop.',
+    nodes: [],
+    tools: [
+      { name: 'search_wiki', description: 'Search the wiki', parametersSchema: { type: 'object' }, requiredPermission: 'Any user', enforcement: 'kb_sandbox_enforced', enforcedBy: 'RLS' },
+    ],
+    guardrails: [
+      { id: 'search-wiki-limit', label: 'Wiki search limit', limit: 2, description: 'At most 2 calls per turn.', enforcement: 'kb_sandbox_enforced', enforcedBy: 'loop.ts' },
+    ],
+  }
+
+  it('requires auth', async () => {
+    getAssistantDescriptorMock.mockReturnValue(fakeDescriptor)
+
+    await getAssistantOverviewAction()
+
+    expect(requireUserMock).toHaveBeenCalled()
+  })
+
+  it('returns only the ordinary-user-safe subset, never schemas/raw prompt/enforcement provenance', async () => {
+    getAssistantDescriptorMock.mockReturnValue(fakeDescriptor)
+
+    const result = await getAssistantOverviewAction()
+
+    expect(result).toEqual({
+      name: 'Workbench Assistant',
+      purpose: 'Helps users navigate the platform.',
+      promptVersion: 'm7-v5',
+      plainLanguageExplanation: 'A single conversational agent with a bounded tool loop.',
+      tools: [{ name: 'search_wiki', description: 'Search the wiki' }],
+      guardrails: [{ label: 'Wiki search limit', description: 'At most 2 calls per turn.' }],
+    })
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain('parametersSchema')
+    expect(serialized).not.toContain('enforcedBy')
+    expect(serialized).not.toContain('kb_sandbox_enforced')
   })
 })

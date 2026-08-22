@@ -32,6 +32,13 @@ There is no "Artifacts" panel or collection in this chat interface, and no artif
 
 Be concise. When you use a tool, briefly say what you did in your final reply.`
 
+// Exposes the live system prompt for display (e.g. the Agent Flow page's
+// curator/admin-only disclosure) without letting SYSTEM_PROMPT itself be
+// imported and role-gating decided elsewhere -- callers just get the text.
+export function getSystemPromptText(): string {
+  return SYSTEM_PROMPT
+}
+
 // A create_* tool succeeded; the loop stamps provenance on the row it just
 // created as a follow-up update -- kept entirely here, not in
 // src/lib/workbench/* or src/lib/mcp/tools.ts, so those stay unaware of
@@ -57,7 +64,13 @@ async function stampProvenance(
 // search_wiki calls plus its final reply was exhausting 5 iterations before
 // producing any text, even for well-scoped requests. 8 leaves real headroom
 // without masking a genuinely runaway tool loop.
-const MAX_TOOL_ITERATIONS = 8
+export const MAX_TOOL_ITERATIONS = 8
+
+// Backstop for the prompt's own "search no more than twice" instruction --
+// hoisted to module scope (not just local to runAssistantTurn) so it can be
+// exported and displayed as a real guardrail value on the Agent Flow page,
+// instead of being restated there as a second hard-coded literal.
+export const SEARCH_WIKI_LIMIT = 2
 
 export interface ModelSelection {
   providerName: string
@@ -103,14 +116,13 @@ export async function runAssistantTurn(
   const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
   const tools = getToolSpecs()
   const toolsUsed = new Set<string>()
-  // Backstop for the prompt's own "search no more than twice" instruction --
-  // a model that ignores it (observed live: GPT-OSS 120B repeatedly
-  // re-searching for content search_wiki wasn't returning) would otherwise
-  // just keep searching until MAX_TOOL_ITERATIONS kills the whole turn. Once
-  // the limit is hit, the tool call is refused with an explanatory result
-  // instead of actually running -- the model gets a clear signal to stop
-  // searching and answer, rather than a silent no-op.
-  const SEARCH_WIKI_LIMIT = 2
+  // A model that ignores the prompt's "search no more than twice" instruction
+  // (observed live: GPT-OSS 120B repeatedly re-searching when search_wiki
+  // wasn't returning content) would otherwise just keep searching until
+  // MAX_TOOL_ITERATIONS kills the whole turn. Once SEARCH_WIKI_LIMIT is hit,
+  // the tool call is refused with an explanatory result instead of actually
+  // running -- the model gets a clear signal to stop searching and answer,
+  // rather than a silent no-op.
   let searchWikiCalls = 0
   // Recomputed each iteration -- cheap (pure, in-memory) and the current
   // turn keeps growing as tool round-trips are appended to `history`.

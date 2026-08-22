@@ -34,7 +34,7 @@ vi.mock('./summary', () => ({
   maybeRefreshSummary: (...args: unknown[]) => maybeRefreshSummaryMock(...args),
 }))
 
-const { runAssistantTurn } = await import('./loop')
+const { runAssistantTurn, MAX_TOOL_ITERATIONS, SEARCH_WIKI_LIMIT } = await import('./loop')
 
 function fakeCtx(): WorkbenchCallerContext {
   return {
@@ -247,5 +247,15 @@ describe('runAssistantTurn', () => {
       { role: 'assistant', content: 'earlier answer', toolCalls: undefined, toolCallId: undefined, toolName: undefined },
       { role: 'user', content: 'follow-up question' },
     ])
+  })
+})
+
+// Regression guard for src/lib/workbench/assistant-descriptor.ts, which
+// imports these instead of restating them -- a change here should be a
+// deliberate choice, not a silent drift the descriptor never notices.
+describe('exported runtime constants', () => {
+  it('keeps MAX_TOOL_ITERATIONS and SEARCH_WIKI_LIMIT at their current values', () => {
+    expect(MAX_TOOL_ITERATIONS).toBe(8)
+    expect(SEARCH_WIKI_LIMIT).toBe(2)
   })
 })
