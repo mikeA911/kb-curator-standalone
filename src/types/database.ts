@@ -676,14 +676,24 @@ export interface ChatMessageRow {
   // historical rows stay accurate if the model is later renamed/disabled.
   provider: string | null
   model: string | null
+  // The structured response envelope (docs/dev-request-structured-assistant-
+  // responses-and-artifacts-panel.md), set only on the final assistant-role
+  // row of a turn. Kept loosely typed here (like tool_calls above) rather
+  // than importing src/lib/chat/response-envelope.ts's PersistedAssistantEnvelope
+  // shape -- the stored references (target kind/id, artifactId, sourceId)
+  // are re-resolved against the current user's access on every read (see
+  // conversations.ts's toDisplayMessages), so this column is never trusted
+  // as pre-resolved routes, and a future schema-version change must fall
+  // back gracefully rather than being assumed to match today's shape.
+  response_payload: Record<string, unknown> | null
   created_at: string
 }
 
 export type ChatMessageInsert = Omit<
   ChatMessageRow,
-  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model'
+  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'
 > &
-  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model'>>
+  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'>>
 
 // ============================================
 // Workstream System Understanding Assessment

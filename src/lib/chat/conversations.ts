@@ -1,6 +1,10 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Conversation, ChatMessageRow, ChatMessageRole } from '@/types/database'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
+import { PersistedAssistantEnvelopeSchema, type PersistedAssistantEnvelope, type VerifiedAssistantEnvelope } from './response-envelope'
+import { resolveEnvelopeForDisplay } from './envelope-resolution'
+import { extractCreatedRecordRef, resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
 
 export async function createConversation(supabase: SupabaseClient<Database>, userId: string, title?: string): Promise<Conversation> {
   const { data, error } = await supabase.from('conversations').insert({ user_id: userId, title: title ?? null }).select().single()
@@ -31,30 +35,46 @@ export interface DisplayMessage {
   providerDisplayName?: string
   modelDisplayName?: string
   toolsUsed?: string[]
+  structured?: VerifiedAssistantEnvelope
+  createdRecords?: ResolvedCreatedRecord[]
 }
 
 // Turns persisted rows back into the same shape ChatPanel renders live.
-// Pure/synchronous: display-name resolution is passed in as a lookup rather
-// than queried here, so this stays trivially unit-testable. A provider/model
-// no longer in the lookup (renamed or removed since) falls back to the raw
-// identifier stored on the row -- provenance is never silently dropped.
-export function toDisplayMessages(
+// Display-name resolution is passed in as a lookup rather than queried here
+// (kept from the original design). No longer pure/synchronous -- a
+// structured response_payload's links/documents/citations and any
+// tool-created records must be re-resolved against the current user's
+// access every time history is read (routes/labels are never cached; see
+// response-envelope.ts's comments), which requires ctx and real queries. A
+// provider/model no longer in the lookup falls back to the raw identifier
+// stored on the row -- provenance is never silently dropped.
+export async function toDisplayMessages(
   rows: ChatMessageRow[],
-  displayNameByKey: Map<string, { providerDisplayName: string; modelDisplayName: string }>
-): DisplayMessage[] {
+  displayNameByKey: Map<string, { providerDisplayName: string; modelDisplayName: string }>,
+  ctx: WorkbenchCallerContext
+): Promise<DisplayMessage[]> {
   const out: DisplayMessage[] = []
   let pendingTools = new Set<string>()
+  let pendingCreatedRefs: CreatedRecordRef[] = []
 
   for (const row of rows) {
     if (row.role === 'user') {
       out.push({ role: 'user', content: row.content ?? '' })
       continue
     }
-    if (row.role === 'tool') continue
+
+    if (row.role === 'tool') {
+      if (row.tool_name && row.content) {
+        const ref = extractCreatedRecordRef(row.tool_name, row.content)
+        if (ref) pendingCreatedRefs.push(ref)
+      }
+      continue
+    }
 
     // An assistant row carrying tool_calls is an intermediate step, never
     // the final reply (runAssistantTurn only stops the loop once a reply
-    // has no tool calls) -- fold its tool names into the next real reply.
+    // has no tool calls, or the model calls present_assistant_response) --
+    // fold its tool names into the next real reply.
     if (row.tool_calls && row.tool_calls.length > 0) {
       for (const call of row.tool_calls) pendingTools.add(call.name)
       continue
@@ -62,14 +82,31 @@ export function toDisplayMessages(
 
     const key = row.provider && row.model ? `${row.provider}::${row.model}` : null
     const names = key ? displayNameByKey.get(key) : undefined
+
+    let structured: VerifiedAssistantEnvelope | undefined
+    if (row.response_payload) {
+      const parsed = PersistedAssistantEnvelopeSchema.safeParse(row.response_payload)
+      // A row from before this feature, or a future incompatible schema
+      // version, fails closed to "no structured payload" -- the plain
+      // content above still renders.
+      if (parsed.success) structured = await resolveEnvelopeForDisplay(ctx, parsed.data as PersistedAssistantEnvelope)
+    }
+
+    const resolvedCreatedRecords = (await Promise.all(pendingCreatedRefs.map((ref) => resolveCreatedRecord(ctx, ref)))).filter(
+      (r): r is ResolvedCreatedRecord => r !== null
+    )
+
     out.push({
       role: 'assistant',
       content: row.content ?? '',
       providerDisplayName: names?.providerDisplayName ?? row.provider ?? undefined,
       modelDisplayName: names?.modelDisplayName ?? row.model ?? undefined,
       toolsUsed: pendingTools.size > 0 ? [...pendingTools] : undefined,
+      structured,
+      createdRecords: resolvedCreatedRecords.length > 0 ? resolvedCreatedRecords : undefined,
     })
     pendingTools = new Set()
+    pendingCreatedRefs = []
   }
 
   return out
@@ -97,6 +134,7 @@ export async function appendMessage(
     toolName?: string | null
     provider?: string | null
     model?: string | null
+    responsePayload?: PersistedAssistantEnvelope | null
   }
 ): Promise<ChatMessageRow> {
   const { data, error } = await supabase
@@ -111,6 +149,7 @@ export async function appendMessage(
       tool_name: input.toolName ?? null,
       provider: input.provider ?? null,
       model: input.model ?? null,
+      response_payload: input.responsePayload ?? null,
     })
     .select()
     .single()

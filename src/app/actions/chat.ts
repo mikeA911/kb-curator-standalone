@@ -50,7 +50,7 @@ export async function getConversationMessagesAction(conversationId: string) {
       ] as const
     })
   )
-  return toDisplayMessages(rows, displayNameByKey)
+  return toDisplayMessages(rows, displayNameByKey, ctx)
 }
 
 // Ordinary-user-safe subset of the Assistant descriptor, for the chat

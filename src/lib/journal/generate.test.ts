@@ -18,7 +18,7 @@ describe('gatherJournalSource', () => {
   it('returns an empty source when there are no conversations in range', async () => {
     const supabase = createFakeSupabase({ conversations: [{ data: [], error: null }] })
 
-    const result = await gatherJournalSource(supabase as never, 'user-1', new Date('2026-07-21'))
+    const result = await gatherJournalSource({ user: { id: 'user-1' }, profile: {}, supabase } as never, new Date('2026-07-21'))
 
     expect(result).toEqual({ conversations: [], evidence: '', truncated: false })
     expect(listMessagesMock).not.toHaveBeenCalled()
@@ -44,7 +44,7 @@ describe('gatherJournalSource', () => {
       ]
     })
 
-    const result = await gatherJournalSource(supabase as never, 'user-1', new Date('2026-07-21'))
+    const result = await gatherJournalSource({ user: { id: 'user-1' }, profile: {}, supabase } as never, new Date('2026-07-21'))
 
     expect(result.truncated).toBe(false)
     expect(result.conversations).toEqual([{ id: 'conv-1', title: 'Refactoring plan', date: '2026-08-01T00:00:00Z' }])
@@ -74,7 +74,7 @@ describe('gatherJournalSource', () => {
       },
     ])
 
-    const result = await gatherJournalSource(supabase as never, 'user-1', new Date('2026-07-21'))
+    const result = await gatherJournalSource({ user: { id: 'user-1' }, profile: {}, supabase } as never, new Date('2026-07-21'))
 
     expect(result.truncated).toBe(true)
     expect(result.conversations).toEqual([])

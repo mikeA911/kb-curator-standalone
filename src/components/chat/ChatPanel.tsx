@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   sendChatMessageAction,
   listChatModelsAction,
@@ -16,6 +16,8 @@ import type { ModelSelection } from '@/lib/chat/loop'
 import type { DisplayMessage } from '@/lib/chat/conversations'
 import type { Conversation } from '@/types/database'
 import { Markdown } from '@/components/shared/Markdown'
+import { deriveArtifacts, artifactsCount } from '@/lib/chat/artifacts'
+import { QuickSummary, RequirementsList, NextStepsList, LinksList, DocumentsList, CitationsList, SuggestedPrompts } from './StructuredResponse'
 
 type PanelMessage = DisplayMessage & { embeddingModelDisplayName?: string }
 type AssistantOverview = Awaited<ReturnType<typeof getAssistantOverviewAction>>
@@ -70,6 +72,7 @@ export function ChatPanel() {
   const [assistantOverview, setAssistantOverview] = useState<AssistantOverview | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
+  const artifactsDetailsRef = useRef<HTMLDetailsElement>(null)
   // Synchronous re-entry guard for send()/retry() -- isPending (state) isn't
   // enough on its own, since a second call can read the pre-update isPending
   // value from the current render's closure before React flushes the state
@@ -153,11 +156,32 @@ export function ChatPanel() {
   useEffect(() => {
     if (!open) return
     function onEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key !== 'Escape') return
+      // Close an open popover first if one is open, rather than also
+      // closing the whole panel in the same keypress.
+      if (artifactsDetailsRef.current?.hasAttribute('open')) {
+        artifactsDetailsRef.current.removeAttribute('open')
+        return
+      }
+      if (historyDetailsRef.current?.hasAttribute('open')) {
+        historyDetailsRef.current.removeAttribute('open')
+        return
+      }
+      setOpen(false)
     }
     document.addEventListener('keydown', onEscape)
     return () => document.removeEventListener('keydown', onEscape)
   }, [open])
+
+  const artifacts = useMemo(() => deriveArtifacts(messages), [messages])
+  const artifactsTotal = artifactsCount(artifacts)
+
+  function goToMessage(index: number) {
+    artifactsDetailsRef.current?.removeAttribute('open')
+    const el = document.getElementById(`chat-message-${index}`)
+    el?.scrollIntoView({ block: 'center' })
+    el?.focus()
+  }
 
   // Real (not simulated) activity feedback: polls whatever the tool-calling
   // loop has most recently persisted for this conversation. Only possible
@@ -211,6 +235,8 @@ export function ChatPanel() {
           modelDisplayName: result.modelDisplayName,
           toolsUsed: result.toolsUsed,
           embeddingModelDisplayName: result.embeddingModelDisplayName,
+          structured: result.structured ?? undefined,
+          createdRecords: result.createdRecords.length > 0 ? result.createdRecords : undefined,
         },
       ])
       // The model that actually served this turn is now known -- if the
@@ -318,6 +344,7 @@ export function ChatPanel() {
     userActedRef.current = true
     abandonInFlightTurn()
     historyDetailsRef.current?.removeAttribute('open')
+    artifactsDetailsRef.current?.removeAttribute('open')
     setShowOnboarding(false)
     setShowShortWelcome(false)
     setDetailsOpenFor(null)
@@ -447,6 +474,88 @@ export function ChatPanel() {
                 </button>
               </div>
             )}
+            <details ref={artifactsDetailsRef} className="relative mt-1">
+              <summary className="cursor-pointer list-none text-xs text-zinc-400 hover:text-zinc-600">
+                Artifacts{artifactsTotal > 0 ? ` (${artifactsTotal})` : ''}
+              </summary>
+              <div className="absolute left-0 z-10 mt-1 max-h-96 w-80 overflow-y-auto rounded border border-zinc-200 bg-white p-3 text-xs shadow-lg">
+                {artifactsTotal === 0 ? (
+                  <p className="text-zinc-400">Nothing collected in this conversation yet.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {artifacts.documents.length > 0 && (
+                      <div>
+                        <p className="font-medium text-zinc-500">Documents</p>
+                        <ul className="mt-0.5 flex flex-col gap-1">
+                          {artifacts.documents.map((doc) => (
+                            <li key={doc.artifactId} className="rounded border border-zinc-200 p-1.5">
+                              <p className="font-medium text-zinc-800">{doc.title}</p>
+                              <p className="text-zinc-500">{doc.documentType.replace(/_/g, ' ')}</p>
+                              <button type="button" onClick={() => goToMessage(doc.messageIndexes[doc.messageIndexes.length - 1])} className="text-blue-700 underline hover:text-blue-900">
+                                Go to message
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {artifacts.citations.length > 0 && (
+                      <div>
+                        <p className="font-medium text-zinc-500">Citations</p>
+                        <ul className="mt-0.5 flex flex-col gap-1">
+                          {artifacts.citations.map((c) => (
+                            <li key={`${c.sourceType}-${c.sourceId}`} className="rounded border border-zinc-200 p-1.5">
+                              <p className="text-zinc-700">{c.label}</p>
+                              <button type="button" onClick={() => goToMessage(c.messageIndexes[c.messageIndexes.length - 1])} className="text-blue-700 underline hover:text-blue-900">
+                                Go to message
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {artifacts.nextSteps.length > 0 && (
+                      <div>
+                        <p className="font-medium text-zinc-500">Next steps</p>
+                        <ul className="mt-0.5 flex flex-col gap-1">
+                          {artifacts.nextSteps.map((s) => (
+                            <li key={`${s.label}-${s.status}`} className="rounded border border-zinc-200 p-1.5">
+                              <p className="text-zinc-700">
+                                {s.label} <span className="text-zinc-500">({s.status})</span>
+                              </p>
+                              <button type="button" onClick={() => goToMessage(s.messageIndexes[s.messageIndexes.length - 1])} className="text-blue-700 underline hover:text-blue-900">
+                                Go to message
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {artifacts.createdRecords.length > 0 && (
+                      <div>
+                        <p className="font-medium text-zinc-500">Created records</p>
+                        <ul className="mt-0.5 flex flex-col gap-1">
+                          {artifacts.createdRecords.map((r) => (
+                            <li key={`${r.kind}-${r.id}`} className="rounded border border-zinc-200 p-1.5">
+                              <p className="text-zinc-700">
+                                {r.label} <span className="text-zinc-500">({r.kind.replace(/_/g, ' ')})</span>
+                              </p>
+                              <button type="button" onClick={() => goToMessage(r.messageIndexes[r.messageIndexes.length - 1])} className="text-blue-700 underline hover:text-blue-900">
+                                Go to message
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div>
+                      <p className="font-medium text-zinc-500">External resources</p>
+                      <p className="mt-0.5 text-zinc-400">None in this conversation yet.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
           <div className="flex-1 space-y-2 overflow-y-auto p-3">
             {showOnboarding && messages.length === 0 && (
@@ -479,13 +588,20 @@ export function ChatPanel() {
             )}
             {messages.map((m, i) =>
               m.role === 'user' ? (
-                <div key={i} className="text-right text-sm">
+                <div key={i} id={`chat-message-${i}`} tabIndex={-1} className="text-right text-sm outline-none">
                   <span className="inline-block max-w-[85%] whitespace-pre-wrap rounded bg-zinc-900 px-2 py-1 text-white">{m.content}</span>
                 </div>
               ) : (
-                <div key={i} className="text-sm">
+                <div key={i} id={`chat-message-${i}`} tabIndex={-1} className="text-sm outline-none">
                   <div className="inline-block max-w-[95%] rounded bg-zinc-100 px-2 py-1">
-                    <Markdown text={m.content} />
+                    <QuickSummary quickSummary={m.structured?.quickSummary} message={m.content} />
+                    <Markdown text={m.structured?.message ?? m.content} />
+                    <RequirementsList requirements={m.structured?.requirements} />
+                    <LinksList links={m.structured?.links} />
+                    <DocumentsList documents={m.structured?.documents} />
+                    <CitationsList citations={m.structured?.citations} />
+                    <NextStepsList nextSteps={m.structured?.nextSteps} />
+                    <SuggestedPrompts prompts={m.structured?.suggestedPrompts} onSelect={setInput} />
                   </div>
                   {m.providerDisplayName && (
                   <div className="mt-0.5">

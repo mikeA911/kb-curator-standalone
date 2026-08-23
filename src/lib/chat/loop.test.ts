@@ -12,6 +12,9 @@ const appendMessageMock = vi.fn()
 const updateMock = vi.fn()
 const getConversationSummaryMock = vi.fn()
 const maybeRefreshSummaryMock = vi.fn()
+const buildPersistedEnvelopeMock = vi.fn()
+const resolveEnvelopeForDisplayMock = vi.fn()
+const resolveCreatedRecordMock = vi.fn()
 
 vi.mock('@/lib/ai', () => ({
   resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
@@ -32,6 +35,19 @@ vi.mock('./conversations', () => ({
 vi.mock('./summary', () => ({
   getConversationSummary: (...args: unknown[]) => getConversationSummaryMock(...args),
   maybeRefreshSummary: (...args: unknown[]) => maybeRefreshSummaryMock(...args),
+}))
+// The resolvers' own DB-querying logic has dedicated test files
+// (navigation-resolver.test.ts, document-resolver.test.ts) -- these tests
+// exercise loop.ts's own orchestration (detecting present_assistant_response,
+// citation verification against real turn provenance, validation-failure
+// fallback), not resolver internals, which fakeCtx()'s minimal supabase
+// stub can't support anyway.
+vi.mock('./envelope-resolution', () => ({
+  buildPersistedEnvelope: (...args: unknown[]) => buildPersistedEnvelopeMock(...args),
+  resolveEnvelopeForDisplay: (...args: unknown[]) => resolveEnvelopeForDisplayMock(...args),
+}))
+vi.mock('./created-records', () => ({
+  resolveCreatedRecord: (...args: unknown[]) => resolveCreatedRecordMock(...args),
 }))
 
 const { runAssistantTurn, MAX_TOOL_ITERATIONS, SEARCH_WIKI_LIMIT } = await import('./loop')
@@ -68,6 +84,9 @@ beforeEach(() => {
   updateMock.mockReset()
   getConversationSummaryMock.mockReset()
   maybeRefreshSummaryMock.mockReset()
+  buildPersistedEnvelopeMock.mockReset()
+  resolveEnvelopeForDisplayMock.mockReset()
+  resolveCreatedRecordMock.mockReset()
 
   resolveChatProviderMock.mockResolvedValue({ provider: { generateChat: generateChatMock }, ...RESOLVED_CHAT_PROVIDER })
   getDefaultModelMock.mockResolvedValue({ provider: { name: 'gemini' }, model: { display_name: 'Gemini Embedding' } })
@@ -78,6 +97,11 @@ beforeEach(() => {
   updateMock.mockReturnValue({ eq: () => Promise.resolve({ error: null }) })
   getConversationSummaryMock.mockResolvedValue(null)
   maybeRefreshSummaryMock.mockResolvedValue(undefined)
+  // Identity-ish passthroughs by default -- individual tests override to
+  // assert on exactly what loop.ts passed in.
+  buildPersistedEnvelopeMock.mockImplementation(async (_ctx, parsed) => parsed)
+  resolveEnvelopeForDisplayMock.mockImplementation(async (_ctx, persisted) => persisted)
+  resolveCreatedRecordMock.mockResolvedValue(null)
 })
 
 describe('runAssistantTurn', () => {
@@ -90,7 +114,14 @@ describe('runAssistantTurn', () => {
 
     const result = await runAssistantTurn(fakeCtx(), null, 'What is KB Sandbox?')
 
-    expect(result).toEqual({ conversationId: 'conv-1', reply: 'KB Sandbox is a knowledge platform.', toolsUsed: [], ...CHAT_PROVIDER_INFO })
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      reply: 'KB Sandbox is a knowledge platform.',
+      toolsUsed: [],
+      structured: null,
+      createdRecords: [],
+      ...CHAT_PROVIDER_INFO,
+    })
     expect(generateChatMock).toHaveBeenCalledTimes(1)
     // The model's configured max_output_tokens (RESOLVED_CHAT_PROVIDER.maxOutputTokens)
     // must reach the actual provider call -- this is what makes an admin-set
@@ -247,6 +278,96 @@ describe('runAssistantTurn', () => {
       { role: 'assistant', content: 'earlier answer', toolCalls: undefined, toolCallId: undefined, toolName: undefined },
       { role: 'user', content: 'follow-up question' },
     ])
+  })
+})
+
+describe('runAssistantTurn -- structured responses', () => {
+  it('treats present_assistant_response as terminal and returns its resolved envelope', async () => {
+    generateChatMock.mockResolvedValue({
+      message: {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'present_assistant_response', arguments: { schemaVersion: '1.0', message: 'Here you go.' } }],
+      },
+      model: 'test-model',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    })
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'Help me pick a method')
+
+    expect(result.reply).toBe('Here you go.')
+    expect(result.structured).toMatchObject({ message: 'Here you go.' })
+    expect(callToolMock).not.toHaveBeenCalled()
+    const assistantAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.role === 'assistant')
+    expect(assistantAppend?.[1]).toMatchObject({ content: 'Here you go.', responsePayload: { message: 'Here you go.' } })
+  })
+
+  it('falls back to plain text when the envelope fails schema validation, recovering the message from the raw arguments', async () => {
+    generateChatMock.mockResolvedValue({
+      message: {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'present_assistant_response', arguments: { message: 'Recovered text.', requirements: 'not-an-array' } }],
+      },
+      model: 'test-model',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    })
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'Help me pick a method')
+
+    expect(result.reply).toBe('Recovered text.')
+    expect(result.structured).toBeNull()
+    expect(buildPersistedEnvelopeMock).not.toHaveBeenCalled()
+    const assistantAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.role === 'assistant')
+    expect(assistantAppend?.[1]).toMatchObject({ content: 'Recovered text.', responsePayload: null })
+  })
+
+  it('accumulates real search_wiki provenance and threads it into buildPersistedEnvelope for citation verification', async () => {
+    getToolSpecsMock.mockReturnValue([{ name: 'search_wiki', description: '', parameters: {} }])
+    callToolMock.mockResolvedValue({ articles: [{ articleId: 'a1', slug: 'openapi-discovery-workbench-method', title: 'OpenAPI Discovery', category: null, similarity: 0.9, content: '...' }] })
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_wiki', arguments: { query: 'openapi' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 5, outputTokens: 5 },
+      })
+      .mockResolvedValueOnce({
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call-2', name: 'present_assistant_response', arguments: { schemaVersion: '1.0', message: 'Found it.' } }],
+        },
+        model: 'test-model',
+        usage: { inputTokens: 5, outputTokens: 5 },
+      })
+
+    await runAssistantTurn(fakeCtx(), null, 'Which method recovers an API spec?')
+
+    expect(buildPersistedEnvelopeMock).toHaveBeenCalledTimes(1)
+    const retrievedSlugs = buildPersistedEnvelopeMock.mock.calls[0][2]
+    expect(retrievedSlugs.has('openapi-discovery-workbench-method')).toBe(true)
+  })
+
+  it('drops other requested tool calls when present_assistant_response is submitted in the same batch', async () => {
+    generateChatMock.mockResolvedValue({
+      message: {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'call-1', name: 'search_wiki', arguments: { query: 'openapi' } },
+          { id: 'call-2', name: 'present_assistant_response', arguments: { schemaVersion: '1.0', message: 'Done.' } },
+        ],
+      },
+      model: 'test-model',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    })
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'Help me pick a method')
+
+    expect(callToolMock).not.toHaveBeenCalled()
+    expect(result.reply).toBe('Done.')
+    // No stray tool-role message should have been appended for the dropped call.
+    expect(appendMessageMock.mock.calls.some(([, arg]) => arg.role === 'tool')).toBe(false)
   })
 })
 

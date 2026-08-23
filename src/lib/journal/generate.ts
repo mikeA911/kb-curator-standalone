@@ -1,8 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
 import type { AIProvider } from '@/lib/ai/provider'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { listMessages, toDisplayMessages } from '@/lib/chat/conversations'
 
 // Defensive limits (docs/dev-request-private-work-journal.md: "Apply
@@ -25,17 +24,13 @@ export interface JournalSource {
   truncated: boolean
 }
 
-// User-scoped by construction (userId + RLS both apply) -- there is no path
-// here that can return another user's conversations.
-export async function gatherJournalSource(
-  supabase: SupabaseClient<Database>,
-  userId: string,
-  sinceDate: Date
-): Promise<JournalSource> {
-  const { data, error } = await supabase
+// User-scoped by construction (ctx.user.id + RLS both apply) -- there is no
+// path here that can return another user's conversations.
+export async function gatherJournalSource(ctx: WorkbenchCallerContext, sinceDate: Date): Promise<JournalSource> {
+  const { data, error } = await ctx.supabase
     .from('conversations')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', ctx.user.id)
     .gte('last_message_at', sinceDate.toISOString())
     .order('last_message_at', { ascending: true })
     .limit(MAX_CONVERSATIONS)
@@ -47,8 +42,8 @@ export async function gatherJournalSource(
   let truncated = rows.length >= MAX_CONVERSATIONS
 
   for (const conv of rows) {
-    const messages = await listMessages(supabase, conv.id)
-    const display = toDisplayMessages(messages, new Map())
+    const messages = await listMessages(ctx.supabase, conv.id)
+    const display = await toDisplayMessages(messages, new Map(), ctx)
     if (display.length === 0) continue
 
     const date = conv.last_message_at ?? conv.created_at

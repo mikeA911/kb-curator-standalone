@@ -56,26 +56,41 @@ function row(overrides: Partial<ChatMessageRow>): ChatMessageRow {
     tool_name: null,
     provider: null,
     model: null,
+    response_payload: null,
     created_at: '2026-08-20T00:00:00Z',
     ...overrides,
   }
 }
 
+// None of these fixtures set response_payload or call a creating tool, so
+// toDisplayMessages never actually reaches ctx.supabase -- a minimal stub
+// is enough (real resolver behavior is covered by envelope-resolution.test.ts
+// and created-records.test.ts).
+const fakeCtx = { user: { id: 'user-1' }, profile: {}, supabase: {} } as never
+
 describe('toDisplayMessages', () => {
-  it('turns a simple user/assistant exchange into display messages, resolving provenance from the lookup', () => {
+  it('turns a simple user/assistant exchange into display messages, resolving provenance from the lookup', async () => {
     const rows = [
       row({ id: 'm1', role: 'user', content: 'What is KB Sandbox?' }),
       row({ id: 'm2', role: 'assistant', content: 'A knowledge platform.', provider: 'groq', model: 'openai/gpt-oss-20b' }),
     ]
     const lookup = new Map([['groq::openai/gpt-oss-20b', { providerDisplayName: 'Groq', modelDisplayName: 'GPT-OSS 20B' }]])
 
-    expect(toDisplayMessages(rows, lookup)).toEqual([
+    expect(await toDisplayMessages(rows, lookup, fakeCtx)).toEqual([
       { role: 'user', content: 'What is KB Sandbox?' },
-      { role: 'assistant', content: 'A knowledge platform.', providerDisplayName: 'Groq', modelDisplayName: 'GPT-OSS 20B', toolsUsed: undefined },
+      {
+        role: 'assistant',
+        content: 'A knowledge platform.',
+        providerDisplayName: 'Groq',
+        modelDisplayName: 'GPT-OSS 20B',
+        toolsUsed: undefined,
+        structured: undefined,
+        createdRecords: undefined,
+      },
     ])
   })
 
-  it('reconstructs toolsUsed from an intermediate tool-call row, folding it into the next real reply', () => {
+  it('reconstructs toolsUsed from an intermediate tool-call row, folding it into the next real reply', async () => {
     const rows = [
       row({ id: 'm1', role: 'user', content: 'What do we know about chunking?' }),
       row({ id: 'm2', role: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'search_wiki', arguments: { query: 'chunking' } }] }),
@@ -83,7 +98,7 @@ describe('toDisplayMessages', () => {
       row({ id: 'm4', role: 'assistant', content: 'Found some articles.', provider: 'groq', model: 'openai/gpt-oss-20b' }),
     ]
 
-    const result = toDisplayMessages(rows, new Map())
+    const result = await toDisplayMessages(rows, new Map(), fakeCtx)
 
     expect(result).toEqual([
       { role: 'user', content: 'What do we know about chunking?' },
@@ -93,14 +108,16 @@ describe('toDisplayMessages', () => {
         providerDisplayName: 'groq',
         modelDisplayName: 'openai/gpt-oss-20b',
         toolsUsed: ['search_wiki'],
+        structured: undefined,
+        createdRecords: undefined,
       },
     ])
   })
 
-  it('falls back to the raw provider/model identifiers when a model has since been renamed or removed', () => {
+  it('falls back to the raw provider/model identifiers when a model has since been renamed or removed', async () => {
     const rows = [row({ role: 'assistant', content: 'ok', provider: 'deepseek', model: 'deepseek-v4-flash' })]
 
-    const result = toDisplayMessages(rows, new Map())
+    const result = await toDisplayMessages(rows, new Map(), fakeCtx)
 
     expect(result[0]).toEqual({
       role: 'assistant',
@@ -108,10 +125,12 @@ describe('toDisplayMessages', () => {
       providerDisplayName: 'deepseek',
       modelDisplayName: 'deepseek-v4-flash',
       toolsUsed: undefined,
+      structured: undefined,
+      createdRecords: undefined,
     })
   })
 
-  it('does not carry toolsUsed over into a later turn that used no tools', () => {
+  it('does not carry toolsUsed over into a later turn that used no tools', async () => {
     const rows = [
       row({ id: 'm1', role: 'user', content: 'first' }),
       row({ id: 'm2', role: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'search_wiki', arguments: {} }] }),
@@ -121,7 +140,7 @@ describe('toDisplayMessages', () => {
       row({ id: 'm6', role: 'assistant', content: 'second reply' }),
     ]
 
-    const result = toDisplayMessages(rows, new Map())
+    const result = await toDisplayMessages(rows, new Map(), fakeCtx)
 
     expect(result[1].toolsUsed).toEqual(['search_wiki'])
     expect(result[3].toolsUsed).toBeUndefined()

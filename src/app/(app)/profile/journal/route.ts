@@ -24,7 +24,7 @@ export async function GET() {
   const sinceDate = new Date(now.getTime() - RANGE_DAYS * 24 * 60 * 60 * 1000)
   const rangeLabel = `${sinceDate.toLocaleDateString()} – ${now.toLocaleDateString()} (last ${RANGE_DAYS} days)`
 
-  const source = await gatherJournalSource(ctx.supabase, ctx.user.id, sinceDate)
+  const source = await gatherJournalSource(ctx, sinceDate)
   const [{ provider: providerRow, model: modelRow }, provider] = await Promise.all([
     getDefaultStructuredOutputModel(ctx.supabase),
     getActiveStructuredOutputProvider(ctx.supabase, { requestedBy: ctx.user.id }),

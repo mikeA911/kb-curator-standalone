@@ -6,13 +6,17 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { createConversation, listMessages, appendMessage } from './conversations'
 import { composeWorkingContext } from './context'
 import { getConversationSummary, maybeRefreshSummary } from './summary'
+import { AssistantResponseEnvelopeSchema, PRESENT_RESPONSE_TOOL, PRESENT_RESPONSE_TOOL_NAME } from './response-envelope'
+import type { VerifiedAssistantEnvelope } from './response-envelope'
+import { buildPersistedEnvelope, resolveEnvelopeForDisplay } from './envelope-resolution'
+import { resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
 
 // Version string stamped onto anything the Assistant creates
 // (created_via='assistant') -- bump when the system prompt or tool set
 // changes meaningfully enough that old provenance is worth distinguishing
 // from new. Not tied to a package/app version; this is specifically about
 // "which assistant behavior produced this row."
-export const ASSISTANT_PROMPT_VERSION = 'm7-v5'
+export const ASSISTANT_PROMPT_VERSION = 'm7-v6'
 
 const SYSTEM_PROMPT = `You are the KB Sandbox Workbench Assistant. You help users navigate and operate the platform: search the Wiki, look up project notes, create projects and workstreams, and attach evidence artifacts.
 
@@ -26,11 +30,14 @@ Reply directly, reasoning from what you found: name the method that fits, and no
 
 KB Sandbox works in one of three ways depending on the task: it can do some things itself (Native Workbench, e.g. Wiki synthesis, RAG evaluation), it can define and govern work a practitioner runs in an external tool like Claude Code or ChatGPT and returns artifacts from (External Workstream), or it can investigate and produce an evidence-backed specification/Implementation Handoff for someone else to implement (Document-First Engineering -- the default for refactoring and feature work). Mention whichever applies once you know enough to say.
 
-Never write out a KB Sandbox URL or hostname (e.g. "https://kb-sandbox..." or any invented internal link) -- the chat interface does not turn model-written links into working navigation, so a written-out URL is always dead or fabricated. Instead name the destination in plain text, e.g. "the Legacy System Understanding article in the Workbench Handbook," without presenting it as a clickable address.
+Always call present_assistant_response exactly once as your last action, after any evidence-gathering, instead of replying with plain text. Put your normal conversational reply in its "message" field. Use the optional fields only when they're genuinely earned:
 
-There is no "Artifacts" panel or collection in this chat interface, and no artifact exists until attach_workstream_artifact actually succeeds this turn. If a user asks you to put something "in Artifacts," "attach" it, or "save" it, and you have not called that tool in this same turn, your reply must not contain a heading or line like "Artifacts attached," "Design Note," or any similar record -- write, instead and only, one plain sentence such as "I haven't attached anything yet -- there's no project or workstream to attach it to." This applies even if the user's own request assumed Artifacts already exists as a feature. Never write out an artifact ID, UUID, or other identifier for something you did not just create with a tool call.
+- links: to point at a real KB Sandbox page, add a links entry with a target {kind, id} -- kind is one of wiki_article/project/workstream/assessment, and id is the article's slug (for wiki_article) or the record's id (for the others). Never write a URL or hostname directly in your message text -- it will not become a working link, and the chat interface cannot turn model-written links into navigation. If you don't know a real id, don't invent one -- just name the destination in plain text instead.
+- citations: only for a wiki_article you actually retrieved via search_wiki this turn -- sourceId is that article's slug. A citation for anything you didn't just retrieve will be silently dropped, so don't bother inventing one.
+- documents: only when you actually called attach_workstream_artifact and it succeeded this turn -- artifactId is the real id it returned. Never invent an artifactId or claim something was attached/saved when you haven't just created it with a tool call this turn.
+- quickSummary/requirements/nextSteps/suggestedPrompts: use when they add real value; omit them for a simple reply.
 
-Be concise. When you use a tool, briefly say what you did in your final reply.`
+Be concise. When you use a tool, briefly say what you did in your final message.`
 
 // Exposes the live system prompt for display (e.g. the Agent Flow page's
 // curator/admin-only disclosure) without letting SYSTEM_PROMPT itself be
@@ -86,6 +93,8 @@ export interface AssistantTurnResult {
   modelDisplayName: string
   toolsUsed: string[]
   embeddingModelDisplayName?: string
+  structured: VerifiedAssistantEnvelope | null
+  createdRecords: ResolvedCreatedRecord[]
 }
 
 export async function runAssistantTurn(
@@ -114,7 +123,7 @@ export async function runAssistantTurn(
   await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'user', content: userMessage })
 
   const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
-  const tools = getToolSpecs()
+  const tools = [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
   const toolsUsed = new Set<string>()
   // A model that ignores the prompt's "search no more than twice" instruction
   // (observed live: GPT-OSS 120B repeatedly re-searching when search_wiki
@@ -130,6 +139,74 @@ export async function runAssistantTurn(
   // treat the turn as truncated for the summary-refresh decision below even
   // if a later iteration's smaller working set wouldn't trip it again.
   let contextWasTruncated = false
+  // This turn's real retrieval/creation provenance, accumulated across
+  // iterations -- citations are checked against retrievedWikiArticleSlugs
+  // (never against what the model merely asserts), and createdRecordRefs
+  // feeds the Artifacts panel's "Created records" group.
+  const retrievedWikiArticleSlugs = new Set<string>()
+  const createdRecordRefs: CreatedRecordRef[] = []
+
+  // Shared tail for every terminal path below: resolves the embedding model
+  // display name, refreshes the conversation summary, and shapes the
+  // return value. Never persists anything itself -- each caller appends its
+  // own row first, since the content/response_payload differ per path.
+  async function finishTurn(reply: string, structured: VerifiedAssistantEnvelope | null): Promise<AssistantTurnResult> {
+    const embeddingModelDisplayName = toolsUsed.has('search_wiki') ? (await getDefaultModel(ctx.supabase, 'embedding')).model.display_name : undefined
+    await maybeRefreshSummary(ctx, conversation.id, contextWasTruncated)
+    const resolvedCreatedRecords = (await Promise.all(createdRecordRefs.map((ref) => resolveCreatedRecord(ctx, ref)))).filter(
+      (r): r is ResolvedCreatedRecord => r !== null
+    )
+    return {
+      conversationId: conversation.id,
+      reply,
+      providerName: chatProvider.providerName,
+      providerDisplayName: chatProvider.providerDisplayName,
+      modelId: chatProvider.modelId,
+      modelDisplayName: chatProvider.modelDisplayName,
+      toolsUsed: [...toolsUsed],
+      embeddingModelDisplayName,
+      structured,
+      createdRecords: resolvedCreatedRecords,
+    }
+  }
+
+  // The model's one required terminal action. A malformed/missing envelope
+  // must never fail the turn -- fall back to whatever plain text is
+  // recoverable and persist no structured payload at all.
+  async function finalizeStructuredTurn(presentCall: { arguments: Record<string, unknown> }, rawContent: string): Promise<AssistantTurnResult> {
+    const parsed = AssistantResponseEnvelopeSchema.safeParse(presentCall.arguments)
+
+    if (!parsed.success) {
+      const recoveredMessage = typeof presentCall.arguments?.message === 'string' ? presentCall.arguments.message.trim() : ''
+      const content =
+        rawContent.trim() ||
+        recoveredMessage ||
+        "I put together a response but it didn't come through correctly -- could you ask again?"
+      await appendMessage(ctx.supabase, {
+        conversationId: conversation.id,
+        userId: ctx.user.id,
+        role: 'assistant',
+        content,
+        provider: chatProvider.providerName,
+        model: chatProvider.modelId,
+        responsePayload: null,
+      })
+      return finishTurn(content, null)
+    }
+
+    const persisted = await buildPersistedEnvelope(ctx, parsed.data, retrievedWikiArticleSlugs)
+    await appendMessage(ctx.supabase, {
+      conversationId: conversation.id,
+      userId: ctx.user.id,
+      role: 'assistant',
+      content: persisted.message,
+      provider: chatProvider.providerName,
+      model: chatProvider.modelId,
+      responsePayload: persisted,
+    })
+    const structured = await resolveEnvelopeForDisplay(ctx, persisted)
+    return finishTurn(persisted.message, structured)
+  }
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
     const working = composeWorkingContext({
@@ -146,6 +223,18 @@ export async function runAssistantTurn(
       maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
     })
     history.push(result.message)
+
+    // Submitting the final structured response is always terminal. If the
+    // model also requested other tools in the same batch -- it shouldn't,
+    // per the prompt, but providers occasionally do this -- those other
+    // calls are dropped, not executed: a model submitting a final answer
+    // hasn't asked to keep gathering evidence, and executing them would
+    // leave tool-result messages with nothing to respond to.
+    const presentCall = result.message.toolCalls?.find((tc) => tc.name === PRESENT_RESPONSE_TOOL_NAME)
+    if (presentCall) {
+      return await finalizeStructuredTurn(presentCall, result.message.content)
+    }
+
     await appendMessage(ctx.supabase, {
       conversationId: conversation.id,
       userId: ctx.user.id,
@@ -157,18 +246,11 @@ export async function runAssistantTurn(
     })
 
     if (!result.message.toolCalls || result.message.toolCalls.length === 0) {
-      const embeddingModelDisplayName = toolsUsed.has('search_wiki') ? (await getDefaultModel(ctx.supabase, 'embedding')).model.display_name : undefined
-      await maybeRefreshSummary(ctx, conversation.id, contextWasTruncated)
-      return {
-        conversationId: conversation.id,
-        reply: result.message.content,
-        providerName: chatProvider.providerName,
-        providerDisplayName: chatProvider.providerDisplayName,
-        modelId: chatProvider.modelId,
-        modelDisplayName: chatProvider.modelDisplayName,
-        toolsUsed: [...toolsUsed],
-        embeddingModelDisplayName,
-      }
+      // A provider that never calls present_assistant_response (weak
+      // tool-calling support, or it judged no tool needed and replied
+      // directly) still gets a normal, working reply -- just without a
+      // structured payload.
+      return await finishTurn(result.message.content, null)
     }
 
     for (const toolCall of result.message.toolCalls) {
@@ -183,6 +265,18 @@ export async function runAssistantTurn(
           const output = await callTool(ctx, toolCall.name, toolCall.arguments)
           await stampProvenance(ctx, toolCall.name, output, conversation.id)
           toolResultText = JSON.stringify(output)
+
+          if (toolCall.name === 'search_wiki' && output && typeof output === 'object' && 'articles' in output) {
+            for (const article of (output as { articles: { slug: string }[] }).articles) {
+              retrievedWikiArticleSlugs.add(article.slug)
+            }
+          } else if (toolCall.name === 'create_project' && output && typeof output === 'object' && 'projectId' in output) {
+            createdRecordRefs.push({ kind: 'project', id: (output as { projectId: string }).projectId })
+          } else if (toolCall.name === 'create_workstream' && output && typeof output === 'object' && 'workstreamId' in output) {
+            createdRecordRefs.push({ kind: 'workstream', id: (output as { workstreamId: string }).workstreamId })
+          } else if (toolCall.name === 'attach_workstream_artifact' && output && typeof output === 'object' && 'artifactId' in output) {
+            createdRecordRefs.push({ kind: 'workstream_artifact', id: (output as { artifactId: string }).artifactId })
+          }
         } catch (err) {
           toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
         }
@@ -218,5 +312,7 @@ export async function runAssistantTurn(
     modelId: chatProvider.modelId,
     modelDisplayName: chatProvider.modelDisplayName,
     toolsUsed: [...toolsUsed],
+    structured: null,
+    createdRecords: [],
   }
 }
