@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/projects'
-import type { ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 
 export async function createProjectAction(input: {
   name: string
@@ -13,6 +13,7 @@ export async function createProjectAction(input: {
   knowledgeBaseId: string | null
   evalDatasetId: string | null
   members: { email: string; role: ProjectRole }[]
+  approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
 }) {
   const ctx = await requireUser()
   const result = await workbench.createProject(ctx, input)
@@ -23,6 +24,12 @@ export async function createProjectAction(input: {
 export async function attachKnowledgeBaseAction(projectId: string, knowledgeBaseId: string) {
   const ctx = await requireRole('curator')
   await workbench.attachKnowledgeBase(ctx, projectId, knowledgeBaseId)
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function detachKnowledgeBaseAction(projectId: string, knowledgeBaseId: string) {
+  const ctx = await requireRole('curator')
+  await workbench.detachKnowledgeBase(ctx, projectId, knowledgeBaseId)
   revalidatePath(`/projects/${projectId}`)
 }
 

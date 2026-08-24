@@ -1,8 +1,9 @@
 import 'server-only'
 import { AuthError } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
+import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import type { WorkbenchCallerContext } from './context'
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
@@ -38,12 +39,19 @@ export async function createProject(
     knowledgeBaseId: string | null
     evalDatasetId: string | null
     members: { email: string; role: ProjectRole }[]
+    // Project Approval Authorities, Stage 1 (docs/dev-request-project-
+    // approval-authorities.md): staged from the wizard's Governance &
+    // Approvals step. assigneeEmail is '__self__' for the creator, a staged
+    // member's email, or null for an intentionally unassigned "Authority
+    // needed" gap -- never a fabricated identity.
+    approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
   }
 ) {
   const { user, profile, supabase } = ctx
   if (profile.role === 'anonymous') {
     throw new AuthError('Create an account to start a project')
   }
+  if (input.knowledgeBaseId) await requireActiveKnowledgeBase(supabase, input.knowledgeBaseId)
 
   const { data: project, error } = await supabase
     .from('projects')
@@ -61,15 +69,23 @@ export async function createProject(
   if (error || !project) throw error ?? new Error('Failed to create project')
 
   if (input.knowledgeBaseId) {
-    await supabase.from('knowledge_bases').update({ project_id: project.id }).eq('id', input.knowledgeBaseId)
+    await supabase
+      .from('project_knowledge_bases')
+      .insert({ project_id: project.id, knowledge_base_id: input.knowledgeBaseId, attached_by: user.id })
   }
   if (input.evalDatasetId) {
     await supabase.from('eval_datasets').update({ project_id: project.id }).eq('id', input.evalDatasetId)
   }
 
   const staged = input.members.filter((m) => m.email && m.email !== user.email)
+  const approvals = input.approvals ?? []
+  // One lookup covers both staged members and approval assignees (an
+  // assignee is always either '__self__' or an email already staged as a
+  // member -- the wizard's own UI only offers those two options).
+  const emailsToResolve = [...new Set(staged.map((m) => m.email))]
+  const idByEmail = emailsToResolve.length > 0 ? await resolveUserIdsByEmail(emailsToResolve) : new Map<string, string>()
+
   if (staged.length > 0) {
-    const idByEmail = await resolveUserIdsByEmail(staged.map((m) => m.email))
     const rows = staged
       .map((m) => {
         const userId = idByEmail.get(m.email)
@@ -81,14 +97,80 @@ export async function createProject(
     }
   }
 
+  if (approvals.length > 0) {
+    const policyRows = approvals.map((a) => ({
+      project_id: project.id,
+      approval_type: a.approvalType,
+      requirement_status: a.requirementStatus,
+      sequence: null,
+      minimum_approvals: 1,
+      approval_mode: 'any_authorized' as const,
+      allow_self_approval: false,
+      monetary_trigger: null,
+      discount_trigger_percent: null,
+      visibility_scope: 'internal' as const,
+      required_before_release: false,
+      notes: null,
+      created_by: user.id,
+    }))
+    await supabase.from('project_approval_policies').insert(policyRows)
+
+    const assignmentRows = approvals
+      .map((a) => {
+        if (!a.assigneeEmail) return null
+        const assigneeUserId = a.assigneeEmail === '__self__' ? user.id : idByEmail.get(a.assigneeEmail)
+        if (!assigneeUserId) return null
+        return {
+          project_id: project.id,
+          user_id: assigneeUserId,
+          business_function: null,
+          approval_type: a.approvalType,
+          monetary_limit: null,
+          discount_limit_percent: null,
+          conditions: null,
+          effective_from: new Date().toISOString(),
+          expires_at: null,
+          status: 'active' as const,
+          allow_self_approval: false,
+          granted_by: user.id,
+          granted_at: new Date().toISOString(),
+          revoked_by: null,
+          revoked_at: null,
+          revocation_reason: null,
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+    if (assignmentRows.length > 0) {
+      await supabase.from('project_authority_assignments').insert(assignmentRows)
+    }
+  }
+
   return { projectId: project.id }
 }
 
-// Attaching an existing KB/dataset mutates that entity's own row, not just
-// the project -- kept curator+ (same bar as authoring knowledge/evals
-// generally), unlike project creation itself.
+// project_knowledge_bases is many-to-many, so attaching an already-active KB
+// to a second project is a legitimate reuse, not an error -- kept curator+
+// (same bar as authoring knowledge/evals generally), unlike project
+// creation itself.
 export async function attachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
-  const { error } = await ctx.supabase.from('knowledge_bases').update({ project_id: projectId }).eq('id', knowledgeBaseId)
+  await requireActiveKnowledgeBase(ctx.supabase, knowledgeBaseId)
+  const { error } = await ctx.supabase
+    .from('project_knowledge_bases')
+    .insert({ project_id: projectId, knowledge_base_id: knowledgeBaseId, attached_by: ctx.user.id })
+  if (error) throw error
+}
+
+// Project-Aware Knowledge and Assistant Context, Stage 1: the wizard could
+// only ever set a KB's attachment at creation time -- there was no way to
+// attach or fix one afterward. Detach removes just this project's link row
+// (the KB may still be attached elsewhere); kept curator+ (can_curate_project's
+// own RLS, via project_knowledge_bases_manage_curator), same bar as attaching.
+export async function detachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
+  const { error } = await ctx.supabase
+    .from('project_knowledge_bases')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('knowledge_base_id', knowledgeBaseId)
   if (error) throw error
 }
 

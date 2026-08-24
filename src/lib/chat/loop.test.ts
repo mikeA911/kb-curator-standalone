@@ -52,11 +52,21 @@ vi.mock('./created-records', () => ({
 
 const { runAssistantTurn, MAX_TOOL_ITERATIONS, SEARCH_WIKI_LIMIT } = await import('./loop')
 
+// project_id: null keeps every existing test on the general (unbound) path
+// -- project-bound behavior (getProjectContext, search_project_knowledge)
+// has its own dedicated coverage in project-knowledge-tool.test.ts and
+// project-context.test.ts, not here.
 function fakeCtx(): WorkbenchCallerContext {
   return {
     user: { id: 'user-1' },
     profile: { id: 'user-1', role: 'curator' },
-    supabase: { from: () => ({ update: (...args: unknown[]) => updateMock(...args), eq: () => ({}) }) },
+    supabase: {
+      from: () => ({
+        update: (...args: unknown[]) => updateMock(...args),
+        eq: () => ({}),
+        select: () => ({ eq: () => ({ single: async () => ({ data: { id: 'conv-1', project_id: null }, error: null }) }) }),
+      }),
+    },
   } as unknown as WorkbenchCallerContext
 }
 
@@ -344,8 +354,8 @@ describe('runAssistantTurn -- structured responses', () => {
     await runAssistantTurn(fakeCtx(), null, 'Which method recovers an API spec?')
 
     expect(buildPersistedEnvelopeMock).toHaveBeenCalledTimes(1)
-    const retrievedSlugs = buildPersistedEnvelopeMock.mock.calls[0][2]
-    expect(retrievedSlugs.has('openapi-discovery-workbench-method')).toBe(true)
+    const retrieved = buildPersistedEnvelopeMock.mock.calls[0][2]
+    expect(retrieved.wikiArticleSlugs.has('openapi-discovery-workbench-method')).toBe(true)
   })
 
   it('drops other requested tool calls when present_assistant_response is submitted in the same batch', async () => {

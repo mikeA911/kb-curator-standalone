@@ -105,3 +105,60 @@ What's already known, from checking Zadara's own published material directly:
 - A concrete illustration of why tools must be designed around business actions, not mechanical endpoint conversion: `POST /api/volumes` (create a volume) alone exposes roughly 35 raw parameters — SMB ACL flags, NFS squash settings, dedupe/compress, encryption, QoS capping, autoexpand. A real MCP tool would collapse this to something like `create_volume(name, capacity_gb, pool_id, kind, protection_preset)`, with the remaining parameters either defaulted or reserved for a separate, human-reviewed advanced path.
 
 The pitch to both companies: for Zadara, a well-scoped MCP server is a reference implementation and validation of their own published API's AI-readiness. For Sandz, it's a differentiated partner offering built on top of the Phase 1 knowledge copilot already in production use.
+
+## Potential Benefits to the Participants
+
+The pilot should be structured so that it creates value for Sandz, Zadara and KB Sandbox rather than producing a one-off demonstration. The benefits below are possibilities for discussion, not assumed commercial commitments.
+
+### Benefits for Sandz
+
+- **A differentiated customer offering.** Sandz could offer an approved, supported Zadara MCP capability to other customers that want to use AI assistants or agents with their storage environment, subject to Zadara's authorization and an agreed commercial model.
+- **Reusable delivery assets.** The verified OpenAPI specification, business-level MCP tool definitions, guardrails, test cases, deployment patterns and customer onboarding material could be reused across implementations instead of being rebuilt for every customer.
+- **New services revenue.** Sandz could provide readiness assessment, configuration, deployment, customer-specific knowledge curation, integration, training, governance and ongoing support around the MCP service.
+- **Faster proposals and support.** The knowledge copilot could reduce time spent locating product information, preparing first drafts, investigating incidents and escalating incomplete cases.
+- **Stronger institutional knowledge.** Reviewed proposals, implementation experience, resolved incidents and support practices could become governed organizational knowledge rather than remaining with individual employees.
+- **A safer route into agentic operations.** Sandz could begin with read-only discovery and support tools, then add narrowly approved actions only after evaluation, customer consent and operational safeguards are demonstrated.
+- **Regional market credibility.** A working reference implementation would give Sandz a concrete enterprise-AI offering to demonstrate, rather than relying only on a conceptual AI partnership message.
+
+### Benefits for Zadara
+
+- **An AI-ready access layer for existing customers.** A governed MCP server could make selected VPSA capabilities available to customers' preferred AI assistants and agent platforms without requiring Zadara to redesign its REST API.
+- **A repeatable partner-delivered solution.** Once validated, Zadara could make the solution available through Sandz or other approved delivery arrangements to additional customers. This would require explicit agreement on ownership, licensing, support, security review and branding; the pilot alone does not grant redistribution rights.
+- **Validation of the published API.** Mapping the REST reference into a verified OpenAPI specification and business-level tools would expose documentation gaps, ambiguous parameters, unsafe defaults and common customer workflows.
+- **Lower integration friction.** Reusable tool contracts, examples and evaluation suites could shorten future customer integrations and reduce repeated interpretation of low-level API operations.
+- **Controlled adoption rather than uncontrolled wrappers.** Zadara could help define approved tools, permissions, rate limits, confirmation rules and audit expectations before customers build inconsistent third-party integrations independently.
+- **Product and support insight.** Aggregated, appropriately governed findings from pilots could reveal which workflows customers most want to automate and where documentation or API usability should improve.
+- **A reference implementation.** A successful deployment could become evidence that Zadara supports practical, governed enterprise-agent integration, while keeping the underlying platform and security model authoritative.
+
+### Benefits for KB Sandbox
+
+- **A credible real-world pilot.** The work would test whether evidence-led discovery, curation, tool design, evaluation, approval and provenance operate together on a genuine enterprise platform.
+- **A reusable MCP-development method.** Lessons from the Zadara implementation could improve the Workbench method, templates, evaluation criteria and governance controls used for later customers and platforms.
+- **Product validation.** Observed user behavior would show which capabilities are genuinely valuable: knowledge retrieval, proposal support, support investigation, API discovery, MCP testing, approvals or agent-flow visibility.
+- **A reference case for governed AI integration.** Subject to customer and partner permission, sanitized results could demonstrate how KB Sandbox helps move from API documentation to a tested, reviewable MCP capability.
+- **A potential implementation and platform relationship.** An agreed commercial arrangement could cover pilot services, hosted or customer-deployed KB Sandbox environments, ongoing evaluation and governance support, or reusable solution components.
+
+### Shared benefits
+
+- A phased path from curated knowledge, to read-only live tools, to carefully approved actions.
+- A common evidence base connecting requirements, API operations, business rules, tool definitions, guardrails, tests, approvals and operational findings.
+- Reduced risk of exposing a raw API mechanically as hundreds of unsafe or confusing agent tools.
+- Reusable evaluation evidence showing what the MCP server can do, what it cannot do and which version was tested.
+- A stronger joint proposition for customers that want AI integration but require tenant isolation, human approval, traceability and support ownership.
+
+## Commercial and Ownership Questions to Resolve
+
+Before positioning the MCP server as an offering for other customers, the parties should agree explicitly on:
+
+- ownership and licensing of the OpenAPI specification, MCP implementation, tool descriptions, tests and deployment assets;
+- whether Sandz, Zadara, KB Sandbox or a joint arrangement may offer the capability to additional customers;
+- product naming, branding and the right to describe the implementation publicly;
+- who performs security review and approves each supported Zadara API version;
+- responsibility for hosting, tenant isolation, credentials, upgrades, monitoring, incident response and customer support;
+- commercial terms for the initial pilot and subsequent customer deployments;
+- treatment of customer-specific knowledge, configurations, evaluation data and improvements;
+- warranty, liability and the boundary between recommended actions and executed changes;
+- how reusable improvements are separated from confidential customer customizations; and
+- exit, portability and support arrangements if one party stops participating.
+
+The desired outcome is a reusable governed product pattern, but reuse must be designed into the technical and commercial agreement. It should not be inferred from a successful pilot.

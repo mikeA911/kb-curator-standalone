@@ -103,6 +103,8 @@ This needs an explicit decision:
 
 This is not a defect in the visible Blog workflow, but the literal database/RLS requirement from the corrective request is not yet demonstrated.
 
+**Decision (2026-08-24):** Option 1 accepted. Server Actions (`updatePost` and the rest of `src/app/actions/blog.ts`) are the trusted Blog write boundary; Blog administrators are trusted not to call the Supabase Data API directly. `blog_posts_update_admin` stays a broad admin policy shared by ordinary edits and publish/unpublish transitions. No database-function split or new integration test is planned for this. Revisit only if a real need to defend against a hostile or compromised admin session emerges -- disproportionate hardening for the current Blog launch slice's actual risk.
+
 ## Non-blocking follow-ups
 
 ### 1. Substack backlink presentation is still model-dependent

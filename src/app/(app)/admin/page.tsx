@@ -57,6 +57,9 @@ export default async function AdminPage() {
   const configuredByProvider = Object.fromEntries(aiProviders.map((p) => [p.id, Boolean(env.byName(p.api_key_env_var))]))
 
   const emailById = new Map((profiles ?? []).map((p) => [p.id, p.email ?? p.id]))
+  const activeKnowledgeBases = (knowledgeBases ?? []).filter(
+    (kb) => kb.lifecycle_status !== 'reference' && kb.lifecycle_status !== 'archived'
+  )
 
   const currentConversationalModel = aiModels.find((m) => m.model_type === 'generation' && m.is_default)
   const currentStructuredOutputModel = aiModels.find((m) => m.is_default_structured_output)
@@ -70,12 +73,12 @@ export default async function AdminPage() {
       <AdminTabs
         tabs={[
           { id: 'approvals', label: 'Pending Approvals', content: <PendingApprovals documents={pendingDocs ?? []} /> },
-          { id: 'users', label: 'Users', content: <UserManagement profiles={profiles ?? []} knowledgeBases={knowledgeBases ?? []} /> },
+          { id: 'users', label: 'Users', content: <UserManagement profiles={profiles ?? []} knowledgeBases={activeKnowledgeBases} /> },
           { id: 'kbs', label: 'Knowledge Bases', content: <KBManagement knowledgeBases={knowledgeBases ?? []} /> },
           {
             id: 'queue',
             label: 'Curation Queue',
-            content: <CurationQueueManager queue={queue ?? []} knowledgeBases={knowledgeBases ?? []} />,
+            content: <CurationQueueManager queue={queue ?? []} knowledgeBases={activeKnowledgeBases} />,
           },
           {
             id: 'ai',

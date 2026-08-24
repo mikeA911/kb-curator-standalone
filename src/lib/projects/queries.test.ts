@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { getProjectStats, listProjectsWithDraftUpdates, listProjectsWithKnowledge } from './queries'
+import { getProjectStats, listProjectsWithDraftUpdates, listProjectsWithKnowledge, listKnowledgeBasesForProject } from './queries'
 
 describe('getProjectStats', () => {
   it('counts total projects and how many are active', async () => {
@@ -28,9 +28,9 @@ describe('listProjectsWithDraftUpdates', () => {
 })
 
 describe('listProjectsWithKnowledge', () => {
-  it('returns an empty array when no knowledge base is project-scoped', async () => {
+  it('returns an empty array when no knowledge base is attached to any project', async () => {
     const supabase = createFakeSupabase({
-      knowledge_bases: [{ data: [], error: null }],
+      project_knowledge_bases: [{ data: [], error: null }],
     }) as never
 
     const result = await listProjectsWithKnowledge(supabase)
@@ -38,14 +38,14 @@ describe('listProjectsWithKnowledge', () => {
     expect(result).toEqual([])
   })
 
-  it('sums documents and wiki articles per project across its attached KBs', async () => {
+  it('sums documents and wiki articles per project across its attached KBs, via the junction table', async () => {
     const supabase = createFakeSupabase({
-      knowledge_bases: [
+      project_knowledge_bases: [
         {
           data: [
-            { id: 'kb-a', project_id: 'proj-1' },
-            { id: 'kb-b', project_id: 'proj-1' },
-            { id: 'kb-c', project_id: 'proj-2' },
+            { project_id: 'proj-1', knowledge_base_id: 'kb-a' },
+            { project_id: 'proj-1', knowledge_base_id: 'kb-b' },
+            { project_id: 'proj-2', knowledge_base_id: 'kb-c' },
           ],
           error: null,
         },
@@ -79,5 +79,28 @@ describe('listProjectsWithKnowledge', () => {
       { id: 'proj-1', name: 'RAG Experiment', documentCount: 3, wikiArticleCount: 1 },
       { id: 'proj-2', name: 'Legacy Modernization', documentCount: 1, wikiArticleCount: 2 },
     ])
+  })
+})
+
+describe('listKnowledgeBasesForProject', () => {
+  it('returns an empty array when nothing is attached, without a second query', async () => {
+    const supabase = createFakeSupabase({
+      project_knowledge_bases: [{ data: [], error: null }],
+    }) as never
+
+    const result = await listKnowledgeBasesForProject(supabase, 'proj-1')
+
+    expect(result).toEqual([])
+  })
+
+  it('joins link rows to knowledge base id/name', async () => {
+    const supabase = createFakeSupabase({
+      project_knowledge_bases: [{ data: [{ knowledge_base_id: 'zadara_sandz' }], error: null }],
+      knowledge_bases: [{ data: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }], error: null }],
+    }) as never
+
+    const result = await listKnowledgeBasesForProject(supabase, 'proj-1')
+
+    expect(result).toEqual([{ id: 'zadara_sandz', name: 'Zadara / Sandz' }])
   })
 })

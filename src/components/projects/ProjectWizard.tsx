@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ProjectRole, ProjectType } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType } from '@/types/database'
 import { createProjectAction } from '@/app/actions/projects'
 
 const TEAM_ROLES: ProjectRole[] = ['curator', 'consultant', 'viewer']
@@ -14,6 +14,38 @@ const PROJECT_TYPES: { value: ProjectType; label: string; description: string }[
   { value: 'transformation', label: 'Internal Transformation', description: 'Improve an internal workflow or business process.' },
   { value: 'knowledge', label: 'Knowledge', description: 'Build or maintain a curated knowledge base.' },
 ]
+
+const APPROVAL_TYPE_LABELS: Record<ApprovalType, string> = {
+  technical: 'Technical',
+  pricing: 'Pricing',
+  commercial: 'Commercial',
+  security_compliance: 'Security / Compliance',
+  support_commitment: 'Support commitment',
+  proposal_release: 'Proposal release',
+  customer_acceptance: 'Customer acceptance',
+  knowledge_publication: 'Knowledge publication',
+  production_change: 'Production change',
+}
+
+// Project Approval Authorities, Stage 1 (docs/dev-request-project-approval-
+// authorities.md): static, project-type-keyed suggestions, per the dev
+// request's own "project characteristic -> suggested approval requirements"
+// table. Recommendations are editable, not hidden rules -- the creator can
+// remove or add any of them in the wizard step below.
+const SUGGESTED_APPROVALS: Record<ProjectType, { approvalType: ApprovalType; reason: string }[]> = {
+  consulting: [
+    { approvalType: 'proposal_release', reason: 'Client/consulting projects typically share a proposal before work begins.' },
+    { approvalType: 'commercial', reason: 'Commercial terms with a client usually need a second set of eyes.' },
+    { approvalType: 'customer_acceptance', reason: 'Delivered work for a client is usually formally accepted.' },
+  ],
+  transformation: [
+    { approvalType: 'technical', reason: 'Changes to internal systems benefit from a technical review.' },
+    { approvalType: 'production_change', reason: 'This project changes production systems or workflows.' },
+  ],
+  experiment: [{ approvalType: 'technical', reason: 'Experiments usually get a lightweight technical review before wider use.' }],
+  learning: [],
+  knowledge: [{ approvalType: 'knowledge_publication', reason: 'Curated knowledge from this project may be published for others.' }],
+}
 
 interface Option {
   id: string
@@ -35,10 +67,39 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Governance & Approvals (step 6). Seeded from SUGGESTED_APPROVALS once the
+  // creator reaches this step (see the useEffect-free lazy-init below), then
+  // freely editable -- suggestions are starting points, not hidden rules.
+  const [approvals, setApprovals] = useState<
+    { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string }[]
+  >([])
+  const [approvalsSeeded, setApprovalsSeeded] = useState(false)
+
   function addStagedMember() {
     if (!memberEmail.trim()) return
     setMembers((prev) => [...prev, { email: memberEmail.trim(), role: memberRole }])
     setMemberEmail('')
+  }
+
+  function seedApprovalsIfNeeded() {
+    if (approvalsSeeded || !projectType) return
+    setApprovals(
+      SUGGESTED_APPROVALS[projectType].map((s) => ({ approvalType: s.approvalType, requirementStatus: 'required', assigneeEmail: '' }))
+    )
+    setApprovalsSeeded(true)
+  }
+
+  function addApproval(approvalType: ApprovalType) {
+    if (approvals.some((a) => a.approvalType === approvalType)) return
+    setApprovals((prev) => [...prev, { approvalType, requirementStatus: 'required', assigneeEmail: '' }])
+  }
+
+  function removeApproval(approvalType: ApprovalType) {
+    setApprovals((prev) => prev.filter((a) => a.approvalType !== approvalType))
+  }
+
+  function updateApproval(approvalType: ApprovalType, patch: Partial<{ requirementStatus: 'required' | 'optional'; assigneeEmail: string }>) {
+    setApprovals((prev) => prev.map((a) => (a.approvalType === approvalType ? { ...a, ...patch } : a)))
   }
 
   function setDetail(key: string, value: string) {
@@ -58,6 +119,11 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
         knowledgeBaseId: knowledgeBaseId || null,
         evalDatasetId: evalDatasetId || null,
         members,
+        approvals: approvals.map((a) => ({
+          approvalType: a.approvalType,
+          requirementStatus: a.requirementStatus,
+          assigneeEmail: a.assigneeEmail || null,
+        })),
       })
       router.push(`/projects/${result.projectId}`)
     } catch (err) {
@@ -69,7 +135,7 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
   return (
     <div className="flex max-w-xl flex-col gap-6">
       <div className="flex gap-1 text-xs text-zinc-500">
-        {['What are you doing?', 'Define the problem', 'Knowledge scope', 'Evaluation', 'Team'].map((label, i) => (
+        {['What are you doing?', 'Define the problem', 'Knowledge scope', 'Evaluation', 'Team', 'Governance & Approvals'].map((label, i) => (
           <div key={label} className={`flex-1 border-b-2 pb-2 ${step === i + 1 ? 'border-zinc-900 font-medium text-zinc-900' : 'border-zinc-200'}`}>
             {i + 1}. {label}
           </div>
@@ -234,9 +300,92 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
               ))}
             </ul>
           )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2">
             <button onClick={() => setStep(4)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button
+              onClick={() => {
+                seedApprovalsIfNeeded()
+                setStep(6)
+              }}
+              className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 6 && (
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-600">
+            Based on the project type, these approvals are likely relevant. Remove any that don&apos;t apply, or add more. Assigning an
+            authority is optional here -- an unassigned requirement is saved as a visible <span className="font-medium">Authority needed</span> gap,
+            not a blocker.
+          </p>
+
+          {approvals.length > 0 && (
+            <ul className="flex flex-col gap-3">
+              {approvals.map((a) => (
+                <li key={a.approvalType} className="rounded border border-zinc-200 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{APPROVAL_TYPE_LABELS[a.approvalType]}</span>
+                    <button type="button" onClick={() => removeApproval(a.approvalType)} className="text-xs text-red-600 underline">
+                      Remove
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={a.requirementStatus}
+                      onChange={(e) => updateApproval(a.approvalType, { requirementStatus: e.target.value as 'required' | 'optional' })}
+                      className="rounded border border-zinc-300 px-2 py-1 text-sm"
+                    >
+                      <option value="required">Required</option>
+                      <option value="optional">Optional</option>
+                    </select>
+                    <select
+                      value={a.assigneeEmail}
+                      onChange={(e) => updateApproval(a.approvalType, { assigneeEmail: e.target.value })}
+                      className="rounded border border-zinc-300 px-2 py-1 text-sm"
+                    >
+                      <option value="">Authority needed (unassigned)</option>
+                      <option value="__self__">Me (project owner)</option>
+                      {members
+                        .filter((m) => m.email)
+                        .map((m) => (
+                          <option key={m.email} value={m.email}>
+                            {m.email}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <label className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Add another approval type</span>
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) addApproval(e.target.value as ApprovalType)
+              }}
+              className="rounded border border-zinc-300 px-3 py-2 text-sm"
+            >
+              <option value="">Select…</option>
+              {(Object.keys(APPROVAL_TYPE_LABELS) as ApprovalType[])
+                .filter((t) => !approvals.some((a) => a.approvalType === t))
+                .map((t) => (
+                  <option key={t} value={t}>
+                    {APPROVAL_TYPE_LABELS[t]}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex gap-2">
+            <button onClick={() => setStep(5)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
             <button disabled={submitting} onClick={handleSubmit} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               {submitting ? 'Creating…' : 'Create project'}
             </button>

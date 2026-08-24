@@ -24,6 +24,15 @@ describe('gatherJournalSource', () => {
     expect(listMessagesMock).not.toHaveBeenCalled()
   })
 
+  it('filters to one project when a projectId is passed, leaving general/all-project behavior unchanged when omitted', async () => {
+    const supabase = createFakeSupabase({ conversations: [{ data: [], error: null }] })
+
+    await gatherJournalSource({ user: { id: 'user-1' }, profile: {}, supabase } as never, new Date('2026-07-21'), 'proj-1')
+
+    const eqCall = supabase._calls.find((c) => c.table === 'conversations' && c.method === 'eq' && (c.args as { column: string }).column === 'project_id')
+    expect(eqCall?.args).toEqual({ column: 'project_id', value: 'proj-1' })
+  })
+
   it('builds evidence from each conversation, skipping ones with no real messages', async () => {
     const supabase = createFakeSupabase({
       conversations: [

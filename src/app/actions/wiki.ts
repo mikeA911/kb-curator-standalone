@@ -16,8 +16,9 @@ import {
 import { approveWikiVersion, rejectWikiVersionToDraft, embedApprovedVersion } from '@/lib/wiki/review'
 import { linkSource, unlinkSource } from '@/lib/wiki/sources'
 import { linkRelatedArticle, unlinkRelatedArticle } from '@/lib/wiki/relations'
+import { linkProjectArticle, unlinkProjectArticle } from '@/lib/wiki/project-links'
 import { synthesizeWikiDraft } from '@/lib/wiki/synthesis'
-import type { WikiCategoryId, WikiSourceType } from '@/types/database'
+import type { WikiCategoryId, WikiSourceType, WikiVisibilityScope } from '@/types/database'
 
 // Any authenticated user can resolve Quick Help -- it's app-wide contextual
 // help, not a curator-only feature. Only ever returns approved content (see
@@ -260,6 +261,62 @@ export async function linkRelatedArticleBySlugAction(fromArticleId: string, toSl
 export async function unlinkRelatedArticleAction(relationId: string) {
   const { supabase } = await requireRole('curator')
   await unlinkRelatedArticle(supabase, relationId)
+  revalidatePath('/wiki')
+}
+
+// Project-Aware Knowledge and Assistant Context, Stage 1. can_curate_project
+// (via project_wiki_articles_manage_curator RLS) is the real gate -- a
+// platform curator who isn't a member of the target project can't attach to
+// it, matching listProjectsForLinking's own scoping.
+export async function linkProjectArticleAction(projectId: string, wikiArticleId: string) {
+  const { user, supabase } = await requireRole('curator')
+  await linkProjectArticle(supabase, projectId, wikiArticleId, user.id)
+  revalidatePath('/wiki')
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function unlinkProjectArticleAction(linkId: string, projectId: string) {
+  const { supabase } = await requireRole('curator')
+  await unlinkProjectArticle(supabase, linkId)
+  revalidatePath('/wiki')
+  revalidatePath(`/projects/${projectId}`)
+}
+
+// One-step version of "attach a project, then narrow visibility" for the
+// common case (an article with no attached projects yet): doing it as two
+// separate actions let a non-member curator/admin strand themselves between
+// steps -- narrowing visibility before attaching left the article
+// unreadable (see setArticleVisibilityScopeAction's own comment), so the UI
+// only offers project_private/selected_projects once a project is already
+// attached. This is that attach, done together with the scope change in one
+// request instead of relying on the user to get the order right.
+export async function attachProjectAndSetVisibilityAction(projectId: string, wikiArticleId: string, scope: WikiVisibilityScope) {
+  const { user, supabase } = await requireRole('curator')
+  await linkProjectArticle(supabase, projectId, wikiArticleId, user.id)
+  const admin = createAdminClient()
+  const { error } = await admin.from('wiki_articles').update({ visibility_scope: scope }).eq('id', wikiArticleId)
+  if (error) throw error
+  revalidatePath('/wiki')
+  revalidatePath(`/projects/${projectId}`)
+}
+
+// Separate from approve/public, same shape as setArticlePublicAction --
+// visibility is its own dimension, not implied by approval status. Unlike
+// setArticlePublicAction, this runs on the service-role client: PostgREST
+// always evaluates an UPDATE's RETURNING against the table's SELECT policy
+// (regardless of the client's return=minimal preference), and
+// wiki_articles_select_approved_or_staff intentionally denies staff-without-
+// membership read access to an approved project_private/selected_projects
+// article -- so a non-member curator/admin narrowing an article's own
+// visibility would otherwise be unable to see the very row they just wrote,
+// and the write itself would fail with a spurious RLS error. Same class of
+// issue as approveArticleAction/rejectArticleAction above. Authorization is
+// unchanged: still gated on requireRole('curator') before the write.
+export async function setArticleVisibilityScopeAction(articleId: string, scope: WikiVisibilityScope) {
+  await requireRole('curator')
+  const admin = createAdminClient()
+  const { error } = await admin.from('wiki_articles').update({ visibility_scope: scope }).eq('id', articleId)
+  if (error) throw error
   revalidatePath('/wiki')
 }
 

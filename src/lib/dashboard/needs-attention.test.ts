@@ -4,6 +4,7 @@ import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 const listUnpublishedArticlesMock = vi.fn()
 const listProjectsWithDraftUpdatesMock = vi.fn()
 const listTrendingUnderReviewMock = vi.fn()
+const listProjectsWithMissingAuthoritiesMock = vi.fn()
 
 vi.mock('@/lib/wiki/queries', () => ({ listUnpublishedArticles: (...args: unknown[]) => listUnpublishedArticlesMock(...args) }))
 vi.mock('@/lib/projects/queries', () => ({
@@ -11,6 +12,9 @@ vi.mock('@/lib/projects/queries', () => ({
 }))
 vi.mock('@/lib/trending/queries', () => ({
   listTrendingUnderReview: (...args: unknown[]) => listTrendingUnderReviewMock(...args),
+}))
+vi.mock('@/lib/governance/queries', () => ({
+  listProjectsWithMissingAuthorities: (...args: unknown[]) => listProjectsWithMissingAuthoritiesMock(...args),
 }))
 
 const { getNeedsAttention } = await import('./needs-attention')
@@ -20,6 +24,7 @@ describe('getNeedsAttention', () => {
     listUnpublishedArticlesMock.mockResolvedValue([{ id: 'w1' }, { id: 'w2' }])
     listProjectsWithDraftUpdatesMock.mockResolvedValue([])
     listTrendingUnderReviewMock.mockResolvedValue([{ id: 't1' }])
+    listProjectsWithMissingAuthoritiesMock.mockResolvedValue([])
 
     const supabase = createFakeSupabase({
       documents: [{ data: [{ id: 'd1' }], error: null }],
@@ -34,6 +39,7 @@ describe('getNeedsAttention', () => {
       { label: 'failed evaluation runs', count: 2, href: '/evals' },
       { label: 'unpublished project updates', count: 0, href: '/projects' },
       { label: 'Trending items under review', count: 1, href: '/trending' },
+      { label: 'projects with a governance authority needed', count: 0, href: '/projects' },
     ])
   })
 })

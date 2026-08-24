@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { DocumentUploader } from '@/components/curator/DocumentUploader'
 import { DocumentRow } from '@/components/curator/DocumentRow'
 import { SourcesPipelineDiagram } from '@/components/curator/SourcesPipelineDiagram'
+import { listActiveKnowledgeBases } from '@/lib/knowledge-bases'
 
 export default async function UploadPage({
   searchParams,
@@ -10,8 +11,8 @@ export default async function UploadPage({
 }) {
   const { kb, sourceUrl } = await searchParams
   const supabase = await createClient()
-  const [{ data: knowledgeBases }, { data: documents }] = await Promise.all([
-    supabase.from('knowledge_bases').select('*').order('name'),
+  const [knowledgeBases, { data: documents }] = await Promise.all([
+    listActiveKnowledgeBases(supabase),
     supabase.from('documents').select('*').order('upload_date', { ascending: false }).limit(50),
   ])
 
@@ -22,6 +23,7 @@ export default async function UploadPage({
     completed: documents?.filter((d) => d.processing_status === 'completed').length ?? 0,
     failed: documents?.filter((d) => d.processing_status === 'failed').length ?? 0,
   }
+  const activeDefaultKb = knowledgeBases.some((item) => item.id === kb) ? kb : undefined
 
   return (
     <div className="flex flex-col gap-8">
@@ -36,7 +38,7 @@ export default async function UploadPage({
       <SourcesPipelineDiagram />
 
       <div className="max-w-xl">
-        <DocumentUploader knowledgeBases={knowledgeBases ?? []} defaultKb={kb} defaultSourceUrl={sourceUrl} />
+        <DocumentUploader knowledgeBases={knowledgeBases} defaultKb={activeDefaultKb} defaultSourceUrl={sourceUrl} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">

@@ -6,25 +6,46 @@ import { PersistedAssistantEnvelopeSchema, type PersistedAssistantEnvelope, type
 import { resolveEnvelopeForDisplay } from './envelope-resolution'
 import { extractCreatedRecordRef, resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
 
-export async function createConversation(supabase: SupabaseClient<Database>, userId: string, title?: string): Promise<Conversation> {
-  const { data, error } = await supabase.from('conversations').insert({ user_id: userId, title: title ?? null }).select().single()
+// projectId binds this conversation to a project at creation time. Only ever
+// set once -- see the immutability trigger in
+// 20260824190001_conversations_project_binding.sql -- "changing project
+// context" means starting a new conversation, not re-pointing this one.
+export async function createConversation(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  title?: string,
+  projectId?: string | null
+): Promise<Conversation> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .insert({ user_id: userId, title: title ?? null, project_id: projectId ?? null })
+    .select()
+    .single()
   if (error || !data) throw error ?? new Error('Failed to create conversation')
   return data
 }
 
 // An empty result IS the first-use signal the onboarding UI checks for --
-// no separate "is this a new user" boolean needed.
+// no separate "is this a new user" boolean needed. projectId omitted means
+// "all of this user's conversations" (today's behavior, the global
+// ChatPanel's history list); projectId: null explicitly means "general
+// (unbound) conversations only"; a project id filters to that project's
+// conversations only (the project page's own history list).
 export async function listRecentConversations(
   supabase: SupabaseClient<Database>,
   userId: string,
-  limit = 10
+  opts: { projectId?: string | null; limit?: number } = {}
 ): Promise<Conversation[]> {
-  const { data, error } = await supabase
+  let query = supabase
     .from('conversations')
     .select('*')
     .eq('user_id', userId)
     .order('last_message_at', { ascending: false, nullsFirst: false })
-    .limit(limit)
+    .limit(opts.limit ?? 10)
+  if (opts.projectId !== undefined) {
+    query = opts.projectId === null ? query.is('project_id', null) : query.eq('project_id', opts.projectId)
+  }
+  const { data, error } = await query
   if (error) throw error
   return data ?? []
 }

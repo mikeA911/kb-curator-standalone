@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+vi.mock('@/lib/knowledge-bases', () => ({ requireActiveKnowledgeBase: vi.fn() }))
 
 const requireRoleMock = vi.fn()
 const getActiveEmbeddingProviderMock = vi.fn()

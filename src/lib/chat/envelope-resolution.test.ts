@@ -24,9 +24,32 @@ describe('buildPersistedEnvelope', () => {
       ],
     }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, new Set(['real-slug']))
+    const persisted = await buildPersistedEnvelope(
+      {} as never,
+      parsed,
+      { wikiArticleSlugs: new Set(['real-slug']), knowledgeSourceIds: new Set() }
+    )
 
     expect(persisted.citations).toEqual([{ label: 'Retrieved', sourceType: 'wiki_article', sourceId: 'real-slug' }])
+  })
+
+  it('checks knowledge_source citations against knowledgeSourceIds, not wikiArticleSlugs', async () => {
+    const parsed = {
+      schemaVersion: '1.0' as const,
+      message: 'Here you go.',
+      citations: [
+        { label: 'Retrieved source', sourceType: 'knowledge_source' as const, sourceId: 'source-1' },
+        { label: 'Invented source', sourceType: 'knowledge_source' as const, sourceId: 'never-retrieved-source' },
+      ],
+    }
+
+    const persisted = await buildPersistedEnvelope(
+      {} as never,
+      parsed,
+      { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set(['source-1']) }
+    )
+
+    expect(persisted.citations).toEqual([{ label: 'Retrieved source', sourceType: 'knowledge_source', sourceId: 'source-1' }])
   })
 
   it('drops links that fail to resolve even once, keeping ones that do', async () => {
@@ -42,7 +65,7 @@ describe('buildPersistedEnvelope', () => {
       ],
     }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, new Set())
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() })
 
     expect(persisted.links).toEqual([{ label: 'A', target: { kind: 'project', id: 'real-project' } }])
   })
@@ -51,13 +74,17 @@ describe('buildPersistedEnvelope', () => {
     resolveDocumentArtifactMock.mockResolvedValue(null)
     const parsed = { schemaVersion: '1.0' as const, message: 'Hi.', documents: [{ label: 'Doc', documentType: 'design_note', artifactId: 'fake' }] }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, new Set())
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() })
 
     expect(persisted.documents).toBeUndefined()
   })
 
   it('omits empty optional sections entirely rather than persisting empty arrays', async () => {
-    const persisted = await buildPersistedEnvelope({} as never, { schemaVersion: '1.0', message: 'Hi.' }, new Set())
+    const persisted = await buildPersistedEnvelope(
+      {} as never,
+      { schemaVersion: '1.0', message: 'Hi.' },
+      { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() }
+    )
     expect(persisted).toEqual({ message: 'Hi.' })
   })
 })

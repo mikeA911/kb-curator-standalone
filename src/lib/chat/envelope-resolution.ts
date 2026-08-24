@@ -4,6 +4,16 @@ import { resolveNavigationTarget } from './navigation-resolver'
 import { resolveDocumentArtifact } from './document-resolver'
 import type { AssistantResponseEnvelope, PersistedAssistantEnvelope, VerifiedAssistantEnvelope } from './response-envelope'
 
+// This turn's real retrieval provenance, keyed by citation sourceType --
+// citations are checked against this, never against what the model merely
+// asserts. wikiArticleSlugs covers both search_wiki and
+// search_project_knowledge's wiki-layer hits; knowledgeSourceIds covers
+// search_project_knowledge's source-layer hits (Stage 2).
+export interface RetrievedProvenance {
+  wikiArticleSlugs: ReadonlySet<string>
+  knowledgeSourceIds: ReadonlySet<string>
+}
+
 // Turns a model-submitted, schema-validated envelope into what actually
 // gets persisted: citations permanently filtered to this turn's real
 // retrieval provenance (a point-in-time fact -- see the caller in loop.ts),
@@ -14,7 +24,7 @@ import type { AssistantResponseEnvelope, PersistedAssistantEnvelope, VerifiedAss
 export async function buildPersistedEnvelope(
   ctx: WorkbenchCallerContext,
   parsed: AssistantResponseEnvelope,
-  retrievedWikiArticleSlugs: ReadonlySet<string>
+  retrieved: RetrievedProvenance
 ): Promise<PersistedAssistantEnvelope> {
   const [links, documents] = await Promise.all([
     Promise.all(
@@ -37,7 +47,9 @@ export async function buildPersistedEnvelope(
   const resolvedDocuments = documents.filter((d): d is NonNullable<typeof d> => d !== null)
   if (resolvedDocuments.length) persisted.documents = resolvedDocuments
 
-  const verifiedCitations = (parsed.citations ?? []).filter((c) => retrievedWikiArticleSlugs.has(c.sourceId))
+  const verifiedCitations = (parsed.citations ?? []).filter((c) =>
+    c.sourceType === 'knowledge_source' ? retrieved.knowledgeSourceIds.has(c.sourceId) : retrieved.wikiArticleSlugs.has(c.sourceId)
+  )
   if (verifiedCitations.length) persisted.citations = verifiedCitations
 
   return persisted
@@ -69,7 +81,7 @@ export async function resolveEnvelopeForDisplay(
     ),
     Promise.all(
       (persisted.citations ?? []).map(async (citation) => {
-        const resolved = await resolveNavigationTarget(ctx, { kind: 'wiki_article', id: citation.sourceId })
+        const resolved = await resolveNavigationTarget(ctx, { kind: citation.sourceType, id: citation.sourceId })
         return resolved ? { label: citation.label, sourceType: citation.sourceType, sourceId: citation.sourceId, route: resolved.route } : null
       })
     ),

@@ -40,6 +40,25 @@ export async function unlinkSource(supabase: SupabaseClient<Database>, sourceId:
   if (error) throw error
 }
 
+// Backs the SourceManager picker (replaces the old raw document/chunk-id
+// text input -- see docs/dev-request-project-aware-knowledge-and-assistant-
+// context.md and the smoke test that flagged it). Lists knowledge_sources
+// (Feature 1's stable logical-source identity) rather than documents
+// directly, so a curator picks by human-readable title, and linking always
+// resolves to that source's current approved version -- exact-version
+// provenance, matching the versioning work's own emphasis, rather than
+// whichever document row happened to be picked by id.
+export async function listKnowledgeSourcesForLinking(supabase: SupabaseClient<Database>) {
+  const { data, error } = await supabase
+    .from('knowledge_sources')
+    .select('id, title, knowledge_base_id, current_version_id, lifecycle_status')
+    .eq('lifecycle_status', 'active')
+    .not('current_version_id', 'is', null)
+    .order('title')
+  if (error) throw error
+  return data ?? []
+}
+
 export async function getSourcesForVersion(supabase: SupabaseClient<Database>, versionId: string) {
   const { data, error } = await supabase
     .from('wiki_sources')

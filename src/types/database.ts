@@ -3,6 +3,8 @@
 
 export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
+export type KnowledgeBaseClassification = 'platform' | 'legacy_sample' | 'project' | 'partner_pilot'
+export type KnowledgeBaseLifecycleStatus = 'active' | 'reference' | 'archived'
 
 export type ProcessingStatus =
   | 'pending'
@@ -50,6 +52,9 @@ export interface KnowledgeBase {
   name: string
   description: string | null
   project_id: string | null
+  classification: KnowledgeBaseClassification
+  lifecycle_status: KnowledgeBaseLifecycleStatus
+  origin: string | null
   created_at: string
   updated_at: string
 }
@@ -89,6 +94,33 @@ export interface Document {
   approved_chunks: number
   rejected_chunks: number
   metadata: DocumentMetadata
+  // Versioned Knowledge Source Documents, Stage 1 (docs/dev-request-versioned-
+  // knowledge-source-documents.md): documents is the immutable version table.
+  // knowledge_source_id is required -- every document belongs to exactly one
+  // logical source.
+  knowledge_source_id: string
+  version_number: number
+  change_note: string | null
+  superseded_at: string | null
+  retired_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type KnowledgeSourceLifecycleStatus = 'active' | 'retired'
+
+// The stable logical-source identity a document's versions belong to --
+// mirrors wiki_articles/wiki_versions' current_version_id pattern exactly,
+// applied to source documents instead of Wiki content.
+export interface KnowledgeSource {
+  id: string
+  knowledge_base_id: string
+  title: string
+  source_url: string | null
+  publisher: string | null
+  current_version_id: string | null
+  lifecycle_status: KnowledgeSourceLifecycleStatus
+  created_by: string | null
   created_at: string
   updated_at: string
 }
@@ -215,6 +247,12 @@ export type WikiArticleStatus = 'draft' | 'review' | 'approved' | 'archived'
 export type WikiVerificationStatus = 'unverified' | 'verified' | 'needs_review'
 export type WikiGeneratedBy = 'human' | 'ai_assisted'
 export type WikiSourceType = 'document' | 'chunk' | 'external' | 'workstream_artifact'
+// Project-Aware Knowledge and Assistant Context, Stage 1 (docs/dev-request-
+// project-aware-knowledge-and-assistant-context.md). Visibility and
+// approval are separate dimensions -- an approved article can still be
+// project_private. 'organization' is deliberately not offered: this schema
+// has no organizations/tenant table to enforce that boundary against yet.
+export type WikiVisibilityScope = 'project_private' | 'selected_projects' | 'platform' | 'public'
 
 export interface WikiCategory {
   id: WikiCategoryId
@@ -236,9 +274,39 @@ export interface WikiArticle {
   // knowledge", public means "safe for anonymous disclosure". Set only via
   // setArticlePublicAction (admin-only).
   is_public: boolean
+  // Separate again from both status and is_public -- see WikiVisibilityScope.
+  // Defaults to 'platform', matching every article's behavior before this
+  // column existed.
+  visibility_scope: WikiVisibilityScope
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+// A project association -- the allow-list for project_private/
+// selected_projects articles, and also how a platform-visibility article
+// gets explicitly associated with a project's Knowledge display without
+// copying it.
+export interface ProjectWikiArticle {
+  id: string
+  project_id: string
+  wiki_article_id: string
+  relationship: string | null
+  attached_by: string | null
+  attached_at: string
+}
+
+// Many-to-many: the same knowledge base may serve more than one authorized
+// project (e.g. a shared Zadara/Sandz KB across two client engagements).
+// Supersedes knowledge_bases.project_id, which is one-to-one and left in
+// place but no longer read or written by Stage 1 code.
+export interface ProjectKnowledgeBase {
+  id: string
+  project_id: string
+  knowledge_base_id: string
+  purpose: string | null
+  attached_by: string | null
+  attached_at: string
 }
 
 export interface WikiVersion {
@@ -550,12 +618,91 @@ export interface Project {
 export type ProjectRole = 'owner' | 'curator' | 'consultant' | 'viewer'
 export type ProjectMemberStatus = 'active' | 'inactive'
 
+export type BusinessFunction =
+  | 'business_development_sales'
+  | 'finance_pricing'
+  | 'legal_commercial'
+  | 'customer_support'
+  | 'delivery_consulting'
+  | 'architecture_engineering'
+  | 'security_compliance'
+  | 'customer_representative'
+  | 'project_governance'
+  | 'other'
+
 export interface ProjectMember {
   id: string
   project_id: string
   user_id: string
   role: ProjectRole
   status: ProjectMemberStatus
+  // Project Approval Authorities, Stage 1 (docs/dev-request-project-approval-
+  // authorities.md): why a member participates -- routes approval work, does
+  // not by itself grant approval authority. Separate from ProjectRole.
+  business_function: BusinessFunction | null
+  function_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Bounded catalogue per the dev request -- extensible via migration later,
+// not via an admin UI in Stage 1.
+export type ApprovalType =
+  | 'technical'
+  | 'pricing'
+  | 'commercial'
+  | 'security_compliance'
+  | 'support_commitment'
+  | 'proposal_release'
+  | 'customer_acceptance'
+  | 'knowledge_publication'
+  | 'production_change'
+
+export type ApprovalRequirementStatus = 'required' | 'optional' | 'not_applicable'
+export type ApprovalMode = 'any_authorized' | 'all_assigned'
+export type ApprovalVisibilityScope = 'internal' | 'customer_visible'
+export type AuthorityStatus = 'active' | 'revoked'
+
+// A policy says WHAT approval a project needs; an authority assignment
+// (below) says WHO may make that specific decision. Stage 1 only builds
+// this planning shell -- no project_approval_requests/decisions yet.
+export interface ProjectApprovalPolicy {
+  id: string
+  project_id: string
+  approval_type: ApprovalType
+  requirement_status: ApprovalRequirementStatus
+  sequence: number | null
+  minimum_approvals: number
+  approval_mode: ApprovalMode
+  allow_self_approval: boolean
+  monetary_trigger: number | null
+  discount_trigger_percent: number | null
+  visibility_scope: ApprovalVisibilityScope
+  required_before_release: boolean
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectAuthorityAssignment {
+  id: string
+  project_id: string
+  user_id: string
+  business_function: BusinessFunction | null
+  approval_type: ApprovalType
+  monetary_limit: number | null
+  discount_limit_percent: number | null
+  conditions: string | null
+  effective_from: string
+  expires_at: string | null
+  status: AuthorityStatus
+  allow_self_approval: boolean
+  granted_by: string | null
+  granted_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -659,16 +806,45 @@ export interface Conversation {
   summary_provider: string | null
   summary_model: string | null
   summary_version: string | null
+  // Project-Aware Knowledge and Assistant Context, Stage 2. Null means
+  // general/unbound. Immutable once set (20260824190001_conversations_project_binding.sql's
+  // trigger) -- "changing project context" means starting a new conversation.
+  project_id: string | null
+  // Set at turn start, cleared when the turn resolves either way -- survives
+  // a page refresh, unlike in-memory isPending state. See runAssistantTurn
+  // and ChatPanel's mount-time recovery check.
+  pending_turn_started_at: string | null
 }
 
 export type ConversationInsert = Omit<
   Conversation,
-  'id' | 'created_at' | 'updated_at' | 'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'title'
+  | 'last_message_at'
+  | 'summary_json'
+  | 'summary_through_message_id'
+  | 'summary_updated_at'
+  | 'summary_provider'
+  | 'summary_model'
+  | 'summary_version'
+  | 'project_id'
+  | 'pending_turn_started_at'
 > &
   Partial<
     Pick<
       Conversation,
-      'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+      | 'title'
+      | 'last_message_at'
+      | 'summary_json'
+      | 'summary_through_message_id'
+      | 'summary_updated_at'
+      | 'summary_provider'
+      | 'summary_model'
+      | 'summary_version'
+      | 'project_id'
+      | 'pending_turn_started_at'
     >
   >
 export type ConversationUpdate = Partial<Omit<Conversation, 'id' | 'user_id' | 'created_at'>>
@@ -1264,15 +1440,29 @@ export type DocumentInsert = Omit<
   Partial<Pick<Document, 'approved_chunks' | 'rejected_chunks'>>
 export type DocumentUpdate = Partial<Omit<Document, 'id' | 'upload_date' | 'created_at'>>
 
+export type KnowledgeSourceInsert = Omit<KnowledgeSource, 'id' | 'created_at' | 'updated_at' | 'current_version_id'> &
+  Partial<Pick<KnowledgeSource, 'current_version_id'>>
+export type KnowledgeSourceUpdate = Partial<Omit<KnowledgeSource, 'id' | 'created_at'>>
+
 export type ChunkInsert = Omit<DocumentChunk, 'id' | 'created_at'>
 export type ChunkUpdate = Partial<Omit<DocumentChunk, 'id' | 'document_id' | 'chunk_index' | 'created_at'>>
 
 export type KBVectorInsert = Omit<KBVector, 'id' | 'approved_date' | 'last_updated'>
 export type KBVectorUpdate = Partial<Omit<KBVector, 'id' | 'chunk_id' | 'document_id' | 'approved_date'>>
 
-export type WikiArticleInsert = Omit<WikiArticle, 'id' | 'created_at' | 'updated_at' | 'current_version_id' | 'is_public'> &
-  Partial<Pick<WikiArticle, 'current_version_id' | 'is_public'>>
+export type WikiArticleInsert = Omit<
+  WikiArticle,
+  'id' | 'created_at' | 'updated_at' | 'current_version_id' | 'is_public' | 'visibility_scope'
+> &
+  Partial<Pick<WikiArticle, 'current_version_id' | 'is_public' | 'visibility_scope'>>
 export type WikiArticleUpdate = Partial<Omit<WikiArticle, 'id' | 'created_at'>>
+
+export type ProjectWikiArticleInsert = Omit<ProjectWikiArticle, 'id' | 'attached_at'> & Partial<Pick<ProjectWikiArticle, 'attached_at'>>
+export type ProjectWikiArticleUpdate = Partial<Omit<ProjectWikiArticle, 'id' | 'project_id' | 'wiki_article_id'>>
+
+export type ProjectKnowledgeBaseInsert = Omit<ProjectKnowledgeBase, 'id' | 'attached_at'> &
+  Partial<Pick<ProjectKnowledgeBase, 'attached_at'>>
+export type ProjectKnowledgeBaseUpdate = Partial<Omit<ProjectKnowledgeBase, 'id' | 'project_id' | 'knowledge_base_id'>>
 
 export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at' | 'promoted_from_trending_item_id'> &
   Partial<Pick<WikiVersion, 'promoted_from_trending_item_id'>>
@@ -1332,8 +1522,18 @@ export type ProjectInsert = Omit<
   >
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 
-export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
+export type ProjectMemberInsert = Omit<
+  ProjectMember,
+  'id' | 'created_at' | 'updated_at' | 'business_function' | 'function_notes'
+> &
+  Partial<Pick<ProjectMember, 'business_function' | 'function_notes'>>
 export type ProjectMemberUpdate = Partial<Omit<ProjectMember, 'id' | 'project_id' | 'user_id' | 'created_at'>>
+
+export type ProjectApprovalPolicyInsert = Omit<ProjectApprovalPolicy, 'id' | 'created_at' | 'updated_at'>
+export type ProjectApprovalPolicyUpdate = Partial<Omit<ProjectApprovalPolicy, 'id' | 'project_id' | 'created_at'>>
+
+export type ProjectAuthorityAssignmentInsert = Omit<ProjectAuthorityAssignment, 'id' | 'created_at' | 'updated_at'>
+export type ProjectAuthorityAssignmentUpdate = Partial<Omit<ProjectAuthorityAssignment, 'id' | 'project_id' | 'created_at'>>
 
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
@@ -1414,6 +1614,12 @@ export interface Database {
         Relationships: []
       }
       documents: { Row: Document; Insert: DocumentInsert; Update: DocumentUpdate; Relationships: [] }
+      knowledge_sources: {
+        Row: KnowledgeSource
+        Insert: KnowledgeSourceInsert
+        Update: KnowledgeSourceUpdate
+        Relationships: []
+      }
       document_chunks: { Row: DocumentChunk; Insert: ChunkInsert; Update: ChunkUpdate; Relationships: [] }
       kb_vectors: { Row: KBVector; Insert: KBVectorInsert; Update: KBVectorUpdate; Relationships: [] }
       settings: { Row: Setting; Insert: Setting; Update: Partial<Setting>; Relationships: [] }
@@ -1430,6 +1636,18 @@ export interface Database {
         Relationships: []
       }
       wiki_articles: { Row: WikiArticle; Insert: WikiArticleInsert; Update: WikiArticleUpdate; Relationships: [] }
+      project_wiki_articles: {
+        Row: ProjectWikiArticle
+        Insert: ProjectWikiArticleInsert
+        Update: ProjectWikiArticleUpdate
+        Relationships: []
+      }
+      project_knowledge_bases: {
+        Row: ProjectKnowledgeBase
+        Insert: ProjectKnowledgeBaseInsert
+        Update: ProjectKnowledgeBaseUpdate
+        Relationships: []
+      }
       wiki_versions: { Row: WikiVersion; Insert: WikiVersionInsert; Update: WikiVersionUpdate; Relationships: [] }
       wiki_sources: { Row: WikiSource; Insert: WikiSourceInsert; Update: Partial<WikiSource>; Relationships: [] }
       wiki_relations: {
@@ -1452,6 +1670,18 @@ export interface Database {
       eval_results: { Row: EvalResult; Insert: EvalResultInsert; Update: EvalResultUpdate; Relationships: [] }
       projects: { Row: Project; Insert: ProjectInsert; Update: ProjectUpdate; Relationships: [] }
       project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
+      project_approval_policies: {
+        Row: ProjectApprovalPolicy
+        Insert: ProjectApprovalPolicyInsert
+        Update: ProjectApprovalPolicyUpdate
+        Relationships: []
+      }
+      project_authority_assignments: {
+        Row: ProjectAuthorityAssignment
+        Insert: ProjectAuthorityAssignmentInsert
+        Update: ProjectAuthorityAssignmentUpdate
+        Relationships: []
+      }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }

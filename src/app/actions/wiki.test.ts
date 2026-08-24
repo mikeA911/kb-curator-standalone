@@ -39,7 +39,8 @@ const adminSupabase = createFakeSupabase({
 })
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
 
-const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction } = await import('./wiki')
+const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction, attachProjectAndSetVisibilityAction } =
+  await import('./wiki')
 
 beforeEach(() => {
   requireRoleMock.mockReset()
@@ -146,5 +147,19 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
       createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-2' })
     ).rejects.toThrow('link-only artifact')
     expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('attachProjectAndSetVisibilityAction -- one-step attach-and-narrow safety fix', () => {
+  it('links the project (RLS-scoped client) and sets visibility_scope (service-role client) in one call', async () => {
+    const supabase = createFakeSupabase({ project_wiki_articles: [{ data: null, error: null }] })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+
+    await attachProjectAndSetVisibilityAction('project-1', 'article-1', 'project_private')
+
+    const link = supabase._calls.find((c) => c.table === 'project_wiki_articles' && c.method === 'insert')
+    expect(link?.args).toMatchObject({ project_id: 'project-1', wiki_article_id: 'article-1', attached_by: 'curator-1' })
+    const scopeUpdate = adminSupabase._calls.find((c) => c.table === 'wiki_articles' && c.method === 'update')
+    expect(scopeUpdate?.args).toEqual({ visibility_scope: 'project_private' })
   })
 })

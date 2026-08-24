@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 
 // Every action here requires admin first (using the caller's own RLS-scoped
 // session), then switches to the service-role client for the actual write --
@@ -26,7 +27,8 @@ export async function deleteKnowledgeBase(id: string) {
 }
 
 export async function addCurationQueueItem(kbId: string, title: string, url: string) {
-  const { user } = await requireRole('curator')
+  const { user, supabase } = await requireRole('curator')
+  await requireActiveKnowledgeBase(supabase, kbId)
   const admin = createAdminClient()
   const { error } = await admin.from('curation_queue').insert({ kb_id: kbId, title, url, status: 'pending', added_by: user.id })
   if (error) throw error
@@ -66,7 +68,8 @@ export async function updateUserActive(userId: string, isActive: boolean) {
 }
 
 export async function assignKBsToCurator(userId: string, kbIds: string[]) {
-  await requireRole('admin')
+  const { supabase } = await requireRole('admin')
+  await Promise.all(kbIds.map((id) => requireActiveKnowledgeBase(supabase, id)))
   const admin = createAdminClient()
   const { error } = await admin.from('profiles').update({ assigned_kbs: kbIds }).eq('id', userId)
   if (error) throw error
