@@ -12,13 +12,16 @@ export interface PublicBlogPostSummary {
   title: string
   excerpt: string | null
   published_at: string | null
+  updated_at: string
+  cover_image_path: string | null
+  cover_image_alt: string | null
 }
 
 export interface PublicBlogPost extends PublicBlogPostSummary {
   content: string
 }
 
-const SUMMARY_COLUMNS = 'id, slug, title, excerpt, published_at'
+const SUMMARY_COLUMNS = 'id, slug, title, excerpt, published_at, updated_at, cover_image_path, cover_image_alt'
 const DETAIL_COLUMNS = `${SUMMARY_COLUMNS}, content`
 
 export async function listPublishedPosts(supabase: SupabaseClient<Database>): Promise<PublicBlogPostSummary[]> {

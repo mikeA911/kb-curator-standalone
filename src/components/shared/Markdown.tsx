@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 
 // Shared GFM markdown renderer (tables, bold/italic, lists, code fences) for
 // long-form text that comes from outside the app -- workstream goals/
@@ -13,6 +14,15 @@ export function Markdown({ text }: { text: string }) {
     <div className="text-sm leading-relaxed text-zinc-800">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // Default schema (GitHub's own sanitization rules) -- blocks
+        // javascript:/data: in href/src while keeping the http/https/mailto
+        // links and http/https images this app actually produces, plus the
+        // table/img/code elements and code's language-* className this
+        // component already renders. Without this, react-markdown does not
+        // sanitize URL protocols by default (confirmed live via the
+        // Launch-slice regression report -- javascript:/data: URLs
+        // otherwise survive straight into the rendered href/src).
+        rehypePlugins={[rehypeSanitize]}
         components={{
           h1: ({ children }) => <h2 className="mb-2 mt-4 text-base font-semibold text-zinc-900 first:mt-0">{children}</h2>,
           h2: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold text-zinc-900 first:mt-0">{children}</h3>,
@@ -28,6 +38,11 @@ export function Markdown({ text }: { text: string }) {
             </a>
           ),
           hr: () => <hr className="my-4 border-zinc-200" />,
+          // Source is arbitrary Markdown content (a Supabase Storage public
+          // URL for Blog images), not a static/known-dimension asset
+          // next/image can optimise meaningfully.
+          // eslint-disable-next-line @next/next/no-img-element
+          img: ({ src, alt }) => <img src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} className="mb-3 h-auto max-w-full rounded" />,
           blockquote: ({ children }) => <blockquote className="mb-3 border-l-2 border-zinc-300 pl-3 text-zinc-600 last:mb-0">{children}</blockquote>,
           code: ({ children, className }) => {
             // Fenced blocks carry a `language-*` className from remark; inline

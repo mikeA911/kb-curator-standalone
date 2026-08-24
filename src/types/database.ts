@@ -382,6 +382,13 @@ export interface BlogPost {
   content: string
   status: BlogPostStatus
   author_id: string | null
+  last_editor_id: string | null
+  submitted_for_review_at: string | null
+  submitted_by: string | null
+  published_by: string | null
+  source_reference: string | null
+  cover_image_path: string | null
+  cover_image_alt: string | null
   published_at: string | null
   created_at: string
   updated_at: string
@@ -390,6 +397,15 @@ export interface BlogPost {
 export type BlogPostInsert = Omit<BlogPost, 'id' | 'created_at' | 'updated_at' | 'status' | 'published_at'> &
   Partial<Pick<BlogPost, 'status' | 'published_at'>>
 export type BlogPostUpdate = Partial<Omit<BlogPost, 'id' | 'created_at'>>
+
+export interface BlogRelation {
+  id: string
+  from_post_id: string
+  to_post_id: string
+  relation_type: string
+  created_at: string
+}
+export type BlogRelationInsert = Omit<BlogRelation, 'id' | 'created_at' | 'relation_type'> & Partial<Pick<BlogRelation, 'relation_type'>>
 
 export interface TrendingComment {
   id: string
@@ -1425,6 +1441,7 @@ export interface Database {
       wiki_vectors: { Row: WikiVector; Insert: WikiVectorInsert; Update: Partial<WikiVector>; Relationships: [] }
       trending_items: { Row: TrendingItem; Insert: TrendingItemInsert; Update: TrendingItemUpdate; Relationships: [] }
       blog_posts: { Row: BlogPost; Insert: BlogPostInsert; Update: BlogPostUpdate; Relationships: [] }
+      blog_relations: { Row: BlogRelation; Insert: BlogRelationInsert; Update: Partial<BlogRelation>; Relationships: [] }
       trending_comments: { Row: TrendingComment; Insert: TrendingCommentInsert; Update: Partial<TrendingComment>; Relationships: [] }
       trending_wiki_links: { Row: TrendingWikiLink; Insert: TrendingWikiLinkInsert; Update: Partial<TrendingWikiLink>; Relationships: [] }
       project_notes: { Row: ProjectNote; Insert: ProjectNoteInsert; Update: ProjectNoteUpdate; Relationships: [] }

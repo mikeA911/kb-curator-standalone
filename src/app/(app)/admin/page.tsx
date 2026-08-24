@@ -56,6 +56,8 @@ export default async function AdminPage() {
   // Checked server-side only -- reports Configured/Missing, never the value.
   const configuredByProvider = Object.fromEntries(aiProviders.map((p) => [p.id, Boolean(env.byName(p.api_key_env_var))]))
 
+  const emailById = new Map((profiles ?? []).map((p) => [p.id, p.email ?? p.id]))
+
   const currentConversationalModel = aiModels.find((m) => m.model_type === 'generation' && m.is_default)
   const currentStructuredOutputModel = aiModels.find((m) => m.is_default_structured_output)
 
@@ -95,7 +97,7 @@ export default async function AdminPage() {
             ),
           },
           { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
-          { id: 'blog', label: 'Blog', content: <BlogPostsList posts={blogPosts} /> },
+          { id: 'blog', label: 'Blog', content: <BlogPostsList posts={blogPosts} emailById={emailById} /> },
         ]}
       />
 

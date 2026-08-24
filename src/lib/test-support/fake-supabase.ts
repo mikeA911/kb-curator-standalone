@@ -5,7 +5,7 @@
 // canned return value. Not used by application code.
 
 type QueryResult<T = unknown> = { data: T | null; error: Error | null }
-type RecordedCall = { table: string; method: 'insert' | 'update' | 'upsert' | 'delete'; args: unknown }
+type RecordedCall = { table: string; method: 'insert' | 'update' | 'upsert' | 'delete' | 'eq'; args: unknown }
 
 class FakeQuery<T = unknown> implements PromiseLike<QueryResult<T>> {
   constructor(
@@ -14,7 +14,10 @@ class FakeQuery<T = unknown> implements PromiseLike<QueryResult<T>> {
     private onCall: (call: RecordedCall) => void
   ) {}
   select() { return this }
-  eq() { return this }
+  eq(column: string, value: unknown) {
+    this.onCall({ table: this.table, method: 'eq', args: { column, value } })
+    return this
+  }
   neq() { return this }
   gte() { return this }
   in() { return this }
@@ -55,6 +58,8 @@ export function createFakeSupabase(queued: Record<string, QueryResult[]>) {
   const cursors: Record<string, number> = {}
   const rpcCalls: { name: string; args: unknown }[] = []
   const calls: RecordedCall[] = []
+  const storageRemoveCalls: { bucket: string; paths: string[] }[] = []
+  const storageUploadCalls: { bucket: string; path: string }[] = []
 
   return {
     from(table: string) {
@@ -74,10 +79,20 @@ export function createFakeSupabase(queued: Record<string, QueryResult[]>) {
           getPublicUrl(path: string) {
             return { data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}` } }
           },
+          async remove(paths: string[]) {
+            storageRemoveCalls.push({ bucket, paths })
+            return { data: null, error: null }
+          },
+          async upload(path: string) {
+            storageUploadCalls.push({ bucket, path })
+            return { data: { path }, error: null }
+          },
         }
       },
     },
     _rpcCalls: rpcCalls,
     _calls: calls,
+    _storageRemoveCalls: storageRemoveCalls,
+    _storageUploadCalls: storageUploadCalls,
   }
 }
