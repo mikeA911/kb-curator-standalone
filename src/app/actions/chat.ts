@@ -3,12 +3,22 @@
 import { requireUser } from '@/lib/auth'
 import { runAssistantTurn, type ModelSelection } from '@/lib/chat/loop'
 import { getLatestActivityLabel, listRecentConversations, listMessages, toDisplayMessages } from '@/lib/chat/conversations'
+import { getProjectContext, describeProjectKnowledgeScope } from '@/lib/chat/project-context'
 import { listChatCapableModels, listProviders, listModels } from '@/lib/ai'
 import { getAssistantDescriptor } from '@/lib/workbench/assistant-descriptor'
 
-export async function sendChatMessageAction(conversationId: string | null, message: string, modelSelection?: ModelSelection) {
+// projectId is only consulted for a brand-new conversation (conversationId
+// null) -- see runAssistantTurn's own comment. Passing it for an existing
+// conversation is harmless (ignored), not an error, since binding is
+// immutable at the DB level regardless.
+export async function sendChatMessageAction(
+  conversationId: string | null,
+  message: string,
+  modelSelection?: ModelSelection,
+  projectId?: string | null
+) {
   const ctx = await requireUser()
-  return runAssistantTurn(ctx, conversationId, message, modelSelection)
+  return runAssistantTurn(ctx, conversationId, message, modelSelection, projectId)
 }
 
 export async function listChatModelsAction() {
@@ -24,10 +34,44 @@ export async function getChatActivityAction(conversationId: string) {
   return getLatestActivityLabel(ctx.supabase, conversationId)
 }
 
-// An empty result is the first-use signal ChatPanel checks for.
+// Durable "is a turn still in flight" check, surviving a page refresh --
+// see runAssistantTurn's set/clear of pending_turn_started_at. ChatPanel
+// polls this after resuming a conversation whose last-known state was
+// mid-turn, instead of only trusting its own in-memory isPending (which a
+// remount always resets to false regardless of what's actually happening
+// server-side).
+export async function getConversationPendingStatusAction(conversationId: string) {
+  const ctx = await requireUser()
+  const { data } = await ctx.supabase.from('conversations').select('pending_turn_started_at').eq('id', conversationId).maybeSingle()
+  return data?.pending_turn_started_at ?? null
+}
+
+// An empty result is the first-use signal ChatPanel checks for. Global
+// history -- every conversation of the caller's, project-bound or not.
 export async function listRecentConversationsAction() {
   const ctx = await requireUser()
   return listRecentConversations(ctx.supabase, ctx.user.id)
+}
+
+// The project page's own "recent conversations" list -- this project's
+// conversations only, so a member can resume one instead of always starting
+// fresh. RLS (conversations_owner) already scopes this to the caller's own
+// conversations; a project a caller can't see just yields nothing shareable
+// to navigate to, not a leak.
+export async function listProjectConversationsAction(projectId: string) {
+  const ctx = await requireUser()
+  return listRecentConversations(ctx.supabase, ctx.user.id, { projectId })
+}
+
+// Backs the project-scoped ChatPanel's banner ("this project knows about
+// X, Y") -- same is_project_member bar as viewing the project page itself.
+// Returns null for a project the caller can't see (RLS-driven, same as
+// every other resolver in this app) rather than throwing.
+export async function getProjectContextAction(projectId: string) {
+  const ctx = await requireUser()
+  const context = await getProjectContext(ctx, projectId)
+  if (!context) return null
+  return { ...context, knowledgeScope: describeProjectKnowledgeScope(context) }
 }
 
 // RLS scopes listMessages to the caller's own conversation -- a

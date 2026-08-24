@@ -64,6 +64,20 @@ describe('resolveNavigationTarget', () => {
     expect(result).toBeNull()
   })
 
+  it('resolves a knowledge_source to its title and /sources/[id] route', async () => {
+    const supabase = createFakeSupabase({
+      knowledge_sources: [{ data: { id: 'ks1', title: 'zadara-01-zstorage-overview.txt' }, error: null }],
+    })
+    const result = await resolveNavigationTarget(fakeCtx(supabase), { kind: 'knowledge_source', id: 'ks1' })
+    expect(result).toEqual({ label: 'zadara-01-zstorage-overview.txt', route: '/sources/ks1' })
+  })
+
+  it('returns null for an inaccessible/nonexistent knowledge_source', async () => {
+    const supabase = createFakeSupabase({ knowledge_sources: [{ data: null, error: null }] })
+    const result = await resolveNavigationTarget(fakeCtx(supabase), { kind: 'knowledge_source', id: 'ks-hidden' })
+    expect(result).toBeNull()
+  })
+
   it('returns null instead of throwing on a query error', async () => {
     const supabase = createFakeSupabase({ projects: [{ data: null, error: new Error('boom') }] })
     const result = await resolveNavigationTarget(fakeCtx(supabase), { kind: 'project', id: 'p1' })

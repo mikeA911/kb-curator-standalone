@@ -25,15 +25,26 @@ export interface JournalSource {
 }
 
 // User-scoped by construction (ctx.user.id + RLS both apply) -- there is no
-// path here that can return another user's conversations.
-export async function gatherJournalSource(ctx: WorkbenchCallerContext, sinceDate: Date): Promise<JournalSource> {
-  const { data, error } = await ctx.supabase
+// path here that can return another user's conversations. projectId omitted
+// (the default, and today's only behavior) pulls every conversation across
+// every project in range, exactly as before -- a member of more than one
+// project would get both projects' evidence blended into one journal entry.
+// Passing a project id scopes the journal to that project only, avoiding
+// that cross-project blend; nothing calls this with a projectId yet (no UI
+// control wired up this pass), but the isolation the request asks for is
+// available to a future caller without another migration/refactor.
+export async function gatherJournalSource(ctx: WorkbenchCallerContext, sinceDate: Date, projectId?: string | null): Promise<JournalSource> {
+  let query = ctx.supabase
     .from('conversations')
     .select('*')
     .eq('user_id', ctx.user.id)
     .gte('last_message_at', sinceDate.toISOString())
     .order('last_message_at', { ascending: true })
     .limit(MAX_CONVERSATIONS)
+  if (projectId !== undefined) {
+    query = projectId === null ? query.is('project_id', null) : query.eq('project_id', projectId)
+  }
+  const { data, error } = await query
   if (error) throw error
   const rows = data ?? []
 

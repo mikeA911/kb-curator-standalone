@@ -22,6 +22,11 @@ vi.mock('@/lib/chat/conversations', () => ({
   listMessages: (...args: unknown[]) => listMessagesMock(...args),
   toDisplayMessages: (...args: unknown[]) => toDisplayMessagesMock(...args),
 }))
+const getProjectContextMock = vi.fn()
+vi.mock('@/lib/chat/project-context', () => ({
+  getProjectContext: (...args: unknown[]) => getProjectContextMock(...args),
+  describeProjectKnowledgeScope: () => 'knowledge base(s) Zadara / Sandz',
+}))
 vi.mock('@/lib/ai', () => ({
   listChatCapableModels: (...args: unknown[]) => listChatCapableModelsMock(...args),
   listProviders: (...args: unknown[]) => listProvidersMock(...args),
@@ -35,7 +40,10 @@ const {
   sendChatMessageAction,
   listChatModelsAction,
   getChatActivityAction,
+  getConversationPendingStatusAction,
   listRecentConversationsAction,
+  listProjectConversationsAction,
+  getProjectContextAction,
   getConversationMessagesAction,
   getAssistantOverviewAction,
 } = await import('./chat')
@@ -50,6 +58,7 @@ beforeEach(() => {
   listRecentConversationsMock.mockReset()
   listMessagesMock.mockReset()
   toDisplayMessagesMock.mockReset()
+  getProjectContextMock.mockReset()
   listProvidersMock.mockReset()
   listModelsMock.mockReset()
   getAssistantDescriptorMock.mockReset()
@@ -65,8 +74,16 @@ describe('sendChatMessageAction', () => {
     const result = await sendChatMessageAction(null, 'Hello', { providerName: 'groq', modelId: 'openai/gpt-oss-20b' })
 
     expect(requireUserMock).toHaveBeenCalled()
-    expect(runAssistantTurnMock).toHaveBeenCalledWith(ctx, null, 'Hello', { providerName: 'groq', modelId: 'openai/gpt-oss-20b' })
+    expect(runAssistantTurnMock).toHaveBeenCalledWith(ctx, null, 'Hello', { providerName: 'groq', modelId: 'openai/gpt-oss-20b' }, undefined)
     expect(result).toEqual({ conversationId: 'conv-1', reply: 'Hi there.' })
+  })
+
+  it('threads an optional projectId through to runAssistantTurn', async () => {
+    runAssistantTurnMock.mockResolvedValue({ conversationId: 'conv-1', reply: 'Hi there.' })
+
+    await sendChatMessageAction(null, 'Hello', undefined, 'proj-1')
+
+    expect(runAssistantTurnMock).toHaveBeenCalledWith(ctx, null, 'Hello', undefined, 'proj-1')
   })
 })
 
@@ -92,6 +109,21 @@ describe('getChatActivityAction', () => {
   })
 })
 
+describe('getConversationPendingStatusAction', () => {
+  it('returns the conversation\'s pending_turn_started_at, or null when clear/missing', async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { pending_turn_started_at: '2026-08-24T10:00:00Z' } })
+    const eqFn = vi.fn().mockReturnValue({ maybeSingle })
+    const selectFn = vi.fn().mockReturnValue({ eq: eqFn })
+    requireUserMock.mockResolvedValue({ ...ctx, supabase: { from: () => ({ select: selectFn }) } })
+
+    const result = await getConversationPendingStatusAction('conv-1')
+
+    expect(selectFn).toHaveBeenCalledWith('pending_turn_started_at')
+    expect(eqFn).toHaveBeenCalledWith('id', 'conv-1')
+    expect(result).toBe('2026-08-24T10:00:00Z')
+  })
+})
+
 describe('listRecentConversationsAction', () => {
   it('resolves the caller then delegates to listRecentConversations, scoped to that user', async () => {
     listRecentConversationsMock.mockResolvedValue([{ id: 'conv-1' }])
@@ -100,6 +132,40 @@ describe('listRecentConversationsAction', () => {
 
     expect(listRecentConversationsMock).toHaveBeenCalledWith(ctx.supabase, 'user-1')
     expect(result).toEqual([{ id: 'conv-1' }])
+  })
+})
+
+describe('listProjectConversationsAction', () => {
+  it('resolves the caller then delegates to listRecentConversations, scoped to that user and project', async () => {
+    listRecentConversationsMock.mockResolvedValue([{ id: 'conv-1', project_id: 'proj-1' }])
+
+    const result = await listProjectConversationsAction('proj-1')
+
+    expect(listRecentConversationsMock).toHaveBeenCalledWith(ctx.supabase, 'user-1', { projectId: 'proj-1' })
+    expect(result).toEqual([{ id: 'conv-1', project_id: 'proj-1' }])
+  })
+})
+
+describe('getProjectContextAction', () => {
+  it('returns null when the project is not accessible, without throwing', async () => {
+    getProjectContextMock.mockResolvedValue(null)
+    const result = await getProjectContextAction('missing-project')
+    expect(result).toBeNull()
+  })
+
+  it('appends the formatted knowledge scope string to the resolved context', async () => {
+    getProjectContextMock.mockResolvedValue({ id: 'proj-1', name: 'Zadara Pilot', goal: null, knowledgeBases: [], wikiArticles: [] })
+
+    const result = await getProjectContextAction('proj-1')
+
+    expect(result).toEqual({
+      id: 'proj-1',
+      name: 'Zadara Pilot',
+      goal: null,
+      knowledgeBases: [],
+      wikiArticles: [],
+      knowledgeScope: 'knowledge base(s) Zadara / Sandz',
+    })
   })
 })
 

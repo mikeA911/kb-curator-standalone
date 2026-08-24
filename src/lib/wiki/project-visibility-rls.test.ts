@@ -26,6 +26,16 @@ const strictMembershipSql = fs.readFileSync(
   'utf-8'
 )
 
+// Third follow-up (Stage 2's own live-verification pass): the FOR ALL
+// manage_curator policies on both junction tables incidentally granted
+// SELECT to any curator/admin regardless of real membership, via
+// can_curate_project's own admin bypass -- split into INSERT/DELETE-only so
+// SELECT is governed solely by the strict *_select_member policy.
+const noSelectLeakSql = fs.readFileSync(
+  path.join(process.cwd(), 'supabase/migrations/20260824210001_project_junction_manage_policies_no_select_leak.sql'),
+  'utf-8'
+)
+
 describe('Project-Aware Knowledge Stage 1 migration', () => {
   it('enables RLS on project_wiki_articles with member-select and curator-manage policies', () => {
     expect(migrationSql).toMatch(/alter table project_wiki_articles enable row level security/)
@@ -126,5 +136,26 @@ describe('Strict project membership for confidentiality gating (20260824170001)'
       expect(scoped).toMatch(/is_project_member_strict/)
       expect(scoped).not.toMatch(/[^_]is_project_member\(/)
     }
+  })
+})
+
+describe('Junction table manage policies split into insert/delete, no incidental SELECT (20260824210001)', () => {
+  it('drops both FOR ALL manage_curator policies', () => {
+    expect(noSelectLeakSql).toMatch(/drop policy "project_wiki_articles_manage_curator" on project_wiki_articles/)
+    expect(noSelectLeakSql).toMatch(/drop policy "project_knowledge_bases_manage_curator" on project_knowledge_bases/)
+  })
+
+  it('replaces each with insert-only and delete-only policies, never "for all"', () => {
+    for (const table of ['project_wiki_articles', 'project_knowledge_bases']) {
+      const insertPolicy = `${table}_insert_curator`
+      const deletePolicy = `${table}_delete_curator`
+      expect(noSelectLeakSql).toMatch(new RegExp(`create policy "${insertPolicy}" on ${table}\\s*\\n\\s*for insert with check \\(can_curate_project`))
+      expect(noSelectLeakSql).toMatch(new RegExp(`create policy "${deletePolicy}" on ${table}\\s*\\n\\s*for delete using \\(can_curate_project`))
+    }
+    const codeOnly = noSelectLeakSql
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+    expect(codeOnly).not.toMatch(/for all/)
   })
 })

@@ -47,6 +47,15 @@ export async function resolveNavigationTarget(
         if (!assessment) return null
         return { label: assessment.name, route: `/projects/${assessment.project_id}/assessments/${assessment.id}` }
       }
+      case 'knowledge_source': {
+        // RLS (knowledge_sources_select_staff_or_owner_or_project_member,
+        // 20260824180001_project_knowledge_visibility_retrieval_fix.sql) is
+        // the actual access check -- a source a user can't see just returns
+        // null here, same as every other case.
+        const { data: source } = await ctx.supabase.from('knowledge_sources').select('id, title').eq('id', target.id).maybeSingle()
+        if (!source) return null
+        return { label: source.title, route: `/sources/${source.id}` }
+      }
     }
   } catch {
     // A query error (malformed id, transient failure) is treated the same

@@ -1,4 +1,4 @@
-import type { VerifiedAssistantEnvelope } from './response-envelope'
+import type { VerifiedAssistantEnvelope, CitationSourceType } from './response-envelope'
 import type { ResolvedCreatedRecord } from './created-records'
 
 // Pure derivation, factored out of ChatPanel.tsx so it's unit-testable
@@ -24,7 +24,7 @@ export interface ArtifactDocumentEntry {
 
 export interface ArtifactCitationEntry {
   label: string
-  sourceType: 'wiki_article'
+  sourceType: CitationSourceType
   sourceId: string
   route: string
   messageIndexes: number[]

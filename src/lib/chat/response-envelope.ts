@@ -6,14 +6,19 @@ import type { ToolSpec } from '@/lib/ai'
 // versioned response envelope. Target kinds are deliberately narrower than
 // the doc's own example list -- limited to what has a confirmed, real route
 // today (see navigation-resolver.ts). Widen only when a new kind actually
-// has somewhere to resolve to.
-export const NavigationTargetKindSchema = z.enum(['wiki_article', 'project', 'workstream', 'assessment'])
+// has somewhere to resolve to. knowledge_source added in Project-Aware
+// Knowledge and Assistant Context, Stage 2 -- resolves via
+// /sources/[id] (src/app/(app)/sources/[id]/page.tsx), RLS-gated the same
+// way as the underlying knowledge_sources row itself.
+export const NavigationTargetKindSchema = z.enum(['wiki_article', 'project', 'workstream', 'assessment', 'knowledge_source'])
 export type NavigationTargetKind = z.infer<typeof NavigationTargetKindSchema>
 
-// citations[].sourceType is pinned to 'wiki_article' because search_wiki is
-// the only tool that returns provenance-checkable retrieved content today
-// (list_project_notes isn't evidence a reply "cites"; nothing else
-// retrieves). Widen when another tool produces citable content.
+// citations[].sourceType was pinned to 'wiki_article' while search_wiki was
+// the only tool that returned provenance-checkable retrieved content;
+// search_project_knowledge (Stage 2) also retrieves knowledge_source chunks,
+// so this widens to match. list_project_notes still isn't evidence a reply
+// "cites" -- only real retrieval tools produce citable content.
+export const CitationSourceTypeSchema = z.enum(['wiki_article', 'knowledge_source'])
 export const AssistantResponseEnvelopeSchema = z.object({
   schemaVersion: z.literal('1.0'),
   message: z.string().min(1).max(8000),
@@ -42,7 +47,7 @@ export const AssistantResponseEnvelopeSchema = z.object({
     .max(6)
     .optional(),
   citations: z
-    .array(z.object({ label: z.string().max(200), sourceType: z.literal('wiki_article'), sourceId: z.string().max(200) }))
+    .array(z.object({ label: z.string().max(200), sourceType: CitationSourceTypeSchema, sourceId: z.string().max(200) }))
     .max(8)
     .optional(),
   nextSteps: z
@@ -77,10 +82,11 @@ export interface PersistedAssistantEnvelope {
   requirements?: AssistantResponseEnvelope['requirements']
   links?: { label: string; target: { kind: NavigationTargetKind; id: string } }[]
   documents?: { label: string; documentType: string; artifactId: string }[]
-  citations?: { label: string; sourceType: 'wiki_article'; sourceId: string }[]
+  citations?: { label: string; sourceType: CitationSourceType; sourceId: string }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }
+export type CitationSourceType = z.infer<typeof CitationSourceTypeSchema>
 
 // Lenient validator for reading chat_messages.response_payload back out --
 // the column is untyped jsonb (see database.ts's comment), so a row from
@@ -93,7 +99,7 @@ export const PersistedAssistantEnvelopeSchema: z.ZodType<PersistedAssistantEnvel
   requirements: AssistantResponseEnvelopeSchema.shape.requirements,
   links: z.array(z.object({ label: z.string(), target: z.object({ kind: NavigationTargetKindSchema, id: z.string() }) })).optional(),
   documents: z.array(z.object({ label: z.string(), documentType: z.string(), artifactId: z.string() })).optional(),
-  citations: z.array(z.object({ label: z.string(), sourceType: z.literal('wiki_article'), sourceId: z.string() })).optional(),
+  citations: z.array(z.object({ label: z.string(), sourceType: CitationSourceTypeSchema, sourceId: z.string() })).optional(),
   nextSteps: AssistantResponseEnvelopeSchema.shape.nextSteps,
   suggestedPrompts: z.array(z.string()).optional(),
 })
@@ -109,7 +115,7 @@ export interface VerifiedAssistantEnvelope {
   requirements?: AssistantResponseEnvelope['requirements']
   links?: { label: string; route: string }[]
   documents?: { label: string; documentType: string; artifactId: string; title: string; route: string | null }[]
-  citations?: { label: string; sourceType: 'wiki_article'; sourceId: string; route: string }[]
+  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; route: string }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }

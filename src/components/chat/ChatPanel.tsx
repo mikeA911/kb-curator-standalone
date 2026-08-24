@@ -7,7 +7,10 @@ import {
   sendChatMessageAction,
   listChatModelsAction,
   getChatActivityAction,
+  getConversationPendingStatusAction,
   listRecentConversationsAction,
+  listProjectConversationsAction,
+  getProjectContextAction,
   getConversationMessagesAction,
   getAssistantOverviewAction,
 } from '@/app/actions/chat'
@@ -42,6 +45,12 @@ const STARTER_PROMPTS = [
 
 const SHORT_WELCOME = "Welcome back — would you like to continue where we left off or start something new?"
 
+// A resumed conversation whose pending_turn_started_at is older than this is
+// treated as abandoned (the tab that started it is long gone), not polled
+// forever -- matches runAssistantTurn's own set/clear discipline.
+const STALE_PENDING_MS = 5 * 60 * 1000
+const PENDING_POLL_INTERVAL_MS = 3000
+
 // Same open/close + outside-click + Escape dismissal convention as
 // NavDropdown.tsx -- the closest existing "toggle panel" pattern in this
 // codebase. No streaming (see M6D/M6E design note discussion):
@@ -53,8 +62,17 @@ const SHORT_WELCOME = "Welcome back — would you like to continue where we left
 // 1.2s well after the reply had already rendered). A manual flag with
 // try/finally is immune to whatever transition-lane interaction causes
 // that, and behaves identically from the UI's perspective.
-export function ChatPanel() {
-  const [open, setOpen] = useState(false)
+//
+// Project-Aware Knowledge and Assistant Context, Stage 2: projectId turns
+// this into the project-scoped Assistant instead of forking a second
+// component -- every branch below that depends on it falls back to today's
+// exact global behavior when it's undefined. `embedded` is for the project
+// page's own mount: no floating bubble/closed state, no fixed positioning,
+// always rendered open inline where the caller places it; onClose lets the
+// caller unmount it instead of the panel hiding itself.
+export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string; embedded?: boolean; onClose?: () => void } = {}) {
+  const [open, setOpen] = useState(embedded ?? false)
+  const [projectContext, setProjectContext] = useState<Awaited<ReturnType<typeof getProjectContextAction>>>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<PanelMessage[]>([])
   const [input, setInput] = useState('')
@@ -70,6 +88,11 @@ export function ChatPanel() {
   const [showShortWelcome, setShowShortWelcome] = useState(false)
   const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
   const [assistantOverview, setAssistantOverview] = useState<AssistantOverview | null>(null)
+  // Set when a resumed conversation's own pending_turn_started_at says a
+  // turn was still in flight -- distinct from isPending being true because
+  // *this tab* just sent a message. Drives the recovery poll below instead
+  // of the normal send() -> performTurn() path.
+  const [resumedPendingConversationId, setResumedPendingConversationId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
   const artifactsDetailsRef = useRef<HTMLDetailsElement>(null)
@@ -97,6 +120,63 @@ export function ChatPanel() {
   const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [staleRun, setStaleRun] = useState(false)
 
+  // A refresh mid-turn (this tab or another) leaves the resumed
+  // conversation's last row as a tool-call/tool-result with no reply yet --
+  // pending_turn_started_at is the durable signal that a completion is
+  // still coming (or was abandoned), surviving the remount that reset every
+  // other piece of state to its default.
+  function checkResumedPending(conv: Conversation) {
+    if (!conv.pending_turn_started_at) return
+    const age = Date.now() - new Date(conv.pending_turn_started_at).getTime()
+    if (age >= STALE_PENDING_MS) return
+    setResumedPendingConversationId(conv.id)
+    setIsPending(true)
+  }
+
+  // Polls the durable marker (not activity/messages directly) until it
+  // clears, then does exactly one refetch of the finished conversation --
+  // avoids re-fetching the full message list on every poll tick.
+  useEffect(() => {
+    if (!resumedPendingConversationId) return
+    let cancelled = false
+    const startedAt = Date.now()
+    const interval = setInterval(async () => {
+      if (cancelled) return
+      if (Date.now() - startedAt >= STALE_PENDING_MS) {
+        cancelled = true
+        clearInterval(interval)
+        setResumedPendingConversationId(null)
+        setIsPending(false)
+        setError('The Assistant turn this conversation was waiting on appears to have been abandoned.')
+        return
+      }
+      try {
+        const pendingSince = await getConversationPendingStatusAction(resumedPendingConversationId)
+        if (cancelled || pendingSince) return
+        const msgs = await getConversationMessagesAction(resumedPendingConversationId)
+        if (cancelled) return
+        setMessages(msgs)
+        setResumedPendingConversationId(null)
+        setIsPending(false)
+      } catch {
+        // Transient poll failure -- try again next tick rather than giving up.
+      }
+    }, PENDING_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [resumedPendingConversationId])
+
+  useEffect(() => {
+    if (!open || !projectId || projectContext) return
+    getProjectContextAction(projectId)
+      .then(setProjectContext)
+      .catch(() => {
+        // Banner is informational -- if it fails, the panel still works.
+      })
+  }, [open, projectId, projectContext])
+
   useEffect(() => {
     if (!open || models.length > 0) return
     listChatModelsAction()
@@ -119,7 +199,8 @@ export function ChatPanel() {
   useEffect(() => {
     if (!open || historyLoaded) return
     let cancelled = false
-    listRecentConversationsAction()
+    const listAction = projectId ? () => listProjectConversationsAction(projectId) : listRecentConversationsAction
+    listAction()
       .then(async (list) => {
         if (cancelled) return
         // The History list itself is always safe to refresh, independent of
@@ -127,7 +208,11 @@ export function ChatPanel() {
         setConversations(list)
         if (userActedRef.current) return
         if (list.length === 0) {
-          setShowOnboarding(true)
+          // The full first-use greeting assumes a brand-new platform user --
+          // wrong framing for "first time asking in this project" when the
+          // same person has plenty of general conversations elsewhere.
+          // Project-scoped panels skip straight to the plain placeholder.
+          if (!projectId) setShowOnboarding(true)
           return
         }
         const mostRecent = list[0]
@@ -136,6 +221,7 @@ export function ChatPanel() {
           if (cancelled || userActedRef.current) return
           setConversationId(mostRecent.id)
           setMessages(msgs)
+          checkResumedPending(mostRecent)
         } catch {
           // Resuming is a convenience -- if it fails, fall back to a blank
           // panel the user can still start chatting in.
@@ -151,7 +237,7 @@ export function ChatPanel() {
     return () => {
       cancelled = true
     }
-  }, [open, historyLoaded])
+  }, [open, historyLoaded, projectId])
 
   useEffect(() => {
     if (!open) return
@@ -220,7 +306,7 @@ export function ChatPanel() {
       if (myTurn === turnSeqRef.current) setStaleRun(true)
     }, 30_000)
     try {
-      const result = await sendChatMessageAction(conversationId, message, modelSelection)
+      const result = await sendChatMessageAction(conversationId, message, modelSelection, projectId)
       // The user may have switched to a different conversation (or started
       // a new one) while this was in flight -- a stale turn's result must
       // never overwrite what's currently displayed.
@@ -321,6 +407,7 @@ export function ChatPanel() {
     if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
     setIsPending(false)
     setStaleRun(false)
+    setResumedPendingConversationId(null)
     sendingRef.current = false
   }
 
@@ -355,6 +442,7 @@ export function ChatPanel() {
     try {
       const msgs = await getConversationMessagesAction(conv.id)
       setMessages(msgs)
+      checkResumedPending(conv)
     } catch {
       setMessages([])
     }
@@ -376,16 +464,24 @@ export function ChatPanel() {
   }
 
   return (
-    <div ref={ref} className="fixed bottom-4 right-4 z-50">
+    <div ref={ref} className={embedded ? '' : 'fixed bottom-4 right-4 z-50'}>
       {open ? (
-        <div className="flex h-[32rem] w-96 flex-col rounded border border-zinc-200 bg-white shadow-xl">
+        <div className={embedded ? 'flex h-[32rem] flex-col rounded border border-zinc-200 bg-white shadow' : 'flex h-[32rem] w-96 flex-col rounded border border-zinc-200 bg-white shadow-xl'}>
           <div className="border-b border-zinc-200 px-3 py-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Workbench Assistant</span>
-              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="text-zinc-400 hover:text-zinc-700">
+              <span className="text-sm font-medium">{projectId ? `Assistant -- ${projectContext?.name ?? 'this project'}` : 'Workbench Assistant'}</span>
+              <button
+                type="button"
+                onClick={() => (embedded ? onClose?.() : setOpen(false))}
+                aria-label="Close"
+                className="text-zinc-400 hover:text-zinc-700"
+              >
                 ✕
               </button>
             </div>
+            {projectId && projectContext && (
+              <p className="mt-0.5 text-xs text-zinc-500">Knowledge scope: {projectContext.knowledgeScope}</p>
+            )}
             {models.length > 0 && (
               <select
                 value={selectedKey ?? ''}
@@ -583,7 +679,9 @@ export function ChatPanel() {
             {showShortWelcome && messages.length === 0 && <p className="text-sm text-zinc-500">{SHORT_WELCOME}</p>}
             {historyLoaded && !showOnboarding && !showShortWelcome && messages.length === 0 && (
               <p className="text-sm text-zinc-500">
-                Ask about the platform, search the Wiki, or ask me to create a project or workstream.
+                {projectId
+                  ? `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
+                  : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
               </p>
             )}
             {messages.map((m, i) =>
@@ -620,7 +718,10 @@ export function ChatPanel() {
                         <p>Workbench tools used: {m.toolsUsed && m.toolsUsed.length > 0 ? m.toolsUsed.join(', ') : 'none'}</p>
                         {m.embeddingModelDisplayName && (
                           <>
-                            <p>Knowledge retrieval: Platform Wiki</p>
+                            <p>
+                              Knowledge retrieval:{' '}
+                              {m.toolsUsed?.includes('search_project_knowledge') ? 'This project + Platform Wiki' : 'Platform Wiki'}
+                            </p>
                             <p>Embedding model: {m.embeddingModelDisplayName}</p>
                           </>
                         )}
@@ -630,7 +731,13 @@ export function ChatPanel() {
                 )}
               </div>
             ))}
-            {isPending && !staleRun && <p className="text-sm text-zinc-400">{activity ?? (conversationId ? 'Working…' : 'Thinking…')}</p>}
+            {isPending && !staleRun && (
+              <p className="text-sm text-zinc-400">
+                {resumedPendingConversationId
+                  ? 'Picking up where this conversation left off…'
+                  : activity ?? (conversationId ? 'Working…' : 'Thinking…')}
+              </p>
+            )}
             {isPending && staleRun && (
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-zinc-400">This is taking longer than expected.</p>

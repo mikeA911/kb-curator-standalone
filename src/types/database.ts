@@ -806,16 +806,45 @@ export interface Conversation {
   summary_provider: string | null
   summary_model: string | null
   summary_version: string | null
+  // Project-Aware Knowledge and Assistant Context, Stage 2. Null means
+  // general/unbound. Immutable once set (20260824190001_conversations_project_binding.sql's
+  // trigger) -- "changing project context" means starting a new conversation.
+  project_id: string | null
+  // Set at turn start, cleared when the turn resolves either way -- survives
+  // a page refresh, unlike in-memory isPending state. See runAssistantTurn
+  // and ChatPanel's mount-time recovery check.
+  pending_turn_started_at: string | null
 }
 
 export type ConversationInsert = Omit<
   Conversation,
-  'id' | 'created_at' | 'updated_at' | 'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'title'
+  | 'last_message_at'
+  | 'summary_json'
+  | 'summary_through_message_id'
+  | 'summary_updated_at'
+  | 'summary_provider'
+  | 'summary_model'
+  | 'summary_version'
+  | 'project_id'
+  | 'pending_turn_started_at'
 > &
   Partial<
     Pick<
       Conversation,
-      'title' | 'last_message_at' | 'summary_json' | 'summary_through_message_id' | 'summary_updated_at' | 'summary_provider' | 'summary_model' | 'summary_version'
+      | 'title'
+      | 'last_message_at'
+      | 'summary_json'
+      | 'summary_through_message_id'
+      | 'summary_updated_at'
+      | 'summary_provider'
+      | 'summary_model'
+      | 'summary_version'
+      | 'project_id'
+      | 'pending_turn_started_at'
     >
   >
 export type ConversationUpdate = Partial<Omit<Conversation, 'id' | 'user_id' | 'created_at'>>

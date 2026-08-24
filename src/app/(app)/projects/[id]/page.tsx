@@ -10,6 +10,8 @@ import { listAttachableKnowledgeBases } from '@/lib/knowledge-bases'
 import { listKnowledgeBasesForProject } from '@/lib/projects/queries'
 import { listArticlesForProject } from '@/lib/wiki/project-links'
 import { KnowledgeBaseAttachManager, KnowledgeBaseDetachButton } from '@/components/projects/KnowledgeBaseAttachManager'
+import { listRecentConversations } from '@/lib/chat/conversations'
+import { ProjectAssistantSection } from '@/components/projects/ProjectAssistantSection'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -41,6 +43,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     { data: activeAuthorityAssignments },
     unattachedKnowledgeBases,
     linkedArticles,
+    projectConversations,
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -54,6 +57,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     supabase.from('project_authority_assignments').select('approval_type').eq('project_id', id).eq('status', 'active'),
     listAttachableKnowledgeBases(supabase, id),
     listArticlesForProject(supabase, id),
+    user ? listRecentConversations(supabase, user.id, { projectId: id }) : Promise.resolve([]),
   ])
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
@@ -229,6 +233,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-zinc-500">No approval requirements configured for this project.</p>
         )}
       </section>
+
+      {user && <ProjectAssistantSection projectId={project.id} recentConversations={projectConversations} />}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Findings</h2>
