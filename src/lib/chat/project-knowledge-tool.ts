@@ -17,7 +17,7 @@ import type { Database } from '@/types/database'
 
 export const SEARCH_PROJECT_KNOWLEDGE_TOOL_NAME = 'search_project_knowledge'
 
-const InputSchema = z.object({ query: z.string(), limit: z.number().int().min(1).max(10).default(5) })
+const InputSchema = z.object({ query: z.string(), limit: z.number().int().min(1).max(10).default(3) })
 
 export const SEARCH_PROJECT_KNOWLEDGE_TOOL: ToolSpec = {
   name: SEARCH_PROJECT_KNOWLEDGE_TOOL_NAME,
@@ -36,9 +36,17 @@ export interface ProjectKnowledgeHit {
   content: string
 }
 
-// Capped, matching search_wiki's own MAX_CONTENT_CHARS rationale -- bounds
-// worst-case context size without truncating a normal-length chunk/article.
-const MAX_CONTENT_CHARS = 4000
+// Tighter than search_wiki's own 4000-char cap: unlike search_wiki (one hit
+// per matched article), this tool routinely returns several distinct
+// knowledge_source chunks in one call, and the zadara_sandz ingested chunks
+// are themselves large (~4000 chars each) -- at the old cap, a default
+// 5-result call could put ~20,000 characters of raw content in a single
+// tool-result message. Observed live: that produced a genuinely empty
+// completion from the chat model (no content, no tool call), which then
+// crashed the client renderer before the null-content fix in loop.ts.
+// Capped smaller here as the primary defense; loop.ts's fallback text is
+// the backstop for whatever this doesn't prevent.
+const MAX_CONTENT_CHARS = 1500
 
 export async function runSearchProjectKnowledge(
   ctx: WorkbenchCallerContext,

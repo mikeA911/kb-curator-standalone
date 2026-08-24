@@ -288,25 +288,39 @@ export async function runAssistantTurn(
       return await finalizeStructuredTurn(presentCall, result.message.content)
     }
 
+    const hasToolCalls = Boolean(result.message.toolCalls && result.message.toolCalls.length > 0)
+    // A row with tool calls but no content is a normal intermediate step
+    // (the model is about to see tool results, not replying yet) -- but a
+    // *terminal* row (no tool calls) with empty/null content is a real
+    // provider failure mode (observed live: search_project_knowledge's
+    // large tool-result payload occasionally produced a genuinely empty
+    // completion), and previously flowed all the way to the client as a
+    // literal `content: null` message, crashing the renderer instead of
+    // showing a recoverable error. Coerced here, once, so both the
+    // persisted row and the returned reply agree.
+    const messageContent = hasToolCalls
+      ? result.message.content || null
+      : result.message.content?.trim() || "I wasn't able to generate a reply to that -- could you try rephrasing, or asking again?"
+
     await appendMessage(ctx.supabase, {
       conversationId: conversation.id,
       userId: ctx.user.id,
       role: 'assistant',
-      content: result.message.content || null,
+      content: messageContent,
       toolCalls: result.message.toolCalls ?? null,
       provider: chatProvider.providerName,
       model: chatProvider.modelId,
     })
 
-    if (!result.message.toolCalls || result.message.toolCalls.length === 0) {
+    if (!hasToolCalls) {
       // A provider that never calls present_assistant_response (weak
       // tool-calling support, or it judged no tool needed and replied
       // directly) still gets a normal, working reply -- just without a
       // structured payload.
-      return await finishTurn(result.message.content, null)
+      return await finishTurn(messageContent as string, null)
     }
 
-    for (const toolCall of result.message.toolCalls) {
+    for (const toolCall of result.message.toolCalls ?? []) {
       toolsUsed.add(toolCall.name)
       let toolResultText: string
       if (toolCall.name === 'search_wiki' && ++searchWikiCalls > SEARCH_WIKI_LIMIT) {

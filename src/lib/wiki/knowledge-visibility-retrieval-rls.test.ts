@@ -8,19 +8,17 @@ import path from 'node:path'
 // wiki_vectors/kb_vectors both bypassed Stage 1's visibility_scope
 // confidentiality gating entirely (unconditional consultant SELECT access,
 // no join back to the parent article/knowledge base at all).
-const sql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824180001_project_knowledge_visibility_retrieval_fix.sql'),
-  'utf-8'
-)
+// Normalizes CRLF -> LF -- see project-visibility-rls.test.ts's read()
+// comment for why this matters even though the SQL content is unchanged.
+const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf-8').replace(/\r\n/g, '\n')
+
+const sql = read('supabase/migrations/20260824180001_project_knowledge_visibility_retrieval_fix.sql')
 
 // Follow-up: 20260824180001's own kb_vectors_select_scoped policy shipped
 // with a stray unconditional is_curator_or_admin bypass -- caught during
 // this stage's live-verification pass, before testing curator/admin
 // accounts against the Zadara private content.
-const fixupSql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824200001_kb_vectors_remove_stray_bypass.sql'),
-  'utf-8'
-)
+const fixupSql = read('supabase/migrations/20260824200001_kb_vectors_remove_stray_bypass.sql')
 
 function policySection(name: string): string {
   const start = sql.lastIndexOf(`create policy "${name}"`)
