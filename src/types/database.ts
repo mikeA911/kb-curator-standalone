@@ -3,6 +3,8 @@
 
 export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
+export type KnowledgeBaseClassification = 'platform' | 'legacy_sample' | 'project' | 'partner_pilot'
+export type KnowledgeBaseLifecycleStatus = 'active' | 'reference' | 'archived'
 
 export type ProcessingStatus =
   | 'pending'
@@ -50,6 +52,9 @@ export interface KnowledgeBase {
   name: string
   description: string | null
   project_id: string | null
+  classification: KnowledgeBaseClassification
+  lifecycle_status: KnowledgeBaseLifecycleStatus
+  origin: string | null
   created_at: string
   updated_at: string
 }
@@ -89,6 +94,33 @@ export interface Document {
   approved_chunks: number
   rejected_chunks: number
   metadata: DocumentMetadata
+  // Versioned Knowledge Source Documents, Stage 1 (docs/dev-request-versioned-
+  // knowledge-source-documents.md): documents is the immutable version table.
+  // knowledge_source_id is required -- every document belongs to exactly one
+  // logical source.
+  knowledge_source_id: string
+  version_number: number
+  change_note: string | null
+  superseded_at: string | null
+  retired_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type KnowledgeSourceLifecycleStatus = 'active' | 'retired'
+
+// The stable logical-source identity a document's versions belong to --
+// mirrors wiki_articles/wiki_versions' current_version_id pattern exactly,
+// applied to source documents instead of Wiki content.
+export interface KnowledgeSource {
+  id: string
+  knowledge_base_id: string
+  title: string
+  source_url: string | null
+  publisher: string | null
+  current_version_id: string | null
+  lifecycle_status: KnowledgeSourceLifecycleStatus
+  created_by: string | null
   created_at: string
   updated_at: string
 }
@@ -1264,6 +1296,10 @@ export type DocumentInsert = Omit<
   Partial<Pick<Document, 'approved_chunks' | 'rejected_chunks'>>
 export type DocumentUpdate = Partial<Omit<Document, 'id' | 'upload_date' | 'created_at'>>
 
+export type KnowledgeSourceInsert = Omit<KnowledgeSource, 'id' | 'created_at' | 'updated_at' | 'current_version_id'> &
+  Partial<Pick<KnowledgeSource, 'current_version_id'>>
+export type KnowledgeSourceUpdate = Partial<Omit<KnowledgeSource, 'id' | 'created_at'>>
+
 export type ChunkInsert = Omit<DocumentChunk, 'id' | 'created_at'>
 export type ChunkUpdate = Partial<Omit<DocumentChunk, 'id' | 'document_id' | 'chunk_index' | 'created_at'>>
 
@@ -1414,6 +1450,12 @@ export interface Database {
         Relationships: []
       }
       documents: { Row: Document; Insert: DocumentInsert; Update: DocumentUpdate; Relationships: [] }
+      knowledge_sources: {
+        Row: KnowledgeSource
+        Insert: KnowledgeSourceInsert
+        Update: KnowledgeSourceUpdate
+        Relationships: []
+      }
       document_chunks: { Row: DocumentChunk; Insert: ChunkInsert; Update: ChunkUpdate; Relationships: [] }
       kb_vectors: { Row: KBVector; Insert: KBVectorInsert; Update: KBVectorUpdate; Relationships: [] }
       settings: { Row: Setting; Insert: Setting; Update: Partial<Setting>; Relationships: [] }

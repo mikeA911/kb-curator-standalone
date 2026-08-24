@@ -26,6 +26,17 @@ export interface UploadDocumentInput {
 // Upload + create the `documents` row. Does not parse/chunk -- that's
 // processDocument(), a separate step so a slow parse doesn't block the
 // upload response and so a parse failure is attributable to its own stage.
+//
+// Versioned Knowledge Source Documents, Stage 1 (docs/dev-request-versioned-
+// knowledge-source-documents.md): every document belongs to a knowledge_source
+// (the stable logical-source identity; documents are its immutable versions,
+// mirroring wiki_articles/wiki_versions). Stage 1 never creates a second
+// version of an existing source, so the new source's current_version_id is
+// set to this document immediately -- that's what makes today's retrieval
+// timing (a chunk is retrievable the moment a curator approves it, independent
+// of admin's later document-level approval) come through unchanged. The
+// duplicate-source_url check now runs against knowledge_sources, since
+// uniqueness moved up to the logical-source level.
 export async function createUploadedDocument(supabase: SupabaseClient<Database>, input: UploadDocumentInput) {
   if (input.file.size > MAX_FILE_SIZE) {
     throw new DocumentValidationError(`File exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`)
@@ -36,9 +47,9 @@ export async function createUploadedDocument(supabase: SupabaseClient<Database>,
 
   if (input.sourceUrl) {
     const { data: existing } = await supabase
-      .from('documents')
+      .from('knowledge_sources')
       .select('id')
-      .eq('doc_type', input.docType)
+      .eq('knowledge_base_id', input.docType)
       .eq('source_url', input.sourceUrl)
       .maybeSingle()
     if (existing) {
@@ -49,12 +60,31 @@ export async function createUploadedDocument(supabase: SupabaseClient<Database>,
   const path = buildStoragePath(input.file.name)
   await uploadDocument(supabase, path, input.file, input.file.type)
 
+  const { data: source, error: sourceError } = await supabase
+    .from('knowledge_sources')
+    .insert({
+      knowledge_base_id: input.docType,
+      title: input.file.name,
+      source_url: input.sourceUrl ?? null,
+      publisher: null,
+      lifecycle_status: 'active',
+      created_by: input.uploadedBy,
+    })
+    .select()
+    .single()
+  if (sourceError || !source) throw sourceError ?? new Error('Failed to create knowledge source record')
+
   const { data: doc, error } = await supabase
     .from('documents')
     .insert({
       filename: path.split('/').pop()!,
       original_filename: input.file.name,
       doc_type: input.docType,
+      knowledge_source_id: source.id,
+      version_number: 1,
+      change_note: null,
+      superseded_at: null,
+      retired_at: null,
       storage_path: path,
       file_size: input.file.size,
       mime_type: input.file.type,
@@ -70,6 +100,13 @@ export async function createUploadedDocument(supabase: SupabaseClient<Database>,
     .single()
 
   if (error || !doc) throw error ?? new Error('Failed to create document record')
+
+  const { error: pointerError } = await supabase
+    .from('knowledge_sources')
+    .update({ current_version_id: doc.id })
+    .eq('id', source.id)
+  if (pointerError) throw pointerError
+
   return doc
 }
 

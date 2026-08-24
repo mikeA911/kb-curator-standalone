@@ -26,9 +26,9 @@ describe('createUploadedDocument', () => {
     ).rejects.toBeInstanceOf(DocumentValidationError)
   })
 
-  it('rejects a duplicate doc_type + source_url before touching storage', async () => {
+  it('rejects a duplicate knowledge-source URL before touching storage', async () => {
     const supabase = createFakeSupabase({
-      documents: [{ data: { id: 'existing-doc' }, error: null }],
+      knowledge_sources: [{ data: { id: 'existing-source' }, error: null }],
     }) as never
     const file = makeFile('doc.txt', 'text/plain', 1024)
 
@@ -40,6 +40,45 @@ describe('createUploadedDocument', () => {
         uploadedBy: 'user-1',
       })
     ).rejects.toThrow('already been uploaded')
+  })
+
+  it('creates a knowledge_source and points its current_version_id at the new document', async () => {
+    const supabase = createFakeSupabase({
+      knowledge_sources: [
+        { data: null, error: null }, // duplicate check: none found
+        { data: { id: 'source-1' }, error: null }, // insert
+        { data: null, error: null }, // current_version_id update
+      ],
+      documents: [{ data: { id: 'doc-1' }, error: null }],
+    })
+    const file = makeFile('doc.txt', 'text/plain', 1024)
+
+    const doc = await createUploadedDocument(supabase as never, {
+      file,
+      docType: 'fhir',
+      sourceUrl: 'https://example.com/a',
+      uploadedBy: 'user-1',
+    })
+
+    expect(doc).toEqual({ id: 'doc-1' })
+    const documentInsert = supabase._calls.find((c) => c.table === 'documents' && c.method === 'insert')
+    expect((documentInsert?.args as { knowledge_source_id: string }).knowledge_source_id).toBe('source-1')
+    const pointerUpdate = supabase._calls.find((c) => c.table === 'knowledge_sources' && c.method === 'update')
+    expect((pointerUpdate?.args as { current_version_id: string }).current_version_id).toBe('doc-1')
+  })
+
+  it('creates a knowledge_source even without a source URL, skipping the duplicate check', async () => {
+    const supabase = createFakeSupabase({
+      knowledge_sources: [
+        { data: { id: 'source-2' }, error: null }, // insert (no dup check without sourceUrl)
+        { data: null, error: null }, // current_version_id update
+      ],
+      documents: [{ data: { id: 'doc-2' }, error: null }],
+    })
+    const file = makeFile('notes.txt', 'text/plain', 1024)
+
+    const doc = await createUploadedDocument(supabase as never, { file, docType: 'fhir', uploadedBy: 'user-1' })
+    expect(doc).toEqual({ id: 'doc-2' })
   })
 })
 
