@@ -3,7 +3,12 @@
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { WikiVisibilityScope } from '@/types/database'
-import { linkProjectArticleAction, unlinkProjectArticleAction, setArticleVisibilityScopeAction } from '@/app/actions/wiki'
+import {
+  linkProjectArticleAction,
+  unlinkProjectArticleAction,
+  setArticleVisibilityScopeAction,
+  attachProjectAndSetVisibilityAction,
+} from '@/app/actions/wiki'
 
 export interface LinkableProject {
   id: string
@@ -16,6 +21,11 @@ const VISIBILITY_LABELS: Record<WikiVisibilityScope, string> = {
   platform: 'Platform (default)',
   public: 'Public',
 }
+
+// Requires at least one attached project -- narrowing to either of these
+// before a project is attached lets a non-member curator/admin strand
+// themselves (see attachProjectAndSetVisibilityAction's comment).
+const REQUIRES_PROJECT: WikiVisibilityScope[] = ['project_private', 'selected_projects']
 
 // Same type-to-filter picker pattern as RelatedArticlesManager: search
 // candidates by name, track the real id separately from the display text.
@@ -34,8 +44,11 @@ export function ProjectArticleManager({
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [firstAttachScope, setFirstAttachScope] = useState<WikiVisibilityScope>('platform')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+
+  const hasLinkedProjects = excludeProjectIds.length > 0
 
   const candidates = useMemo(() => {
     const excluded = new Set(excludeProjectIds)
@@ -60,9 +73,18 @@ export function ProjectArticleManager({
     if (!selectedId) return
     startTransition(async () => {
       try {
-        await linkProjectArticleAction(selectedId, articleId)
+        // With no project attached yet, do the attach and any requested
+        // scope narrowing in one request -- see
+        // attachProjectAndSetVisibilityAction's comment for why splitting
+        // this into two steps could strand a non-member curator/admin.
+        if (!hasLinkedProjects && firstAttachScope !== 'platform') {
+          await attachProjectAndSetVisibilityAction(selectedId, articleId, firstAttachScope)
+        } else {
+          await linkProjectArticleAction(selectedId, articleId)
+        }
         setQuery('')
         setSelectedId(null)
+        setFirstAttachScope('platform')
         router.refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to attach project')
@@ -86,11 +108,12 @@ export function ProjectArticleManager({
           className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
         >
           {(Object.keys(VISIBILITY_LABELS) as WikiVisibilityScope[]).map((s) => (
-            <option key={s} value={s}>
+            <option key={s} value={s} disabled={REQUIRES_PROJECT.includes(s) && !hasLinkedProjects}>
               {VISIBILITY_LABELS[s]}
             </option>
           ))}
         </select>
+        {!hasLinkedProjects && <span className="text-zinc-400">(attach a project below to enable project-private/selected)</span>}
       </label>
 
       <form onSubmit={handleAdd} className="flex flex-col gap-1 border-t border-zinc-100 pt-3 text-xs">
@@ -124,6 +147,18 @@ export function ProjectArticleManager({
               </ul>
             )}
           </div>
+          {!hasLinkedProjects && (
+            <select
+              value={firstAttachScope}
+              onChange={(e) => setFirstAttachScope(e.target.value as WikiVisibilityScope)}
+              className="rounded border border-zinc-300 px-1.5 py-1"
+              title="Visibility to set once this project is attached"
+            >
+              <option value="platform">Keep platform</option>
+              <option value="project_private">…and make project-private</option>
+              <option value="selected_projects">…and make selected-projects</option>
+            </select>
+          )}
           <button disabled={isPending || !selectedId} className="rounded bg-zinc-900 px-2 py-1 font-medium text-white disabled:opacity-50">
             Attach
           </button>

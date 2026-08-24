@@ -282,6 +282,24 @@ export async function unlinkProjectArticleAction(linkId: string, projectId: stri
   revalidatePath(`/projects/${projectId}`)
 }
 
+// One-step version of "attach a project, then narrow visibility" for the
+// common case (an article with no attached projects yet): doing it as two
+// separate actions let a non-member curator/admin strand themselves between
+// steps -- narrowing visibility before attaching left the article
+// unreadable (see setArticleVisibilityScopeAction's own comment), so the UI
+// only offers project_private/selected_projects once a project is already
+// attached. This is that attach, done together with the scope change in one
+// request instead of relying on the user to get the order right.
+export async function attachProjectAndSetVisibilityAction(projectId: string, wikiArticleId: string, scope: WikiVisibilityScope) {
+  const { user, supabase } = await requireRole('curator')
+  await linkProjectArticle(supabase, projectId, wikiArticleId, user.id)
+  const admin = createAdminClient()
+  const { error } = await admin.from('wiki_articles').update({ visibility_scope: scope }).eq('id', wikiArticleId)
+  if (error) throw error
+  revalidatePath('/wiki')
+  revalidatePath(`/projects/${projectId}`)
+}
+
 // Separate from approve/public, same shape as setArticlePublicAction --
 // visibility is its own dimension, not implied by approval status. Unlike
 // setArticlePublicAction, this runs on the service-role client: PostgREST
