@@ -9,6 +9,7 @@
 5. A Private AI Journal Should Belong to the Individual
 6. Private AI Deployment Is an Operating Model, Not a Docker File
 7. One Default AI Model Is Not Enough
+8. Before the AI-Native SDLC: Test What Is Worth Building
 
 ## Suggested cadence
 
@@ -27,4 +28,3 @@ Publish every two or three days rather than releasing the full set at once. Each
 ## Editorial position
 
 The articles are deliberately independent and non-promotional. They may be republished on an organisational blog, subject to its editorial policy, but should not be rewritten to imply that one product or framework automatically establishes trustworthy AI or compliance.
-
