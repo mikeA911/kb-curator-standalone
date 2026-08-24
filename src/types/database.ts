@@ -582,12 +582,91 @@ export interface Project {
 export type ProjectRole = 'owner' | 'curator' | 'consultant' | 'viewer'
 export type ProjectMemberStatus = 'active' | 'inactive'
 
+export type BusinessFunction =
+  | 'business_development_sales'
+  | 'finance_pricing'
+  | 'legal_commercial'
+  | 'customer_support'
+  | 'delivery_consulting'
+  | 'architecture_engineering'
+  | 'security_compliance'
+  | 'customer_representative'
+  | 'project_governance'
+  | 'other'
+
 export interface ProjectMember {
   id: string
   project_id: string
   user_id: string
   role: ProjectRole
   status: ProjectMemberStatus
+  // Project Approval Authorities, Stage 1 (docs/dev-request-project-approval-
+  // authorities.md): why a member participates -- routes approval work, does
+  // not by itself grant approval authority. Separate from ProjectRole.
+  business_function: BusinessFunction | null
+  function_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Bounded catalogue per the dev request -- extensible via migration later,
+// not via an admin UI in Stage 1.
+export type ApprovalType =
+  | 'technical'
+  | 'pricing'
+  | 'commercial'
+  | 'security_compliance'
+  | 'support_commitment'
+  | 'proposal_release'
+  | 'customer_acceptance'
+  | 'knowledge_publication'
+  | 'production_change'
+
+export type ApprovalRequirementStatus = 'required' | 'optional' | 'not_applicable'
+export type ApprovalMode = 'any_authorized' | 'all_assigned'
+export type ApprovalVisibilityScope = 'internal' | 'customer_visible'
+export type AuthorityStatus = 'active' | 'revoked'
+
+// A policy says WHAT approval a project needs; an authority assignment
+// (below) says WHO may make that specific decision. Stage 1 only builds
+// this planning shell -- no project_approval_requests/decisions yet.
+export interface ProjectApprovalPolicy {
+  id: string
+  project_id: string
+  approval_type: ApprovalType
+  requirement_status: ApprovalRequirementStatus
+  sequence: number | null
+  minimum_approvals: number
+  approval_mode: ApprovalMode
+  allow_self_approval: boolean
+  monetary_trigger: number | null
+  discount_trigger_percent: number | null
+  visibility_scope: ApprovalVisibilityScope
+  required_before_release: boolean
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectAuthorityAssignment {
+  id: string
+  project_id: string
+  user_id: string
+  business_function: BusinessFunction | null
+  approval_type: ApprovalType
+  monetary_limit: number | null
+  discount_limit_percent: number | null
+  conditions: string | null
+  effective_from: string
+  expires_at: string | null
+  status: AuthorityStatus
+  allow_self_approval: boolean
+  granted_by: string | null
+  granted_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -1368,8 +1447,18 @@ export type ProjectInsert = Omit<
   >
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
 
-export type ProjectMemberInsert = Omit<ProjectMember, 'id' | 'created_at' | 'updated_at'>
+export type ProjectMemberInsert = Omit<
+  ProjectMember,
+  'id' | 'created_at' | 'updated_at' | 'business_function' | 'function_notes'
+> &
+  Partial<Pick<ProjectMember, 'business_function' | 'function_notes'>>
 export type ProjectMemberUpdate = Partial<Omit<ProjectMember, 'id' | 'project_id' | 'user_id' | 'created_at'>>
+
+export type ProjectApprovalPolicyInsert = Omit<ProjectApprovalPolicy, 'id' | 'created_at' | 'updated_at'>
+export type ProjectApprovalPolicyUpdate = Partial<Omit<ProjectApprovalPolicy, 'id' | 'project_id' | 'created_at'>>
+
+export type ProjectAuthorityAssignmentInsert = Omit<ProjectAuthorityAssignment, 'id' | 'created_at' | 'updated_at'>
+export type ProjectAuthorityAssignmentUpdate = Partial<Omit<ProjectAuthorityAssignment, 'id' | 'project_id' | 'created_at'>>
 
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
@@ -1494,6 +1583,18 @@ export interface Database {
       eval_results: { Row: EvalResult; Insert: EvalResultInsert; Update: EvalResultUpdate; Relationships: [] }
       projects: { Row: Project; Insert: ProjectInsert; Update: ProjectUpdate; Relationships: [] }
       project_members: { Row: ProjectMember; Insert: ProjectMemberInsert; Update: ProjectMemberUpdate; Relationships: [] }
+      project_approval_policies: {
+        Row: ProjectApprovalPolicy
+        Insert: ProjectApprovalPolicyInsert
+        Update: ProjectApprovalPolicyUpdate
+        Relationships: []
+      }
+      project_authority_assignments: {
+        Row: ProjectAuthorityAssignment
+        Insert: ProjectAuthorityAssignmentInsert
+        Update: ProjectAuthorityAssignmentUpdate
+        Relationships: []
+      }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }

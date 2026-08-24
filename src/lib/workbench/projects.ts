@@ -1,7 +1,7 @@
 import 'server-only'
 import { AuthError } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import type { WorkbenchCallerContext } from './context'
@@ -39,6 +39,12 @@ export async function createProject(
     knowledgeBaseId: string | null
     evalDatasetId: string | null
     members: { email: string; role: ProjectRole }[]
+    // Project Approval Authorities, Stage 1 (docs/dev-request-project-
+    // approval-authorities.md): staged from the wizard's Governance &
+    // Approvals step. assigneeEmail is '__self__' for the creator, a staged
+    // member's email, or null for an intentionally unassigned "Authority
+    // needed" gap -- never a fabricated identity.
+    approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
   }
 ) {
   const { user, profile, supabase } = ctx
@@ -70,8 +76,14 @@ export async function createProject(
   }
 
   const staged = input.members.filter((m) => m.email && m.email !== user.email)
+  const approvals = input.approvals ?? []
+  // One lookup covers both staged members and approval assignees (an
+  // assignee is always either '__self__' or an email already staged as a
+  // member -- the wizard's own UI only offers those two options).
+  const emailsToResolve = [...new Set(staged.map((m) => m.email))]
+  const idByEmail = emailsToResolve.length > 0 ? await resolveUserIdsByEmail(emailsToResolve) : new Map<string, string>()
+
   if (staged.length > 0) {
-    const idByEmail = await resolveUserIdsByEmail(staged.map((m) => m.email))
     const rows = staged
       .map((m) => {
         const userId = idByEmail.get(m.email)
@@ -80,6 +92,54 @@ export async function createProject(
       .filter((r): r is NonNullable<typeof r> => r !== null)
     if (rows.length > 0) {
       await supabase.from('project_members').insert(rows)
+    }
+  }
+
+  if (approvals.length > 0) {
+    const policyRows = approvals.map((a) => ({
+      project_id: project.id,
+      approval_type: a.approvalType,
+      requirement_status: a.requirementStatus,
+      sequence: null,
+      minimum_approvals: 1,
+      approval_mode: 'any_authorized' as const,
+      allow_self_approval: false,
+      monetary_trigger: null,
+      discount_trigger_percent: null,
+      visibility_scope: 'internal' as const,
+      required_before_release: false,
+      notes: null,
+      created_by: user.id,
+    }))
+    await supabase.from('project_approval_policies').insert(policyRows)
+
+    const assignmentRows = approvals
+      .map((a) => {
+        if (!a.assigneeEmail) return null
+        const assigneeUserId = a.assigneeEmail === '__self__' ? user.id : idByEmail.get(a.assigneeEmail)
+        if (!assigneeUserId) return null
+        return {
+          project_id: project.id,
+          user_id: assigneeUserId,
+          business_function: null,
+          approval_type: a.approvalType,
+          monetary_limit: null,
+          discount_limit_percent: null,
+          conditions: null,
+          effective_from: new Date().toISOString(),
+          expires_at: null,
+          status: 'active' as const,
+          allow_self_approval: false,
+          granted_by: user.id,
+          granted_at: new Date().toISOString(),
+          revoked_by: null,
+          revoked_at: null,
+          revocation_reason: null,
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+    if (assignmentRows.length > 0) {
+      await supabase.from('project_authority_assignments').insert(assignmentRows)
     }
   }
 

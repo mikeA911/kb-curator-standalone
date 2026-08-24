@@ -26,17 +26,27 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     data: { user },
   } = await supabase.auth.getUser()
 
-  const [{ data: knowledgeBases }, { data: evalDatasets }, { data: viewerProfile }, { data: viewerMembership }, workstreams, openNotes] =
-    await Promise.all([
-      supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
-      supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
-      user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
-      user
-        ? supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).single()
-        : Promise.resolve({ data: null }),
-      listWorkstreams(supabase, id),
-      user ? listProjectNotes(supabase, id, { status: 'open' }) : Promise.resolve([]),
-    ])
+  const [
+    { data: knowledgeBases },
+    { data: evalDatasets },
+    { data: viewerProfile },
+    { data: viewerMembership },
+    workstreams,
+    openNotes,
+    { data: approvalPolicies },
+    { data: activeAuthorityAssignments },
+  ] = await Promise.all([
+    supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
+    supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
+    user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
+    user
+      ? supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).single()
+      : Promise.resolve({ data: null }),
+    listWorkstreams(supabase, id),
+    user ? listProjectNotes(supabase, id, { status: 'open' }) : Promise.resolve([]),
+    supabase.from('project_approval_policies').select('approval_type, requirement_status').eq('project_id', id),
+    supabase.from('project_authority_assignments').select('approval_type').eq('project_id', id).eq('status', 'active'),
+  ])
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
@@ -52,6 +62,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // someone who could approve it. Everyone else sees no status badge while
   // it's in draft, matching the same rule on the Projects list page.
   const showStatusBadge = project.status !== 'draft' || project.owner_id === user?.id || canApprove
+
+  const assignedTypes = new Set((activeAuthorityAssignments ?? []).map((a) => a.approval_type))
+  const missingAuthorities = (approvalPolicies ?? []).filter(
+    (p) => p.requirement_status === 'required' && !assignedTypes.has(p.approval_type)
+  )
 
   return (
     <div className="flex flex-col gap-8">
@@ -162,6 +177,29 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </ul>
         ) : (
           <p className="text-sm text-zinc-500">No workstreams defined yet.</p>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Governance</h2>
+          {canManage && (
+            <Link href={`/projects/${project.id}/governance`} className="text-sm underline">
+              Manage
+            </Link>
+          )}
+        </div>
+        {(approvalPolicies ?? []).length > 0 ? (
+          <p className="text-sm text-zinc-600">
+            {(approvalPolicies ?? []).length} approval {(approvalPolicies ?? []).length === 1 ? 'type' : 'types'} configured
+            {missingAuthorities.length > 0 && (
+              <span className="ml-1 font-medium text-amber-700">
+                — {missingAuthorities.length} authority {missingAuthorities.length === 1 ? 'gap' : 'gaps'} (Authority needed)
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="text-sm text-zinc-500">No approval requirements configured for this project.</p>
         )}
       </section>
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/projects'
-import type { ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 
 export async function createProjectAction(input: {
   name: string
@@ -13,6 +13,7 @@ export async function createProjectAction(input: {
   knowledgeBaseId: string | null
   evalDatasetId: string | null
   members: { email: string; role: ProjectRole }[]
+  approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
 }) {
   const ctx = await requireUser()
   const result = await workbench.createProject(ctx, input)
