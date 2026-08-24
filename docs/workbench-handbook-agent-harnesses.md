@@ -191,6 +191,7 @@ An agent harness improves control, transparency, and evidence. It does not elimi
 
 ## Related Workbench concepts
 
+- [Enterprise AI Ontologies: Giving Agents a Governed World Model](./workbench-handbook-enterprise-ai-ontologies.md)
 - Agent registration and versioning
 - MCP tools and external capabilities
 - Model identity and provenance

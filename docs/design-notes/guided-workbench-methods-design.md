@@ -173,8 +173,11 @@ Authentication model
 Authorization boundaries
 Human approval requirements
 Dangerous-operation classification
+Exposure classification (per capability)
 MCP architecture
 Implementation backlog/handoff
+Full methodology: docs/workbench-handbook-mcp-architecture.md
+Worked example: docs/design-notes/zadara-sandz-mcp-use-cases.md
 Boundary
 KB Sandbox designs the MCP architecture.
 Implementation occurs separately unless a future native capability is explicitly introduced.
