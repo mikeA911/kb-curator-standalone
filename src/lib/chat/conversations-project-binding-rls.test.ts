@@ -3,11 +3,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 // Same "assert the shape of the migration file directly" approach as
-// src/lib/wiki/project-visibility-rls.test.ts.
-const sql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824190001_conversations_project_binding.sql'),
-  'utf-8'
-)
+// src/lib/wiki/project-visibility-rls.test.ts, including its CRLF -> LF
+// normalization (a Windows branch switch can rewrite tracked files to
+// CRLF, breaking a `.*\n.*`-style regex).
+const sql = fs
+  .readFileSync(path.join(process.cwd(), 'supabase/migrations/20260824190001_conversations_project_binding.sql'), 'utf-8')
+  .replace(/\r\n/g, '\n')
 
 describe('conversations.project_id', () => {
   it('is nullable, referencing projects, on delete set null', () => {

@@ -2,39 +2,35 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
+// Normalizes CRLF -> LF -- on Windows with core.autocrlf=true, a branch
+// switch can rewrite tracked files to CRLF in the working tree, which
+// silently breaks a `.*\n.*`-style regex (observed live: this file's own
+// multi-line assertions started failing after an unrelated git operation,
+// nothing to do with the SQL itself). Same fix already used in
+// src/lib/projects/membership-rls.test.ts's read() helper.
+const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf-8').replace(/\r\n/g, '\n')
+
 // Same "assert the shape of the policy file directly" approach as
 // src/lib/wiki/rls.test.ts -- there's no live database to run RLS against
 // in this suite.
-const migrationSql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824150001_project_wiki_articles_and_kb_detach.sql'),
-  'utf-8'
-)
+const migrationSql = read('supabase/migrations/20260824150001_project_wiki_articles_and_kb_detach.sql')
 
 // Follow-up migration fixing the four issues raised in review of the above
 // (see the migration file's own header comment for the full rationale).
-const fixupSql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824160001_project_knowledge_visibility_fixes.sql'),
-  'utf-8'
-)
+const fixupSql = read('supabase/migrations/20260824160001_project_knowledge_visibility_fixes.sql')
 
 // Second follow-up: is_project_member() bakes in an admin bypass (intended
 // for general project navigation), which silently defeated fixupSql's own
 // fix for platform admins specifically. Caught during this feature's own
 // live-verification pass, before testing the admin role.
-const strictMembershipSql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824170001_project_wiki_strict_membership.sql'),
-  'utf-8'
-)
+const strictMembershipSql = read('supabase/migrations/20260824170001_project_wiki_strict_membership.sql')
 
 // Third follow-up (Stage 2's own live-verification pass): the FOR ALL
 // manage_curator policies on both junction tables incidentally granted
 // SELECT to any curator/admin regardless of real membership, via
 // can_curate_project's own admin bypass -- split into INSERT/DELETE-only so
 // SELECT is governed solely by the strict *_select_member policy.
-const noSelectLeakSql = fs.readFileSync(
-  path.join(process.cwd(), 'supabase/migrations/20260824210001_project_junction_manage_policies_no_select_leak.sql'),
-  'utf-8'
-)
+const noSelectLeakSql = read('supabase/migrations/20260824210001_project_junction_manage_policies_no_select_leak.sql')
 
 describe('Project-Aware Knowledge Stage 1 migration', () => {
   it('enables RLS on project_wiki_articles with member-select and curator-manage policies', () => {
