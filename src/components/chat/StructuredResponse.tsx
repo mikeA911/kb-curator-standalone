@@ -110,6 +110,14 @@ export function DocumentsList({ documents }: { documents?: NonNullable<VerifiedA
   )
 }
 
+// layer/stale are computed server-side from this turn's real retrieval and
+// (for stale) re-checked on every display -- see envelope-resolution.ts.
+// Never derived here from anything model-authored.
+const LAYER_LABEL: Record<'project' | 'platform', string> = {
+  project: 'Project evidence',
+  platform: 'Platform guidance',
+}
+
 export function CitationsList({ citations }: { citations?: NonNullable<VerifiedAssistantEnvelope['citations']> }) {
   if (!citations?.length) return null
   return (
@@ -120,6 +128,14 @@ export function CitationsList({ citations }: { citations?: NonNullable<VerifiedA
           <Link href={c.route} className="text-blue-700 underline hover:text-blue-900">
             {c.label}
           </Link>
+          {c.layer ? (
+            <span className="ml-1 rounded-full border border-zinc-200 px-1.5 py-0.5 text-[10px] text-zinc-500">{LAYER_LABEL[c.layer]}</span>
+          ) : null}
+          {c.stale ? (
+            <span className="ml-1 text-amber-600" title="Source updated since this citation">
+              ⚠ updated since cited
+            </span>
+          ) : null}
           {i < citations.length - 1 ? ',' : ''}
         </span>
       ))}

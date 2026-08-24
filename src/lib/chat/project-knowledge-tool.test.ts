@@ -73,6 +73,7 @@ describe('runSearchProjectKnowledge', () => {
         route: '/sources/source-1',
         similarity: 0.9,
         content: 'zStorage supports block, file, object.',
+        documentVersionId: 'doc-1',
       },
       {
         layer: 'platform',
@@ -82,6 +83,7 @@ describe('runSearchProjectKnowledge', () => {
         route: '/sources/source-2',
         similarity: 0.5,
         content: 'RAG combines retrieval with generation.',
+        documentVersionId: 'doc-2',
       },
     ])
   })

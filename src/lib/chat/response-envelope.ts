@@ -82,7 +82,12 @@ export interface PersistedAssistantEnvelope {
   requirements?: AssistantResponseEnvelope['requirements']
   links?: { label: string; target: { kind: NavigationTargetKind; id: string } }[]
   documents?: { label: string; documentType: string; artifactId: string }[]
-  citations?: { label: string; sourceType: CitationSourceType; sourceId: string }[]
+  // Stage 3: attached from this turn's own retrieval provenance
+  // (envelope-resolution.ts), never from the model -- layer is which
+  // knowledge tier the hit came from, documentVersionId is the specific
+  // documents.id a knowledge_source citation actually resolved to (absent
+  // for a wiki_article citation, which has no version/staleness concept).
+  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; layer?: 'project' | 'platform'; documentVersionId?: string }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }
@@ -99,7 +104,17 @@ export const PersistedAssistantEnvelopeSchema: z.ZodType<PersistedAssistantEnvel
   requirements: AssistantResponseEnvelopeSchema.shape.requirements,
   links: z.array(z.object({ label: z.string(), target: z.object({ kind: NavigationTargetKindSchema, id: z.string() }) })).optional(),
   documents: z.array(z.object({ label: z.string(), documentType: z.string(), artifactId: z.string() })).optional(),
-  citations: z.array(z.object({ label: z.string(), sourceType: CitationSourceTypeSchema, sourceId: z.string() })).optional(),
+  citations: z
+    .array(
+      z.object({
+        label: z.string(),
+        sourceType: CitationSourceTypeSchema,
+        sourceId: z.string(),
+        layer: z.enum(['project', 'platform']).optional(),
+        documentVersionId: z.string().optional(),
+      })
+    )
+    .optional(),
   nextSteps: AssistantResponseEnvelopeSchema.shape.nextSteps,
   suggestedPrompts: z.array(z.string()).optional(),
 })
@@ -115,7 +130,9 @@ export interface VerifiedAssistantEnvelope {
   requirements?: AssistantResponseEnvelope['requirements']
   links?: { label: string; route: string }[]
   documents?: { label: string; documentType: string; artifactId: string; title: string; route: string | null }[]
-  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; route: string }[]
+  // stale: the source has a newer version than the one actually cited --
+  // recomputed on every read (see resolveEnvelopeForDisplay), never cached.
+  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; route: string; layer?: 'project' | 'platform'; stale?: boolean }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }

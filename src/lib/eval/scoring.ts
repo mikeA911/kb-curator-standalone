@@ -4,6 +4,11 @@ export interface RetrievalMetrics {
   hit: boolean | null
   recall: number | null
   mrr: number | null
+  // Stage 3: fraction of retrieved evidence tagged layer:'project', for a
+  // case run with a project-scoped RetrievalConfig. null (not 0) when the
+  // config wasn't project-scoped -- distinguishes "this case doesn't
+  // measure project-layer precision" from "it measured zero".
+  projectLayerPrecisionAtK: number | null
 }
 
 // Deterministic retrieval scoring -- preferred over LLM judgment wherever an
@@ -20,8 +25,10 @@ export function computeRetrievalMetrics(
   const expectedChunks = new Set(expectedChunkIds)
   const totalExpected = expectedArticles.size + expectedChunks.size
 
+  const projectLayerPrecisionAtK = computeProjectLayerPrecision(evidence)
+
   if (totalExpected === 0) {
-    return { hit: null, recall: null, mrr: null }
+    return { hit: null, recall: null, mrr: null, projectLayerPrecisionAtK }
   }
 
   const isExpected = (item: RetrievedEvidenceItem) =>
@@ -36,7 +43,19 @@ export function computeRetrievalMetrics(
   const firstHitIndex = sorted.findIndex(isExpected)
   const mrr = firstHitIndex === -1 ? 0 : 1 / (firstHitIndex + 1)
 
-  return { hit, recall, mrr }
+  return { hit, recall, mrr, projectLayerPrecisionAtK }
+}
+
+// What fraction of this case's top-K evidence actually came from the
+// project's own attached knowledge, vs. platform-wide content -- only
+// meaningful (non-null) when retrieval was run with a projectId (see
+// RetrievalConfig.projectId in eval/retrieval.ts), which is the only time
+// any item in `evidence` carries a `layer` at all.
+function computeProjectLayerPrecision(evidence: RetrievedEvidenceItem[]): number | null {
+  const layered = evidence.filter((item) => item.layer !== undefined)
+  if (layered.length === 0) return null
+  const projectCount = layered.filter((item) => item.layer === 'project').length
+  return projectCount / layered.length
 }
 
 // Aggregate metrics across a completed run's results -- powers the summary

@@ -4,14 +4,23 @@ import { resolveNavigationTarget } from './navigation-resolver'
 import { resolveDocumentArtifact } from './document-resolver'
 import type { AssistantResponseEnvelope, PersistedAssistantEnvelope, VerifiedAssistantEnvelope } from './response-envelope'
 
+// Stage 3: which knowledge layer a retrieved hit came from, and (for a
+// knowledge_source hit) which specific document version was actually
+// retrieved -- captured once at retrieval time in loop.ts, since neither
+// fact can be reconstructed later from just a sourceId/slug.
+export interface RetrievedHitInfo {
+  layer: 'project' | 'platform'
+  documentVersionId: string | null
+}
+
 // This turn's real retrieval provenance, keyed by citation sourceType --
 // citations are checked against this, never against what the model merely
 // asserts. wikiArticleSlugs covers both search_wiki and
 // search_project_knowledge's wiki-layer hits; knowledgeSourceIds covers
 // search_project_knowledge's source-layer hits (Stage 2).
 export interface RetrievedProvenance {
-  wikiArticleSlugs: ReadonlySet<string>
-  knowledgeSourceIds: ReadonlySet<string>
+  wikiArticleSlugs: ReadonlyMap<string, RetrievedHitInfo>
+  knowledgeSourceIds: ReadonlyMap<string, RetrievedHitInfo>
 }
 
 // Turns a model-submitted, schema-validated envelope into what actually
@@ -47,9 +56,17 @@ export async function buildPersistedEnvelope(
   const resolvedDocuments = documents.filter((d): d is NonNullable<typeof d> => d !== null)
   if (resolvedDocuments.length) persisted.documents = resolvedDocuments
 
-  const verifiedCitations = (parsed.citations ?? []).filter((c) =>
-    c.sourceType === 'knowledge_source' ? retrieved.knowledgeSourceIds.has(c.sourceId) : retrieved.wikiArticleSlugs.has(c.sourceId)
-  )
+  // Stage 3: layer/documentVersionId are attached here from this turn's own
+  // retrieval, never from the model -- same "don't trust the model with a
+  // fact it might hallucinate" principle as the sourceId verification
+  // itself.
+  const verifiedCitations = (parsed.citations ?? [])
+    .map((c) => {
+      const info = c.sourceType === 'knowledge_source' ? retrieved.knowledgeSourceIds.get(c.sourceId) : retrieved.wikiArticleSlugs.get(c.sourceId)
+      if (!info) return null
+      return { ...c, layer: info.layer, documentVersionId: info.documentVersionId ?? undefined }
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null)
   if (verifiedCitations.length) persisted.citations = verifiedCitations
 
   return persisted
@@ -82,7 +99,28 @@ export async function resolveEnvelopeForDisplay(
     Promise.all(
       (persisted.citations ?? []).map(async (citation) => {
         const resolved = await resolveNavigationTarget(ctx, { kind: citation.sourceType, id: citation.sourceId })
-        return resolved ? { label: citation.label, sourceType: citation.sourceType, sourceId: citation.sourceId, route: resolved.route } : null
+        if (!resolved) return null
+        // Stage 3 staleness: only meaningful for a knowledge_source citation
+        // that recorded which version was actually retrieved -- compare
+        // against the source's *current* version, re-checked on every
+        // display (never cached), same as the route/access-check above.
+        let stale: boolean | undefined
+        if (citation.sourceType === 'knowledge_source' && citation.documentVersionId) {
+          const { data: source } = await ctx.supabase
+            .from('knowledge_sources')
+            .select('current_version_id')
+            .eq('id', citation.sourceId)
+            .maybeSingle()
+          if (source?.current_version_id && source.current_version_id !== citation.documentVersionId) stale = true
+        }
+        return {
+          label: citation.label,
+          sourceType: citation.sourceType,
+          sourceId: citation.sourceId,
+          route: resolved.route,
+          layer: citation.layer,
+          ...(stale !== undefined ? { stale } : {}),
+        }
       })
     ),
   ])

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 
 const resolveNavigationTargetMock = vi.fn()
 const resolveDocumentArtifactMock = vi.fn()
@@ -27,10 +28,30 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       parsed,
-      { wikiArticleSlugs: new Set(['real-slug']), knowledgeSourceIds: new Set() }
+      { wikiArticleSlugs: new Map([['real-slug', { layer: 'platform', documentVersionId: null }]]), knowledgeSourceIds: new Map() }
     )
 
-    expect(persisted.citations).toEqual([{ label: 'Retrieved', sourceType: 'wiki_article', sourceId: 'real-slug' }])
+    expect(persisted.citations).toEqual([
+      { label: 'Retrieved', sourceType: 'wiki_article', sourceId: 'real-slug', layer: 'platform', documentVersionId: undefined },
+    ])
+  })
+
+  it('attaches layer and documentVersionId from this turn\'s retrieval, never from the model', async () => {
+    const parsed = {
+      schemaVersion: '1.0' as const,
+      message: 'Here you go.',
+      citations: [{ label: 'Project source', sourceType: 'knowledge_source' as const, sourceId: 'source-1' }],
+    }
+
+    const persisted = await buildPersistedEnvelope(
+      {} as never,
+      parsed,
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'project', documentVersionId: 'doc-v1' }]]) }
+    )
+
+    expect(persisted.citations).toEqual([
+      { label: 'Project source', sourceType: 'knowledge_source', sourceId: 'source-1', layer: 'project', documentVersionId: 'doc-v1' },
+    ])
   })
 
   it('checks knowledge_source citations against knowledgeSourceIds, not wikiArticleSlugs', async () => {
@@ -46,10 +67,12 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       parsed,
-      { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set(['source-1']) }
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'platform', documentVersionId: null }]]) }
     )
 
-    expect(persisted.citations).toEqual([{ label: 'Retrieved source', sourceType: 'knowledge_source', sourceId: 'source-1' }])
+    expect(persisted.citations).toEqual([
+      { label: 'Retrieved source', sourceType: 'knowledge_source', sourceId: 'source-1', layer: 'platform', documentVersionId: undefined },
+    ])
   })
 
   it('drops links that fail to resolve even once, keeping ones that do', async () => {
@@ -65,7 +88,7 @@ describe('buildPersistedEnvelope', () => {
       ],
     }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() })
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() })
 
     expect(persisted.links).toEqual([{ label: 'A', target: { kind: 'project', id: 'real-project' } }])
   })
@@ -74,7 +97,7 @@ describe('buildPersistedEnvelope', () => {
     resolveDocumentArtifactMock.mockResolvedValue(null)
     const parsed = { schemaVersion: '1.0' as const, message: 'Hi.', documents: [{ label: 'Doc', documentType: 'design_note', artifactId: 'fake' }] }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() })
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() })
 
     expect(persisted.documents).toBeUndefined()
   })
@@ -83,7 +106,7 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       { schemaVersion: '1.0', message: 'Hi.' },
-      { wikiArticleSlugs: new Set(), knowledgeSourceIds: new Set() }
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() }
     )
     expect(persisted).toEqual({ message: 'Hi.' })
   })
@@ -119,5 +142,37 @@ describe('resolveEnvelopeForDisplay', () => {
     const verified = await resolveEnvelopeForDisplay({} as never, persisted)
 
     expect(verified.links).toBeUndefined()
+  })
+
+  it('carries layer through and flags a knowledge_source citation as stale when the source has a newer version', async () => {
+    resolveNavigationTargetMock.mockResolvedValue({ label: 'Source', route: '/sources/source-1' })
+    const supabase = createFakeSupabase({
+      knowledge_sources: [{ data: { current_version_id: 'doc-v2' }, error: null }],
+    })
+    const persisted = {
+      message: 'Hi.',
+      citations: [{ label: 'Source', sourceType: 'knowledge_source' as const, sourceId: 'source-1', layer: 'project' as const, documentVersionId: 'doc-v1' }],
+    }
+
+    const verified = await resolveEnvelopeForDisplay({ supabase } as never, persisted)
+
+    expect(verified.citations).toEqual([
+      { label: 'Source', sourceType: 'knowledge_source', sourceId: 'source-1', route: '/sources/source-1', layer: 'project', stale: true },
+    ])
+  })
+
+  it('does not flag staleness when the cited version is still current', async () => {
+    resolveNavigationTargetMock.mockResolvedValue({ label: 'Source', route: '/sources/source-1' })
+    const supabase = createFakeSupabase({
+      knowledge_sources: [{ data: { current_version_id: 'doc-v1' }, error: null }],
+    })
+    const persisted = {
+      message: 'Hi.',
+      citations: [{ label: 'Source', sourceType: 'knowledge_source' as const, sourceId: 'source-1', layer: 'project' as const, documentVersionId: 'doc-v1' }],
+    }
+
+    const verified = await resolveEnvelopeForDisplay({ supabase } as never, persisted)
+
+    expect(verified.citations?.[0].stale).toBeUndefined()
   })
 })

@@ -9,7 +9,7 @@ import { composeWorkingContext } from './context'
 import { getConversationSummary, maybeRefreshSummary } from './summary'
 import { AssistantResponseEnvelopeSchema, PRESENT_RESPONSE_TOOL, PRESENT_RESPONSE_TOOL_NAME } from './response-envelope'
 import type { VerifiedAssistantEnvelope } from './response-envelope'
-import { buildPersistedEnvelope, resolveEnvelopeForDisplay, type RetrievedProvenance } from './envelope-resolution'
+import { buildPersistedEnvelope, resolveEnvelopeForDisplay, type RetrievedProvenance, type RetrievedHitInfo } from './envelope-resolution'
 import { resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
 import { getProjectContext, describeProjectKnowledgeScope } from './project-context'
 import {
@@ -192,9 +192,13 @@ export async function runAssistantTurn(
   // This turn's real retrieval/creation provenance, accumulated across
   // iterations -- citations are checked against these (never against what
   // the model merely asserts), and createdRecordRefs feeds the Artifacts
-  // panel's "Created records" group.
-  const retrievedWikiArticleSlugs = new Set<string>()
-  const retrievedKnowledgeSourceIds = new Set<string>()
+  // panel's "Created records" group. Stage 3: keyed maps, not bare sets, so
+  // a verified citation can also carry which knowledge layer it came from
+  // and (for a knowledge_source) which specific document version was
+  // actually retrieved -- search_wiki hits are always layer:'platform'
+  // (it's the general tool, never project-tagged) with no version concept.
+  const retrievedWikiArticleSlugs = new Map<string, RetrievedHitInfo>()
+  const retrievedKnowledgeSourceIds = new Map<string, RetrievedHitInfo>()
   const createdRecordRefs: CreatedRecordRef[] = []
 
   // Shared tail for every terminal path below: resolves the embedding model
@@ -339,8 +343,9 @@ export async function runAssistantTurn(
             const output = await runSearchProjectKnowledge(ctx, resolvedProjectId, toolCall.arguments)
             toolResultText = JSON.stringify(output)
             for (const hit of output.results as ProjectKnowledgeHit[]) {
-              if (hit.sourceType === 'wiki_article') retrievedWikiArticleSlugs.add(hit.sourceId)
-              else retrievedKnowledgeSourceIds.add(hit.sourceId)
+              const info: RetrievedHitInfo = { layer: hit.layer, documentVersionId: hit.documentVersionId }
+              if (hit.sourceType === 'wiki_article') retrievedWikiArticleSlugs.set(hit.sourceId, info)
+              else retrievedKnowledgeSourceIds.set(hit.sourceId, info)
             }
           } catch (err) {
             toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
@@ -354,7 +359,7 @@ export async function runAssistantTurn(
 
           if (toolCall.name === 'search_wiki' && output && typeof output === 'object' && 'articles' in output) {
             for (const article of (output as { articles: { slug: string }[] }).articles) {
-              retrievedWikiArticleSlugs.add(article.slug)
+              retrievedWikiArticleSlugs.set(article.slug, { layer: 'platform', documentVersionId: null })
             }
           } else if (toolCall.name === 'create_project' && output && typeof output === 'object' && 'projectId' in output) {
             createdRecordRefs.push({ kind: 'project', id: (output as { projectId: string }).projectId })

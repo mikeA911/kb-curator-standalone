@@ -39,11 +39,11 @@ export async function executeEvalRun(supabase: SupabaseClient<Database>, runId: 
     evaluatorModelRow = model
   }
 
-  let datasetProjectId: string | null = null
-  if (config.execution?.mode === 'graph') {
-    const { data: dataset } = await supabase.from('eval_datasets').select('project_id').eq('id', run.dataset_id).single()
-    datasetProjectId = dataset?.project_id ?? null
-  }
+  // Stage 3: fetched unconditionally now (previously graph-mode only) so a
+  // project-scoped dataset's single-pass runs also tag retrieved evidence
+  // layer:'project'|'platform' -- see RetrievalConfig.projectId.
+  const { data: dataset } = await supabase.from('eval_datasets').select('project_id').eq('id', run.dataset_id).single()
+  const datasetProjectId: string | null = dataset?.project_id ?? null
 
   await supabase.from('eval_runs').update({ status: 'running', started_at: new Date().toISOString() }).eq('id', runId)
 
@@ -116,6 +116,7 @@ async function runCase(
       evidenceSource: config.retrieval.evidence_source,
       topK: config.retrieval.top_k,
       threshold: config.retrieval.threshold,
+      projectId: models.projectId ?? undefined,
     })
 
     const metrics = computeRetrievalMetrics(retrieval.evidence, evalCase.expected_article_ids ?? [], evalCase.expected_chunk_ids ?? [])
@@ -313,6 +314,7 @@ async function runCaseViaGraph(
         evidenceSource: config.retrieval.evidence_source,
         topK: config.retrieval.top_k,
         threshold: config.retrieval.threshold,
+        projectId: models.projectId ?? undefined,
       },
       generationProvider: models.generationProvider,
       generationModel: models.generationModel,
