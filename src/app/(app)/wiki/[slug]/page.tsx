@@ -2,12 +2,15 @@ import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { getArticleBySlug, getLatestVersion, getVersionHistory, listArticlesForLinking } from '@/lib/wiki/queries'
-import { getSourcesForVersion } from '@/lib/wiki/sources'
+import { getSourcesForVersion, listKnowledgeSourcesForLinking } from '@/lib/wiki/sources'
 import { getRelatedArticles } from '@/lib/wiki/relations'
+import { getProjectsForArticle } from '@/lib/wiki/project-links'
+import { listProjectsForLinking } from '@/lib/projects/queries'
 import { MarkdownLite } from '@/components/wiki/MarkdownLite'
 import { ArticleReviewActions } from '@/components/wiki/ArticleReviewActions'
 import { SourceManager, SourceRemoveButton } from '@/components/wiki/SourceManager'
 import { RelatedArticlesManager, RelatedArticleRemoveButton } from '@/components/wiki/RelatedArticlesManager'
+import { ProjectArticleManager, ProjectArticleRemoveButton } from '@/components/wiki/ProjectArticleManager'
 
 export default async function WikiArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
@@ -24,11 +27,14 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
   const article = await getArticleBySlug(supabase, slug)
   if (!article) notFound()
 
-  const [version, history, related, linkableArticles] = await Promise.all([
+  const [version, history, related, linkableArticles, linkedProjects, linkableProjects, linkableSources] = await Promise.all([
     getLatestVersion(supabase, article.id),
     isStaff ? getVersionHistory(supabase, article.id) : Promise.resolve([]),
     getRelatedArticles(supabase, article.id),
     isStaff ? listArticlesForLinking(supabase, article.id) : Promise.resolve([]),
+    isStaff ? getProjectsForArticle(supabase, article.id) : Promise.resolve([]),
+    isStaff ? listProjectsForLinking(supabase) : Promise.resolve([]),
+    isStaff ? listKnowledgeSourcesForLinking(supabase) : Promise.resolve([]),
   ])
 
   const sources = version ? await getSourcesForVersion(supabase, version.id) : []
@@ -103,7 +109,7 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
               )}
               {isStaff && (
                 <div className="mt-3 border-t border-zinc-100 pt-3">
-                  <SourceManager versionId={version.id} />
+                  <SourceManager versionId={version.id} knowledgeSources={linkableSources} />
                 </div>
               )}
             </div>
@@ -135,6 +141,38 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
               )}
             </div>
           </div>
+
+          {isStaff && (
+            <div className="rounded border border-zinc-200 bg-white p-4">
+              <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Projects</h3>
+              <p className="mb-2 text-xs text-zinc-500">
+                Visibility controls who can see this article; project attachment shows it on a project&apos;s own
+                Knowledge list without copying it.
+              </p>
+              {linkedProjects.length === 0 ? (
+                <p className="text-sm text-zinc-500">Not attached to any project.</p>
+              ) : (
+                <ul className="mb-2 flex flex-col gap-1 text-sm">
+                  {linkedProjects.map((l) =>
+                    l.project ? (
+                      <li key={l.linkId} className="flex items-center justify-between gap-2">
+                        <Link href={`/projects/${l.project.id}`} className="underline">
+                          {l.project.name}
+                        </Link>
+                        <ProjectArticleRemoveButton linkId={l.linkId} projectId={l.project.id} />
+                      </li>
+                    ) : null
+                  )}
+                </ul>
+              )}
+              <ProjectArticleManager
+                articleId={article.id}
+                visibilityScope={article.visibility_scope}
+                projects={linkableProjects}
+                excludeProjectIds={linkedProjects.map((l) => l.project?.id).filter((id): id is string => !!id)}
+              />
+            </div>
+          )}
 
           {isStaff && (
             <ArticleReviewActions

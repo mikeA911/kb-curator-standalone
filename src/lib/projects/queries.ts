@@ -24,6 +24,44 @@ export async function listProjectsWithDraftUpdates(supabase: SupabaseClient<Data
   return data ?? []
 }
 
+// For the Wiki article page's project-attach picker (RelatedArticlesManager
+// pattern). RLS (projects_select_members / is_project_member) naturally
+// scopes this to projects the caller can actually see -- a platform curator
+// who isn't a member of a given project won't see it here, which is the
+// correct boundary: platform role alone shouldn't let you attach a
+// project-private article to a project you don't belong to.
+export async function listProjectsForLinking(supabase: SupabaseClient<Database>) {
+  const { data, error } = await supabase.from('projects').select('id, name').order('name')
+  if (error) throw error
+  return data ?? []
+}
+
+export interface LinkedKnowledgeBase {
+  id: string
+  name: string
+}
+
+// Backs the project page's Knowledge section list. Joins through
+// project_knowledge_bases (many-to-many) rather than the legacy
+// knowledge_bases.project_id column, since a KB may now serve more than one
+// authorized project.
+export async function listKnowledgeBasesForProject(
+  supabase: SupabaseClient<Database>,
+  projectId: string
+): Promise<LinkedKnowledgeBase[]> {
+  const { data: links, error: linkError } = await supabase
+    .from('project_knowledge_bases')
+    .select('knowledge_base_id')
+    .eq('project_id', projectId)
+  if (linkError) throw linkError
+  const kbIds = (links ?? []).map((l) => l.knowledge_base_id)
+  if (kbIds.length === 0) return []
+
+  const { data: kbs, error: kbError } = await supabase.from('knowledge_bases').select('id, name').in('id', kbIds)
+  if (kbError) throw kbError
+  return kbs ?? []
+}
+
 export interface ProjectKnowledgeSummary {
   id: string
   name: string
@@ -31,25 +69,21 @@ export interface ProjectKnowledgeSummary {
   wikiArticleCount: number
 }
 
-// Projects with their own attached knowledge base (knowledge_bases.project_id
-// set via attachKnowledgeBaseAction) -- as opposed to the platform-global AI
-// Engineering Wiki, which every project can read but none of them own.
+// Projects with their own attached knowledge base(s), joined through
+// project_knowledge_bases (many-to-many) -- as opposed to the platform-global
+// AI Engineering Wiki, which every project can read but none of them own.
 // Documents join via doc_type (a KB id); Wiki articles via knowledge_base_id.
 export async function listProjectsWithKnowledge(supabase: SupabaseClient<Database>): Promise<ProjectKnowledgeSummary[]> {
-  const { data: kbs, error: kbError } = await supabase
-    .from('knowledge_bases')
-    .select('id, project_id')
-    .not('project_id', 'is', null)
-  if (kbError) throw kbError
-  if (!kbs || kbs.length === 0) return []
+  const { data: links, error: linkError } = await supabase.from('project_knowledge_bases').select('project_id, knowledge_base_id')
+  if (linkError) throw linkError
+  if (!links || links.length === 0) return []
 
   const kbIdsByProject = new Map<string, string[]>()
-  for (const kb of kbs) {
-    const pid = kb.project_id as string
-    kbIdsByProject.set(pid, [...(kbIdsByProject.get(pid) ?? []), kb.id])
+  for (const link of links) {
+    kbIdsByProject.set(link.project_id, [...(kbIdsByProject.get(link.project_id) ?? []), link.knowledge_base_id])
   }
   const projectIds = [...kbIdsByProject.keys()]
-  const allKbIds = kbs.map((kb) => kb.id)
+  const allKbIds = [...new Set(links.map((l) => l.knowledge_base_id))]
 
   const [{ data: projects, error: projError }, { data: documents, error: docError }, { data: articles, error: articleError }] =
     await Promise.all([

@@ -6,6 +6,10 @@ import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
 import { ApproveProjectButton } from '@/components/projects/ApproveProjectButton'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
+import { listAttachableKnowledgeBases } from '@/lib/knowledge-bases'
+import { listKnowledgeBasesForProject } from '@/lib/projects/queries'
+import { listArticlesForProject } from '@/lib/wiki/project-links'
+import { KnowledgeBaseAttachManager, KnowledgeBaseDetachButton } from '@/components/projects/KnowledgeBaseAttachManager'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -27,7 +31,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   } = await supabase.auth.getUser()
 
   const [
-    { data: knowledgeBases },
+    knowledgeBases,
     { data: evalDatasets },
     { data: viewerProfile },
     { data: viewerMembership },
@@ -35,8 +39,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     openNotes,
     { data: approvalPolicies },
     { data: activeAuthorityAssignments },
+    unattachedKnowledgeBases,
+    linkedArticles,
   ] = await Promise.all([
-    supabase.from('knowledge_bases').select('id, name').eq('project_id', id),
+    listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
     user ? supabase.from('profiles').select('role').eq('id', user.id).single() : Promise.resolve({ data: null }),
     user
@@ -46,6 +52,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     user ? listProjectNotes(supabase, id, { status: 'open' }) : Promise.resolve([]),
     supabase.from('project_approval_policies').select('approval_type, requirement_status').eq('project_id', id),
     supabase.from('project_authority_assignments').select('approval_type').eq('project_id', id).eq('status', 'active'),
+    listAttachableKnowledgeBases(supabase, id),
+    listArticlesForProject(supabase, id),
   ])
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
@@ -121,14 +129,33 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <p className="text-sm text-zinc-600">
           Platform Knowledge: <Link href="/wiki" className="underline">AI Engineering Wiki</Link>
         </p>
-        {(knowledgeBases ?? []).length > 0 ? (
+        {knowledgeBases.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm">
-            {knowledgeBases!.map((kb) => (
-              <li key={kb.id}>Project Knowledge: {kb.name}</li>
+            {knowledgeBases.map((kb) => (
+              <li key={kb.id} className="flex items-center gap-2">
+                Project Knowledge: {kb.name}
+                {canManage && <KnowledgeBaseDetachButton projectId={project.id} knowledgeBaseId={kb.id} />}
+              </li>
             ))}
           </ul>
         ) : (
           <p className="text-sm text-zinc-500">No project-specific knowledge base attached yet.</p>
+        )}
+        {canManage && <KnowledgeBaseAttachManager projectId={project.id} availableKnowledgeBases={unattachedKnowledgeBases} />}
+
+        {linkedArticles.length > 0 && (
+          <ul className="mt-1 flex flex-col gap-1 text-sm">
+            {linkedArticles.map((l) =>
+              l.article ? (
+                <li key={l.linkId}>
+                  Wiki:{' '}
+                  <Link href={`/wiki/${l.article.slug}`} className="underline">
+                    {l.article.title}
+                  </Link>
+                </li>
+              ) : null
+            )}
+          </ul>
         )}
       </section>
 

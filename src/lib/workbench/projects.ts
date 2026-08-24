@@ -69,7 +69,9 @@ export async function createProject(
   if (error || !project) throw error ?? new Error('Failed to create project')
 
   if (input.knowledgeBaseId) {
-    await supabase.from('knowledge_bases').update({ project_id: project.id }).eq('id', input.knowledgeBaseId)
+    await supabase
+      .from('project_knowledge_bases')
+      .insert({ project_id: project.id, knowledge_base_id: input.knowledgeBaseId, attached_by: user.id })
   }
   if (input.evalDatasetId) {
     await supabase.from('eval_datasets').update({ project_id: project.id }).eq('id', input.evalDatasetId)
@@ -146,12 +148,29 @@ export async function createProject(
   return { projectId: project.id }
 }
 
-// Attaching an existing KB/dataset mutates that entity's own row, not just
-// the project -- kept curator+ (same bar as authoring knowledge/evals
-// generally), unlike project creation itself.
+// project_knowledge_bases is many-to-many, so attaching an already-active KB
+// to a second project is a legitimate reuse, not an error -- kept curator+
+// (same bar as authoring knowledge/evals generally), unlike project
+// creation itself.
 export async function attachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
   await requireActiveKnowledgeBase(ctx.supabase, knowledgeBaseId)
-  const { error } = await ctx.supabase.from('knowledge_bases').update({ project_id: projectId }).eq('id', knowledgeBaseId)
+  const { error } = await ctx.supabase
+    .from('project_knowledge_bases')
+    .insert({ project_id: projectId, knowledge_base_id: knowledgeBaseId, attached_by: ctx.user.id })
+  if (error) throw error
+}
+
+// Project-Aware Knowledge and Assistant Context, Stage 1: the wizard could
+// only ever set a KB's attachment at creation time -- there was no way to
+// attach or fix one afterward. Detach removes just this project's link row
+// (the KB may still be attached elsewhere); kept curator+ (can_curate_project's
+// own RLS, via project_knowledge_bases_manage_curator), same bar as attaching.
+export async function detachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
+  const { error } = await ctx.supabase
+    .from('project_knowledge_bases')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('knowledge_base_id', knowledgeBaseId)
   if (error) throw error
 }
 

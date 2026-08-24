@@ -77,7 +77,7 @@ describe('createProjectAction', () => {
   it('attaches an existing knowledge base and eval dataset when selected in the wizard', async () => {
     const supabase = createFakeSupabase({
       projects: [{ data: { id: 'project-1' }, error: null }],
-      knowledge_bases: [{ data: null, error: null }],
+      project_knowledge_bases: [{ data: null, error: null }],
       eval_datasets: [{ data: null, error: null }],
     })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'curator' }, supabase })
@@ -92,9 +92,9 @@ describe('createProjectAction', () => {
       members: [],
     })
 
-    const kbUpdate = supabase._calls.find((c) => c.table === 'knowledge_bases' && c.method === 'update')
+    const kbInsert = supabase._calls.find((c) => c.table === 'project_knowledge_bases' && c.method === 'insert')
     const datasetUpdate = supabase._calls.find((c) => c.table === 'eval_datasets' && c.method === 'update')
-    expect(kbUpdate?.args).toMatchObject({ project_id: 'project-1' })
+    expect(kbInsert?.args).toMatchObject({ project_id: 'project-1', knowledge_base_id: 'kb-1', attached_by: 'user-1' })
     expect(datasetUpdate?.args).toMatchObject({ project_id: 'project-1' })
   })
 
@@ -146,14 +146,14 @@ describe('createProjectAction', () => {
 
 describe('attachKnowledgeBaseAction', () => {
   it('requires curator or above', async () => {
-    const supabase = createFakeSupabase({ knowledge_bases: [{ data: null, error: null }] })
-    requireRoleMock.mockResolvedValue({ supabase })
+    const supabase = createFakeSupabase({ project_knowledge_bases: [{ data: null, error: null }] })
+    requireRoleMock.mockResolvedValue({ user: { id: 'user-1' }, supabase })
 
     await attachKnowledgeBaseAction('project-1', 'kb-1')
 
     expect(requireRoleMock).toHaveBeenCalledWith('curator')
-    const update = supabase._calls.find((c) => c.table === 'knowledge_bases' && c.method === 'update')
-    expect(update?.args).toMatchObject({ project_id: 'project-1' })
+    const insert = supabase._calls.find((c) => c.table === 'project_knowledge_bases' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({ project_id: 'project-1', knowledge_base_id: 'kb-1' })
   })
 })
 

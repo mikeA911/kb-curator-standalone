@@ -247,6 +247,12 @@ export type WikiArticleStatus = 'draft' | 'review' | 'approved' | 'archived'
 export type WikiVerificationStatus = 'unverified' | 'verified' | 'needs_review'
 export type WikiGeneratedBy = 'human' | 'ai_assisted'
 export type WikiSourceType = 'document' | 'chunk' | 'external' | 'workstream_artifact'
+// Project-Aware Knowledge and Assistant Context, Stage 1 (docs/dev-request-
+// project-aware-knowledge-and-assistant-context.md). Visibility and
+// approval are separate dimensions -- an approved article can still be
+// project_private. 'organization' is deliberately not offered: this schema
+// has no organizations/tenant table to enforce that boundary against yet.
+export type WikiVisibilityScope = 'project_private' | 'selected_projects' | 'platform' | 'public'
 
 export interface WikiCategory {
   id: WikiCategoryId
@@ -268,9 +274,39 @@ export interface WikiArticle {
   // knowledge", public means "safe for anonymous disclosure". Set only via
   // setArticlePublicAction (admin-only).
   is_public: boolean
+  // Separate again from both status and is_public -- see WikiVisibilityScope.
+  // Defaults to 'platform', matching every article's behavior before this
+  // column existed.
+  visibility_scope: WikiVisibilityScope
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+// A project association -- the allow-list for project_private/
+// selected_projects articles, and also how a platform-visibility article
+// gets explicitly associated with a project's Knowledge display without
+// copying it.
+export interface ProjectWikiArticle {
+  id: string
+  project_id: string
+  wiki_article_id: string
+  relationship: string | null
+  attached_by: string | null
+  attached_at: string
+}
+
+// Many-to-many: the same knowledge base may serve more than one authorized
+// project (e.g. a shared Zadara/Sandz KB across two client engagements).
+// Supersedes knowledge_bases.project_id, which is one-to-one and left in
+// place but no longer read or written by Stage 1 code.
+export interface ProjectKnowledgeBase {
+  id: string
+  project_id: string
+  knowledge_base_id: string
+  purpose: string | null
+  attached_by: string | null
+  attached_at: string
 }
 
 export interface WikiVersion {
@@ -1385,9 +1421,19 @@ export type ChunkUpdate = Partial<Omit<DocumentChunk, 'id' | 'document_id' | 'ch
 export type KBVectorInsert = Omit<KBVector, 'id' | 'approved_date' | 'last_updated'>
 export type KBVectorUpdate = Partial<Omit<KBVector, 'id' | 'chunk_id' | 'document_id' | 'approved_date'>>
 
-export type WikiArticleInsert = Omit<WikiArticle, 'id' | 'created_at' | 'updated_at' | 'current_version_id' | 'is_public'> &
-  Partial<Pick<WikiArticle, 'current_version_id' | 'is_public'>>
+export type WikiArticleInsert = Omit<
+  WikiArticle,
+  'id' | 'created_at' | 'updated_at' | 'current_version_id' | 'is_public' | 'visibility_scope'
+> &
+  Partial<Pick<WikiArticle, 'current_version_id' | 'is_public' | 'visibility_scope'>>
 export type WikiArticleUpdate = Partial<Omit<WikiArticle, 'id' | 'created_at'>>
+
+export type ProjectWikiArticleInsert = Omit<ProjectWikiArticle, 'id' | 'attached_at'> & Partial<Pick<ProjectWikiArticle, 'attached_at'>>
+export type ProjectWikiArticleUpdate = Partial<Omit<ProjectWikiArticle, 'id' | 'project_id' | 'wiki_article_id'>>
+
+export type ProjectKnowledgeBaseInsert = Omit<ProjectKnowledgeBase, 'id' | 'attached_at'> &
+  Partial<Pick<ProjectKnowledgeBase, 'attached_at'>>
+export type ProjectKnowledgeBaseUpdate = Partial<Omit<ProjectKnowledgeBase, 'id' | 'project_id' | 'knowledge_base_id'>>
 
 export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at' | 'promoted_from_trending_item_id'> &
   Partial<Pick<WikiVersion, 'promoted_from_trending_item_id'>>
@@ -1561,6 +1607,18 @@ export interface Database {
         Relationships: []
       }
       wiki_articles: { Row: WikiArticle; Insert: WikiArticleInsert; Update: WikiArticleUpdate; Relationships: [] }
+      project_wiki_articles: {
+        Row: ProjectWikiArticle
+        Insert: ProjectWikiArticleInsert
+        Update: ProjectWikiArticleUpdate
+        Relationships: []
+      }
+      project_knowledge_bases: {
+        Row: ProjectKnowledgeBase
+        Insert: ProjectKnowledgeBaseInsert
+        Update: ProjectKnowledgeBaseUpdate
+        Relationships: []
+      }
       wiki_versions: { Row: WikiVersion; Insert: WikiVersionInsert; Update: WikiVersionUpdate; Relationships: [] }
       wiki_sources: { Row: WikiSource; Insert: WikiSourceInsert; Update: Partial<WikiSource>; Relationships: [] }
       wiki_relations: {

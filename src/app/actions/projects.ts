@@ -27,6 +27,12 @@ export async function attachKnowledgeBaseAction(projectId: string, knowledgeBase
   revalidatePath(`/projects/${projectId}`)
 }
 
+export async function detachKnowledgeBaseAction(projectId: string, knowledgeBaseId: string) {
+  const ctx = await requireRole('curator')
+  await workbench.detachKnowledgeBase(ctx, projectId, knowledgeBaseId)
+  revalidatePath(`/projects/${projectId}`)
+}
+
 export async function attachEvalDatasetAction(projectId: string, datasetId: string) {
   const ctx = await requireRole('curator')
   await workbench.attachEvalDataset(ctx, projectId, datasetId)

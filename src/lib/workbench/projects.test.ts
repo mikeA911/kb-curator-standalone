@@ -12,7 +12,7 @@ vi.mock('@/lib/supabase/admin', () => ({
   }),
 }))
 
-const { createProject } = await import('./projects')
+const { createProject, detachKnowledgeBase } = await import('./projects')
 
 function ctxWith(supabase: unknown) {
   return { user: { id: 'user-1', email: 'owner@example.com' }, profile: { role: 'consultant' }, supabase } as never
@@ -84,5 +84,15 @@ describe('createProject -- Governance & Approvals staging (Stage 1)', () => {
 
     const assignmentInsert = supabase._calls.find((c) => c.table === 'project_authority_assignments' && c.method === 'insert')
     expect((assignmentInsert?.args as { user_id: string }[])[0].user_id).toBe('user-2')
+  })
+})
+
+describe('detachKnowledgeBase -- Project-Aware Knowledge and Assistant Context (Stage 1)', () => {
+  it('removes only this project\'s link row, not the knowledge base itself', async () => {
+    const supabase = createFakeSupabase({ project_knowledge_bases: [{ data: null, error: null }] })
+    await detachKnowledgeBase(ctxWith(supabase), 'project-1', 'kb-1')
+
+    const del = supabase._calls.find((c) => c.table === 'project_knowledge_bases' && c.method === 'delete')
+    expect(del).toBeDefined()
   })
 })

@@ -1,44 +1,73 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { WikiSourceType } from '@/types/database'
 import { linkSourceAction, unlinkSourceAction } from '@/app/actions/wiki'
 
-// Deliberately minimal: a curator pastes a document/chunk id (visible in the
-// curator review UI) rather than a full picker widget -- proof-of-concept
-// provenance linking, not a polished evidence browser, per the brief's scope.
-// Only the add-form lives here; the read-only source list (with remove
-// buttons via SourceRemoveButton) is rendered once by the article page --
-// having both components render their own copy of the list was a redundant
-// duplicate display, not a data bug.
-export function SourceManager({ versionId }: { versionId: string }) {
+export interface LinkableSource {
+  id: string
+  title: string
+  knowledge_base_id: string
+  current_version_id: string
+}
+
+// Project-Aware Knowledge and Assistant Context, Stage 1: replaces the old
+// free-text document/chunk-id input (a "proof-of-concept" per the original
+// comment here) with the same type-to-filter picker RelatedArticlesManager
+// already established. Chunk-level and external sources keep their simpler
+// forms -- there's no chunk picker yet, and "external" never had an id to
+// begin with -- this only fixes the document case, which is what the smoke
+// test and the dev request both call out.
+export function SourceManager({ versionId, knowledgeSources }: { versionId: string; knowledgeSources: LinkableSource[] }) {
   const router = useRouter()
-  const [sourceType, setSourceType] = useState<WikiSourceType>('chunk')
-  const [refId, setRefId] = useState('')
+  const [sourceType, setSourceType] = useState<WikiSourceType>('document')
+  const [query, setQuery] = useState('')
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const [chunkId, setChunkId] = useState('')
   const [relationship, setRelationship] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return knowledgeSources.slice(0, 8)
+    return knowledgeSources.filter((s) => s.title.toLowerCase().includes(q) || s.knowledge_base_id.toLowerCase().includes(q)).slice(0, 8)
+  }, [knowledgeSources, query])
+
+  function selectSource(s: LinkableSource) {
+    setQuery(s.title)
+    setSelectedSourceId(s.id)
+    setOpen(false)
+  }
+
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    if (sourceType !== 'external' && !refId.trim()) {
-      setError('Provide a document or chunk id')
+    if (sourceType === 'chunk' && !chunkId.trim()) {
+      setError('Provide a chunk id')
       return
     }
+    if (sourceType === 'document' && !selectedSourceId) {
+      setError('Pick a source from the list')
+      return
+    }
+    const selectedSource = knowledgeSources.find((s) => s.id === selectedSourceId)
     startTransition(async () => {
       try {
         await linkSourceAction({
           wikiVersionId: versionId,
           sourceType,
-          documentId: sourceType === 'document' ? refId.trim() : undefined,
-          chunkId: sourceType === 'chunk' ? refId.trim() : undefined,
+          documentId: sourceType === 'document' ? selectedSource?.current_version_id : undefined,
+          chunkId: sourceType === 'chunk' ? chunkId.trim() : undefined,
           relationship: relationship || undefined,
           notes: notes || undefined,
         })
-        setRefId('')
+        setQuery('')
+        setSelectedSourceId(null)
+        setChunkId('')
         setRelationship('')
         setNotes('')
         router.refresh()
@@ -50,19 +79,58 @@ export function SourceManager({ versionId }: { versionId: string }) {
 
   return (
     <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-2">
-      <select value={sourceType} onChange={(e) => setSourceType(e.target.value as WikiSourceType)} className="rounded border border-zinc-300 px-2 py-1 text-xs">
-        <option value="chunk">Chunk</option>
+      <select
+        value={sourceType}
+        onChange={(e) => {
+          setSourceType(e.target.value as WikiSourceType)
+          setQuery('')
+          setSelectedSourceId(null)
+        }}
+        className="rounded border border-zinc-300 px-2 py-1 text-xs"
+      >
         <option value="document">Document</option>
+        <option value="chunk">Chunk</option>
         <option value="external">External</option>
       </select>
-      {sourceType !== 'external' && (
+
+      {sourceType === 'document' && (
+        <div className="relative">
+          <input
+            placeholder="Search sources by title…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setSelectedSourceId(null)
+              setOpen(true)
+            }}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            className="w-56 rounded border border-zinc-300 px-2 py-1 text-xs"
+          />
+          {open && matches.length > 0 && (
+            <ul className="absolute z-10 mt-1 max-h-56 w-56 overflow-auto rounded border border-zinc-200 bg-white text-xs shadow-sm">
+              {matches.map((s) => (
+                <li key={s.id}>
+                  <button type="button" onMouseDown={() => selectSource(s)} className="flex w-full flex-col px-2 py-1.5 text-left hover:bg-zinc-50">
+                    <span>{s.title}</span>
+                    <span className="text-zinc-400">{s.knowledge_base_id}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {sourceType === 'chunk' && (
         <input
-          placeholder={`${sourceType} id`}
-          value={refId}
-          onChange={(e) => setRefId(e.target.value)}
+          placeholder="chunk id"
+          value={chunkId}
+          onChange={(e) => setChunkId(e.target.value)}
           className="rounded border border-zinc-300 px-2 py-1 text-xs"
         />
       )}
+
       <input
         placeholder="relationship (optional)"
         value={relationship}
