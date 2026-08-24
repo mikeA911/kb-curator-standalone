@@ -10,6 +10,7 @@ import {
   deleteDocumentById,
 } from '@/lib/curator/documents'
 import { enrichDocumentChunks, approveChunk, rejectChunk, saveChunkDraft } from '@/lib/curator/chunks'
+import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 
 export async function uploadAndProcessDocument(formData: FormData) {
   const { user, supabase } = await requireRole('curator')
@@ -20,6 +21,7 @@ export async function uploadAndProcessDocument(formData: FormData) {
 
   if (!file || file.size === 0) throw new Error('No file provided')
   if (!docType) throw new Error('No knowledge base selected')
+  await requireActiveKnowledgeBase(supabase, docType)
 
   const doc = await createUploadedDocument(supabase, { file, docType, sourceUrl, uploadedBy: user.id })
 

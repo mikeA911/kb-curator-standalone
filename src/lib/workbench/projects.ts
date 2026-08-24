@@ -3,6 +3,7 @@ import { AuthError } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
+import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import type { WorkbenchCallerContext } from './context'
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
@@ -44,6 +45,7 @@ export async function createProject(
   if (profile.role === 'anonymous') {
     throw new AuthError('Create an account to start a project')
   }
+  if (input.knowledgeBaseId) await requireActiveKnowledgeBase(supabase, input.knowledgeBaseId)
 
   const { data: project, error } = await supabase
     .from('projects')
@@ -88,6 +90,7 @@ export async function createProject(
 // the project -- kept curator+ (same bar as authoring knowledge/evals
 // generally), unlike project creation itself.
 export async function attachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
+  await requireActiveKnowledgeBase(ctx.supabase, knowledgeBaseId)
   const { error } = await ctx.supabase.from('knowledge_bases').update({ project_id: projectId }).eq('id', knowledgeBaseId)
   if (error) throw error
 }

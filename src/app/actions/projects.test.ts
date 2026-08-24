@@ -15,6 +15,7 @@ vi.mock('@/lib/auth', async () => {
   }
 })
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
+vi.mock('@/lib/knowledge-bases', () => ({ requireActiveKnowledgeBase: vi.fn() }))
 
 const {
   createProjectAction,
