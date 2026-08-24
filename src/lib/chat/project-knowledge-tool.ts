@@ -34,6 +34,30 @@ export interface ProjectKnowledgeHit {
   route: string
   similarity: number
   content: string
+  // Stage 3: the specific documents.id this knowledge_source hit actually
+  // resolved to -- null for a wiki_article hit (wiki has no equivalent
+  // version/staleness concept). Lets a later citation carry "which version
+  // was actually retrieved," so display-time can notice if the source has
+  // since been updated (see envelope-resolution.ts's staleness check).
+  documentVersionId: string | null
+}
+
+// Shared between this tool and eval's project-scoped retrieval
+// (src/lib/eval/retrieval.ts) so both use the exact same "what does this
+// project actually have attached" membership logic rather than two
+// independently-maintained copies of it.
+export async function getProjectKnowledgeScopeIds(
+  supabase: WorkbenchCallerContext['supabase'],
+  projectId: string
+): Promise<{ kbIds: Set<string>; articleIds: Set<string> }> {
+  const [{ data: kbLinks }, { data: articleLinks }] = await Promise.all([
+    supabase.from('project_knowledge_bases').select('knowledge_base_id').eq('project_id', projectId),
+    supabase.from('project_wiki_articles').select('wiki_article_id').eq('project_id', projectId),
+  ])
+  return {
+    kbIds: new Set((kbLinks ?? []).map((l) => l.knowledge_base_id)),
+    articleIds: new Set((articleLinks ?? []).map((l) => l.wiki_article_id)),
+  }
 }
 
 // Tighter than search_wiki's own 4000-char cap: unlike search_wiki (one hit
@@ -57,12 +81,7 @@ export async function runSearchProjectKnowledge(
   const embeddingProvider = await getActiveEmbeddingProvider(ctx.supabase, { requestedBy: ctx.user.id })
   const { embedding } = await embeddingProvider.embed({ text: input.query })
 
-  const [{ data: kbLinks }, { data: articleLinks }] = await Promise.all([
-    ctx.supabase.from('project_knowledge_bases').select('knowledge_base_id').eq('project_id', projectId),
-    ctx.supabase.from('project_wiki_articles').select('wiki_article_id').eq('project_id', projectId),
-  ])
-  const projectKbIds = new Set((kbLinks ?? []).map((l) => l.knowledge_base_id))
-  const projectArticleIds = new Set((articleLinks ?? []).map((l) => l.wiki_article_id))
+  const { kbIds: projectKbIds, articleIds: projectArticleIds } = await getProjectKnowledgeScopeIds(ctx.supabase, projectId)
 
   const [{ data: docHits, error: docError }, { data: wikiHits, error: wikiError }] = await Promise.all([
     ctx.supabase.rpc('match_documents', { query_embedding: embedding, match_threshold: 0, match_count: input.limit * 2 }),
@@ -110,6 +129,7 @@ export async function runSearchProjectKnowledge(
         route: `/sources/${source.id}`,
         similarity: row.similarity,
         content: row.content.length > MAX_CONTENT_CHARS ? `${row.content.slice(0, MAX_CONTENT_CHARS)}…` : row.content,
+        documentVersionId: documentId ?? null,
       }
     })
     .filter((r): r is ProjectKnowledgeHit => r !== null)
@@ -122,6 +142,7 @@ export async function runSearchProjectKnowledge(
     route: `/wiki/${row.article_slug}`,
     similarity: row.similarity,
     content: row.content.length > MAX_CONTENT_CHARS ? `${row.content.slice(0, MAX_CONTENT_CHARS)}…` : row.content,
+    documentVersionId: null,
   }))
 
   // Project layer first, platform layer after -- explicit, code-enforced

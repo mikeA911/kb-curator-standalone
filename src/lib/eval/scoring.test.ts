@@ -45,6 +45,28 @@ describe('computeRetrievalMetrics', () => {
 
   it('returns nulls when a case defines no expected evidence at all', () => {
     const metrics = computeRetrievalMetrics([item({ id: 'wiki-1' })], [], [])
-    expect(metrics).toEqual({ hit: null, recall: null, mrr: null })
+    expect(metrics).toEqual({ hit: null, recall: null, mrr: null, projectLayerPrecisionAtK: null })
+  })
+
+  it('projectLayerPrecisionAtK: null when no evidence item carries a layer -- not project-scoped retrieval', () => {
+    const metrics = computeRetrievalMetrics([item({ id: 'wiki-1' })], ['wiki-1'], [])
+    expect(metrics.projectLayerPrecisionAtK).toBeNull()
+  })
+
+  it('projectLayerPrecisionAtK: fraction of layered evidence that is layer:project', () => {
+    const evidence = [
+      item({ id: 'a', layer: 'project' }),
+      item({ id: 'b', layer: 'platform' }),
+      item({ id: 'c', layer: 'project' }),
+      item({ id: 'd', layer: 'platform' }),
+    ]
+    const metrics = computeRetrievalMetrics(evidence, ['a'], [])
+    expect(metrics.projectLayerPrecisionAtK).toBeCloseTo(0.5)
+  })
+
+  it('projectLayerPrecisionAtK: 1 when every retrieved item is project-layer', () => {
+    const evidence = [item({ id: 'a', layer: 'project' }), item({ id: 'b', layer: 'project' })]
+    const metrics = computeRetrievalMetrics(evidence, ['a'], [])
+    expect(metrics.projectLayerPrecisionAtK).toBe(1)
   })
 })

@@ -20,6 +20,15 @@ export interface SourceChunkInput {
   documentName?: string | null
 }
 
+// Same cap and rationale as src/lib/chat/project-knowledge-tool.ts's
+// MAX_CONTENT_CHARS: uncapped per-chunk evidence text is exactly what
+// produced a genuinely empty/malformed structured-output completion from
+// the chat model in that file (fixed this session) -- ten approved chunks
+// at ~4000 chars each (per the live smoke-test report that first surfaced
+// this bug, as minified React error #441) puts the same class of oversized
+// prompt in front of this synthesis call.
+const MAX_CHUNK_CHARS = 1500
+
 // Pure synthesis step: approved chunks in, a structured draft out. Never
 // touches the database and never sets a status beyond what the caller does
 // with the result -- persistence always lands as a draft version (see
@@ -30,7 +39,10 @@ export async function synthesizeWikiDraft(
   input: { topic: string; category: string; chunks: SourceChunkInput[] }
 ): Promise<WikiDraftProposal> {
   const evidence = input.chunks
-    .map((c, i) => `[Source ${i + 1}${c.documentName ? ` -- ${c.documentName}` : ''}${c.sourcePage ? `, page ${c.sourcePage}` : ''}]\n${c.text}`)
+    .map((c, i) => {
+      const text = c.text.length > MAX_CHUNK_CHARS ? `${c.text.slice(0, MAX_CHUNK_CHARS)}…` : c.text
+      return `[Source ${i + 1}${c.documentName ? ` -- ${c.documentName}` : ''}${c.sourcePage ? `, page ${c.sourcePage}` : ''}]\n${text}`
+    })
     .join('\n\n')
 
   const { data, model } = await provider.generateStructured({

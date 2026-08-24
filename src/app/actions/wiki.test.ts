@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
+import { AIProviderError } from '@/lib/ai/provider'
 
 const requireRoleMock = vi.fn()
 const approveWikiVersionMock = vi.fn()
@@ -23,10 +24,14 @@ vi.mock('@/lib/wiki/review', async () => {
   }
 })
 const getActiveStructuredOutputProviderMock = vi.fn()
-vi.mock('@/lib/ai', () => ({
-  getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args),
-  getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
-}))
+vi.mock('@/lib/ai', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/ai')>('@/lib/ai')
+  return {
+    AIProviderError: actual.AIProviderError,
+    getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args),
+    getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
+  }
+})
 
 // Two identical entries -- the wiki_versions queue is a shared, cursor-based
 // FIFO consumed once per test in this describe block (see fake-supabase.ts),
@@ -147,6 +152,25 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
       createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-2' })
     ).rejects.toThrow('link-only artifact')
     expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
+  })
+
+  it('caught live as React error #441: a raw provider failure is coerced to a clean, recoverable message instead of crossing the Server Action boundary as-is', async () => {
+    const supabase = createFakeSupabase({
+      workstream_artifacts: [{ data: { id: 'artifact-3', title: 'Big artifact', content: 'evidence text' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+    const rawProviderError = new AIProviderError(
+      'groq',
+      'generate_structured',
+      `groq generateStructured failed: unexpected end of JSON input (raw output: ${'x'.repeat(10000)})`,
+      { response: { notPlainSerializable: () => {} } }
+    )
+    const generateStructured = vi.fn().mockRejectedValue(rawProviderError)
+    getActiveStructuredOutputProviderMock.mockResolvedValue({ name: 'test-provider', generateStructured })
+
+    await expect(
+      createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-3' })
+    ).rejects.toThrow(/AI-assisted draft generation failed \(groq: /)
   })
 })
 

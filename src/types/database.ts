@@ -1160,6 +1160,11 @@ export interface RetrievedEvidenceItem {
   similarity: number
   title: string
   content: string
+  // Stage 3: only set when the retrieval config carried a projectId --
+  // same layer concept as chat's search_project_knowledge tool, computed the
+  // same way (project_knowledge_bases/project_wiki_articles membership).
+  // Absent entirely for a project-agnostic eval run.
+  layer?: 'project' | 'platform'
 }
 
 export interface EvaluatorDetails {

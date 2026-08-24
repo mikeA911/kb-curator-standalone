@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getActiveEmbeddingProvider, getActiveStructuredOutputProvider } from '@/lib/ai'
+import { getActiveEmbeddingProvider, getActiveStructuredOutputProvider, AIProviderError } from '@/lib/ai'
 import { getQuickHelpBySlug } from '@/lib/wiki/help'
 import {
   createManualDraftArticle,
@@ -17,7 +17,8 @@ import { approveWikiVersion, rejectWikiVersionToDraft, embedApprovedVersion } fr
 import { linkSource, unlinkSource } from '@/lib/wiki/sources'
 import { linkRelatedArticle, unlinkRelatedArticle } from '@/lib/wiki/relations'
 import { linkProjectArticle, unlinkProjectArticle } from '@/lib/wiki/project-links'
-import { synthesizeWikiDraft } from '@/lib/wiki/synthesis'
+import { synthesizeWikiDraft, type WikiDraftProposal, type SourceChunkInput } from '@/lib/wiki/synthesis'
+import type { AIProvider } from '@/lib/ai/provider'
 import type { WikiCategoryId, WikiSourceType, WikiVisibilityScope } from '@/types/database'
 
 // Any authenticated user can resolve Quick Help -- it's app-wide contextual
@@ -26,6 +27,29 @@ import type { WikiCategoryId, WikiSourceType, WikiVisibilityScope } from '@/type
 export async function getQuickHelpAction(slug: string) {
   const { supabase } = await requireUser()
   return getQuickHelpBySlug(supabase, slug)
+}
+
+// Caught live: React error #441 -- a provider failure (or truncated/
+// malformed structured-output response, more likely with a large evidence
+// set) throws a raw AIProviderError whose message embeds the full raw model
+// output and whose .cause is the underlying SDK error object, non-plain and
+// not guaranteed serializable across the Server Action boundary. Neither
+// call site had a try/catch, so that raw error crossed straight to the
+// client instead of the WikiValidationError-style message this file already
+// uses elsewhere for a recoverable failure (see chunkIds.length === 0
+// above). synthesis.ts's own MAX_CHUNK_CHARS cap is the actual root-cause
+// fix (bounds the prompt so this failure mode is rare); this is the
+// backstop for whatever that doesn't prevent.
+async function synthesizeWikiDraftSafely(
+  provider: AIProvider,
+  input: { topic: string; category: string; chunks: SourceChunkInput[] }
+): Promise<WikiDraftProposal> {
+  try {
+    return await synthesizeWikiDraft(provider, input)
+  } catch (err) {
+    const detail = err instanceof AIProviderError ? `${err.provider}: ${err.errorCode}` : err instanceof Error ? err.message.slice(0, 200) : String(err)
+    throw new WikiValidationError(`AI-assisted draft generation failed (${detail}) -- try again, or with fewer/shorter sources.`)
+  }
 }
 
 function slugify(title: string) {
@@ -105,7 +129,7 @@ export async function createAIAssistedDraftAction(
 
   const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: user.id })
 
-  const draft = await synthesizeWikiDraft(provider, {
+  const draft = await synthesizeWikiDraftSafely(provider, {
     topic: input.topic,
     category: input.category,
     chunks: (chunks ?? []).map((c) => ({
@@ -165,7 +189,7 @@ async function createAIAssistedDraftFromArtifact(
 
   const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: userId })
 
-  const draft = await synthesizeWikiDraft(provider, {
+  const draft = await synthesizeWikiDraftSafely(provider, {
     topic: input.topic,
     category: input.category,
     chunks: [{ id: artifact.id, text: artifact.content, documentName: artifact.title }],
