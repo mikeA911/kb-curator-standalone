@@ -21,10 +21,10 @@ export function ProjectAssistantSection({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Assistant</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Ember</h2>
         {!showPanel && (
           <button type="button" onClick={() => setShowPanel(true)} className="text-sm underline">
-            Ask Assistant about this project
+            Ask Ember about this project
           </button>
         )}
       </div>
