@@ -34,7 +34,7 @@ function modelKey(m: { providerName: string; modelId: string }): string {
 // never persisted, so it has no model cost or provenance (Acceptance
 // criteria #1-2).
 const ONBOARDING_GREETING =
-  "Hi! I’m your Workbench Assistant, and I’m excited to explore KB Sandbox with you. We can investigate what you’re trying to accomplish, find the right Workbench method, check what information you already have, search approved platform guidance, and help you create projects or workstreams.\n\nYour Assistant conversations are saved to your account, so you can return to them in future sessions. What would you like to explore first?"
+  "Hi! I’m Ember, your Workbench Assistant, and I’m excited to explore KB Sandbox with you. We can investigate what you’re trying to accomplish, find the right Workbench method, check what information you already have, search approved platform guidance, and help you create projects or workstreams.\n\nYour conversations with me are saved to your account, so you can return to them in future sessions. What would you like to explore first?"
 
 const STARTER_PROMPTS = [
   'Help me choose the right Workbench method.',
@@ -147,7 +147,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
         clearInterval(interval)
         setResumedPendingConversationId(null)
         setIsPending(false)
-        setError('The Assistant turn this conversation was waiting on appears to have been abandoned.')
+        setError("The turn Ember was working on for this conversation appears to have been abandoned.")
         return
       }
       try {
@@ -469,7 +469,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
         <div className={embedded ? 'flex h-[32rem] flex-col rounded border border-zinc-200 bg-white shadow' : 'flex h-[32rem] w-96 flex-col rounded border border-zinc-200 bg-white shadow-xl'}>
           <div className="border-b border-zinc-200 px-3 py-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{projectId ? `Assistant -- ${projectContext?.name ?? 'this project'}` : 'Workbench Assistant'}</span>
+              <span className="text-sm font-medium">{projectId ? `Ember -- ${projectContext?.name ?? 'this project'}` : 'Ember'}</span>
               <button
                 type="button"
                 onClick={() => (embedded ? onClose?.() : setOpen(false))}
@@ -499,7 +499,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
             )}
             {!models.length && headerModelLabel && <p className="mt-0.5 text-xs text-zinc-400">{headerModelLabel}</p>}
             <details className="relative mt-1" onToggle={loadAssistantOverviewOnce}>
-              <summary className="cursor-pointer list-none text-xs text-zinc-400 hover:text-zinc-600">How this Assistant works</summary>
+              <summary className="cursor-pointer list-none text-xs text-zinc-400 hover:text-zinc-600">How Ember works</summary>
               <div className="absolute left-0 z-10 mt-1 max-h-96 w-80 overflow-y-auto rounded border border-zinc-200 bg-white p-3 text-xs shadow-lg">
                 {!assistantOverview && <p className="text-zinc-400">Loading…</p>}
                 {assistantOverview && (
@@ -772,7 +772,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask the Assistant…"
+              placeholder="Ask Ember…"
               disabled={isPending}
               className="flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
             />
@@ -788,8 +788,8 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Ask Assistant"
-          aria-label="Ask Assistant"
+          title="Ask Ember"
+          aria-label="Ask Ember"
           className="block h-14 w-14 overflow-hidden rounded-full shadow-lg transition-transform hover:scale-105"
         >
           <Image src="/images/assistant-icon.png" alt="" width={56} height={56} priority className="h-full w-full object-cover" />
