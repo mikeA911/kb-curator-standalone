@@ -1,12 +1,13 @@
 import 'server-only'
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx'
-import type { JournalContent, JournalSourceConversation } from './generate'
+import type { JournalContent, JournalSourceConversation, RelatedActivityItem } from './generate'
 
 export interface JournalDocxInput {
   title: string
   rangeLabel: string
   content: JournalContent
   conversations: JournalSourceConversation[]
+  relatedActivity?: RelatedActivityItem[]
   truncated: boolean
   providerDisplayName: string
   modelDisplayName: string
@@ -52,6 +53,12 @@ export async function renderJournalDocx(input: JournalDocxInput): Promise<Buffer
     ...section('Lessons & Changed Assumptions', bulletList(content.lessonsAndChangedAssumptions)),
     ...section('Open Questions', bulletList(content.openQuestions)),
     ...section('Items to Revisit', bulletList(content.itemsToRevisit)),
+    ...(input.relatedActivity && input.relatedActivity.length > 0
+      ? section(
+          'Activity Around Me and My Projects',
+          input.relatedActivity.map((item) => new Paragraph({ text: item.line, bullet: { level: 0 } }))
+        )
+      : []),
     ...section(
       'Source Appendix',
       input.conversations.length === 0

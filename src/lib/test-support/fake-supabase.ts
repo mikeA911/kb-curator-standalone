@@ -20,6 +20,7 @@ class FakeQuery<T = unknown> implements PromiseLike<QueryResult<T>> {
   }
   neq() { return this }
   gte() { return this }
+  lte() { return this }
   in() { return this }
   contains() { return this }
   is() { return this }
