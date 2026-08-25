@@ -99,6 +99,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               <Link href={`/projects/${project.id}/members`} className="text-sm underline">
                 Members
               </Link>
+              <Link href={`/projects/${project.id}/access`} className="text-sm underline">
+                Access &amp; Evidence
+              </Link>
               <Link href={`/projects/${project.id}/publish`} className="text-sm underline">
                 Publish
               </Link>

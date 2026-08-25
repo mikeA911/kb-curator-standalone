@@ -707,6 +707,107 @@ export interface ProjectAuthorityAssignment {
   updated_at: string
 }
 
+// Project Evidence Access Controls, Stage 1 (docs/dev-request-project-
+// evidence-access-controls.md): project membership grants participation,
+// not universal knowledge access. A fourth independent concept alongside
+// ProjectRole, BusinessFunction, and ApprovalType/ProjectAuthorityAssignment
+// above -- none of these silently grant another. resource_id in
+// ResourceAccessPolicy is always the *stable* identity (knowledge_sources.id,
+// never documents.id) so classification/grants apply uniformly across every
+// version of a source.
+export type EvidenceResourceType = 'knowledge_source' | 'wiki_article' | 'workstream_artifact'
+export type EvidenceClassification =
+  | 'project_general'
+  | 'internal_confidential'
+  | 'commercial_confidential'
+  | 'security_restricted'
+  | 'customer_confidential'
+  | 'customer_visible'
+export type AccessGrantStatus = 'active' | 'revoked'
+
+export interface ProjectAccessGroup {
+  id: string
+  project_id: string
+  name: string
+  description: string | null
+  is_system_group: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectAccessGroupMember {
+  id: string
+  project_access_group_id: string
+  project_member_id: string
+  effective_from: string
+  expires_at: string | null
+  status: AccessGrantStatus
+  granted_by: string | null
+  granted_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_reason: string | null
+}
+
+// A resource with NO row in this table is implicitly project_general --
+// today's exact behavior, unchanged. A row only ever exists once someone
+// has deliberately restricted something.
+export interface ResourceAccessPolicy {
+  id: string
+  project_id: string
+  resource_type: EvidenceResourceType
+  resource_id: string
+  classification: EvidenceClassification
+  access_steward_user_id: string | null
+  review_at: string | null
+  rationale: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Exactly one of project_access_group_id / project_member_id is set (DB
+// constraint) -- a whole group is granted, or one named user is.
+export interface ResourceAccessGrant {
+  id: string
+  resource_access_policy_id: string
+  project_access_group_id: string | null
+  project_member_id: string | null
+  status: AccessGrantStatus
+  granted_by: string | null
+  granted_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_reason: string | null
+}
+
+export type EvidenceAuditEventType =
+  | 'resource_classified'
+  | 'resource_reclassified'
+  | 'group_created'
+  | 'group_member_granted'
+  | 'group_member_revoked'
+  | 'resource_grant_granted'
+  | 'resource_grant_revoked'
+
+// Insert-only, written via the admin client from the service layer -- never
+// stores evidence content, only which resource/who/when/what classification
+// (see 20260825100001_project_evidence_access_schema.sql's own comment).
+export interface ResourceAccessAuditLogEntry {
+  id: string
+  project_id: string
+  event_type: EvidenceAuditEventType
+  resource_type: EvidenceResourceType | null
+  resource_id: string | null
+  actor_id: string | null
+  from_classification: EvidenceClassification | null
+  to_classification: EvidenceClassification | null
+  target_group_id: string | null
+  target_member_id: string | null
+  created_at: string
+}
+
 // M5D (simplified) -- a Workstream is a scope document (repository scope,
 // goal, a named guardrail, a deliverables checklist) that tells a
 // consultant what to do with an external tool (e.g. Claude Code against a
@@ -1540,6 +1641,20 @@ export type ProjectApprovalPolicyUpdate = Partial<Omit<ProjectApprovalPolicy, 'i
 export type ProjectAuthorityAssignmentInsert = Omit<ProjectAuthorityAssignment, 'id' | 'created_at' | 'updated_at'>
 export type ProjectAuthorityAssignmentUpdate = Partial<Omit<ProjectAuthorityAssignment, 'id' | 'project_id' | 'created_at'>>
 
+export type ProjectAccessGroupInsert = Omit<ProjectAccessGroup, 'id' | 'created_at' | 'updated_at'>
+export type ProjectAccessGroupUpdate = Partial<Omit<ProjectAccessGroup, 'id' | 'project_id' | 'created_at'>>
+
+export type ProjectAccessGroupMemberInsert = Omit<ProjectAccessGroupMember, 'id'>
+export type ProjectAccessGroupMemberUpdate = Partial<Omit<ProjectAccessGroupMember, 'id' | 'project_access_group_id' | 'project_member_id'>>
+
+export type ResourceAccessPolicyInsert = Omit<ResourceAccessPolicy, 'id' | 'created_at' | 'updated_at'>
+export type ResourceAccessPolicyUpdate = Partial<Omit<ResourceAccessPolicy, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'created_at'>>
+
+export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
+export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
+
+export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
+
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
   'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
@@ -1687,6 +1802,21 @@ export interface Database {
         Update: ProjectAuthorityAssignmentUpdate
         Relationships: []
       }
+      project_access_groups: { Row: ProjectAccessGroup; Insert: ProjectAccessGroupInsert; Update: ProjectAccessGroupUpdate; Relationships: [] }
+      project_access_group_members: {
+        Row: ProjectAccessGroupMember
+        Insert: ProjectAccessGroupMemberInsert
+        Update: ProjectAccessGroupMemberUpdate
+        Relationships: []
+      }
+      resource_access_policies: {
+        Row: ResourceAccessPolicy
+        Insert: ResourceAccessPolicyInsert
+        Update: ResourceAccessPolicyUpdate
+        Relationships: []
+      }
+      resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
+      resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
