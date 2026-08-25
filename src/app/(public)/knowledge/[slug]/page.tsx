@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { getPublicArticleBySlug, listRelatedExamples } from '@/lib/wiki/public'
-import { MarkdownLite } from '@/components/wiki/MarkdownLite'
+import { Markdown } from '@/components/shared/Markdown'
 import { SectionHero } from '@/components/SectionHero'
 
 // Per-article banners are a deliberate one-off, not a general "every
@@ -44,7 +44,7 @@ export default async function PublicArticlePage({ params }: { params: Promise<{ 
           <span className="font-medium">Quick help: </span>
           {version.quick_help}
         </p>
-        <MarkdownLite text={version.content} />
+        <Markdown text={version.content} />
         {version.implementation_notes && (
           <div className="mt-4">
             <h3 className="font-semibold text-zinc-900">Implementation notes</h3>
