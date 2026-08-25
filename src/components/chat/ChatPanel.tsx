@@ -2,6 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   sendChatMessageAction,
@@ -14,13 +15,24 @@ import {
   getConversationMessagesAction,
   getAssistantOverviewAction,
 } from '@/app/actions/chat'
+import { sendFeedbackMessageAction } from '@/app/actions/feedback'
 import type { ChatModelOption } from '@/lib/ai'
 import type { ModelSelection } from '@/lib/chat/loop'
 import type { DisplayMessage } from '@/lib/chat/conversations'
-import type { Conversation } from '@/types/database'
+import type { Conversation, FeedbackType } from '@/types/database'
 import { Markdown } from '@/components/shared/Markdown'
 import { deriveArtifacts, artifactsCount } from '@/lib/chat/artifacts'
 import { QuickSummary, RequirementsList, NextStepsList, LinksList, DocumentsList, CitationsList, SuggestedPrompts } from './StructuredResponse'
+
+// Owner Roadmap and Ember Feedback Board, Phase 1. Only the three initial
+// Ember-facing choices -- 'usability'/'documentation' exist as later
+// owner-triage reclassifications, never an initial Ember choice.
+const FEEDBACK_CATEGORIES: { type: FeedbackType; label: string }[] = [
+  { type: 'bug', label: 'Report a problem' },
+  { type: 'improvement', label: 'Suggest an improvement' },
+  { type: 'feature_request', label: 'Request a new feature' },
+]
+const FEEDBACK_LABEL_BY_TYPE: Record<string, string> = Object.fromEntries(FEEDBACK_CATEGORIES.map((c) => [c.type, c.label]))
 
 type PanelMessage = DisplayMessage & { embeddingModelDisplayName?: string }
 type AssistantOverview = Awaited<ReturnType<typeof getAssistantOverviewAction>>
@@ -71,7 +83,14 @@ const PENDING_POLL_INTERVAL_MS = 3000
 // always rendered open inline where the caller places it; onClose lets the
 // caller unmount it instead of the panel hiding itself.
 export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string; embedded?: boolean; onClose?: () => void } = {}) {
+  const pathname = usePathname()
   const [open, setOpen] = useState(embedded ?? false)
+  // Owner Roadmap and Ember Feedback Board, Phase 1. showFeedbackChooser is
+  // the three-choice screen; feedbackCategory non-null means an actual
+  // feedback conversation is active (always a fresh conversation, never
+  // resumed -- see chooseFeedbackCategory below).
+  const [showFeedbackChooser, setShowFeedbackChooser] = useState(false)
+  const [feedbackCategory, setFeedbackCategory] = useState<FeedbackType | null>(null)
   const [projectContext, setProjectContext] = useState<Awaited<ReturnType<typeof getProjectContextAction>>>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<PanelMessage[]>([])
@@ -306,7 +325,9 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       if (myTurn === turnSeqRef.current) setStaleRun(true)
     }, 30_000)
     try {
-      const result = await sendChatMessageAction(conversationId, message, modelSelection, projectId)
+      const result = feedbackCategory
+        ? await sendFeedbackMessageAction(conversationId, message, feedbackCategory, pathname, modelSelection)
+        : await sendChatMessageAction(conversationId, message, modelSelection, projectId)
       // The user may have switched to a different conversation (or started
       // a new one) while this was in flight -- a stale turn's result must
       // never overwrite what's currently displayed.
@@ -448,6 +469,44 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
     }
   }
 
+  // Owner Roadmap and Ember Feedback Board, Phase 1. openFeedbackChooser
+  // shows the three-choice screen (never resumes anything, same
+  // abandon-in-flight discipline as handleNewConversation/handleResume);
+  // chooseFeedbackCategory commits to a category and starts a brand-new
+  // conversation that performTurn routes to sendFeedbackMessageAction
+  // instead of the normal chat action; cancelFeedback returns to ordinary
+  // chat, discarding the feedback draft (never partially submitted -- only
+  // Ember's own submit_feedback_report tool call creates a real report).
+  function openFeedbackChooser() {
+    userActedRef.current = true
+    abandonInFlightTurn()
+    historyDetailsRef.current?.removeAttribute('open')
+    artifactsDetailsRef.current?.removeAttribute('open')
+    setShowOnboarding(false)
+    setShowShortWelcome(false)
+    setError(null)
+    setLastFailedMessage(null)
+    setShowFeedbackChooser(true)
+  }
+
+  function chooseFeedbackCategory(category: FeedbackType) {
+    setShowFeedbackChooser(false)
+    setFeedbackCategory(category)
+    setConversationId(null)
+    setMessages([])
+    setDetailsOpenFor(null)
+  }
+
+  function cancelFeedback() {
+    abandonInFlightTurn()
+    setShowFeedbackChooser(false)
+    setFeedbackCategory(null)
+    setConversationId(null)
+    setMessages([])
+    setError(null)
+    setLastFailedMessage(null)
+  }
+
   const headerModelLabel = selectedModel ? `${selectedModel.providerDisplayName} · ${selectedModel.modelDisplayName}` : null
 
   // Lazy-loaded on first open (details' onToggle fires on every open/close,
@@ -469,7 +528,13 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
         <div className={embedded ? 'flex h-[32rem] flex-col rounded border border-zinc-200 bg-white shadow' : 'flex h-[32rem] w-96 flex-col rounded border border-zinc-200 bg-white shadow-xl'}>
           <div className="border-b border-zinc-200 px-3 py-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{projectId ? `Ember -- ${projectContext?.name ?? 'this project'}` : 'Ember'}</span>
+              <span className="text-sm font-medium">
+                {feedbackCategory
+                  ? `Ember -- ${FEEDBACK_LABEL_BY_TYPE[feedbackCategory]}`
+                  : projectId
+                    ? `Ember -- ${projectContext?.name ?? 'this project'}`
+                    : 'Ember'}
+              </span>
               <button
                 type="button"
                 onClick={() => (embedded ? onClose?.() : setOpen(false))}
@@ -479,8 +544,16 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
                 ✕
               </button>
             </div>
-            {projectId && projectContext && (
+            {projectId && projectContext && !feedbackCategory && !showFeedbackChooser && (
               <p className="mt-0.5 text-xs text-zinc-500">Knowledge scope: {projectContext.knowledgeScope}</p>
+            )}
+            {feedbackCategory && (
+              <div className="mt-0.5 flex items-center justify-between">
+                <p className="text-xs text-amber-700">Filing feedback -- this is a separate conversation from ordinary chat.</p>
+                <button type="button" onClick={cancelFeedback} className="shrink-0 text-xs text-zinc-400 underline hover:text-zinc-600">
+                  Cancel
+                </button>
+              </div>
             )}
             {models.length > 0 && (
               <select
@@ -498,6 +571,8 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
               </select>
             )}
             {!models.length && headerModelLabel && <p className="mt-0.5 text-xs text-zinc-400">{headerModelLabel}</p>}
+            {!showFeedbackChooser && !feedbackCategory && (
+            <>
             <details className="relative mt-1" onToggle={loadAssistantOverviewOnce}>
               <summary className="cursor-pointer list-none text-xs text-zinc-400 hover:text-zinc-600">How Ember works</summary>
               <div className="absolute left-0 z-10 mt-1 max-h-96 w-80 overflow-y-auto rounded border border-zinc-200 bg-white p-3 text-xs shadow-lg">
@@ -652,9 +727,43 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
                 )}
               </div>
             </details>
+            </>
+            )}
+            {!showFeedbackChooser && !feedbackCategory && (
+              <button type="button" onClick={openFeedbackChooser} className="mt-1 block text-xs text-zinc-400 hover:text-zinc-600">
+                Feedback
+              </button>
+            )}
           </div>
           <div className="flex-1 space-y-2 overflow-y-auto p-3">
-            {showOnboarding && messages.length === 0 && (
+            {showFeedbackChooser && (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-zinc-600">
+                  Reporting from: <span className="font-medium text-zinc-800">{pathname}</span>. This page will be attached to your
+                  report. If that isn&apos;t where the issue is, close this and navigate there first, then reopen Feedback.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {FEEDBACK_CATEGORIES.map((c) => (
+                    <button
+                      key={c.type}
+                      type="button"
+                      onClick={() => chooseFeedbackCategory(c.type)}
+                      className="rounded border border-zinc-300 px-3 py-2 text-left text-sm hover:bg-zinc-50"
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFeedbackChooser(false)}
+                  className="self-start text-xs text-zinc-400 underline hover:text-zinc-600"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {!showFeedbackChooser && showOnboarding && messages.length === 0 && (
               <div className="space-y-2">
                 <div className="text-sm">
                   <span className="inline-block max-w-[95%] whitespace-pre-wrap rounded bg-zinc-100 px-2 py-1 text-zinc-800">
@@ -676,15 +785,17 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
                 </div>
               </div>
             )}
-            {showShortWelcome && messages.length === 0 && <p className="text-sm text-zinc-500">{SHORT_WELCOME}</p>}
-            {historyLoaded && !showOnboarding && !showShortWelcome && messages.length === 0 && (
+            {!showFeedbackChooser && showShortWelcome && messages.length === 0 && <p className="text-sm text-zinc-500">{SHORT_WELCOME}</p>}
+            {!showFeedbackChooser && historyLoaded && !showOnboarding && !showShortWelcome && messages.length === 0 && (
               <p className="text-sm text-zinc-500">
-                {projectId
-                  ? `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
-                  : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
+                {feedbackCategory
+                  ? 'Tell Ember about it below.'
+                  : projectId
+                    ? `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
+                    : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
               </p>
             )}
-            {messages.map((m, i) =>
+            {!showFeedbackChooser && messages.map((m, i) =>
               m.role === 'user' ? (
                 <div key={i} id={`chat-message-${i}`} tabIndex={-1} className="text-right text-sm outline-none">
                   <span className="inline-block max-w-[85%] whitespace-pre-wrap rounded bg-zinc-900 px-2 py-1 text-white">{m.content}</span>
@@ -772,12 +883,12 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask Ember…"
-              disabled={isPending}
+              placeholder={feedbackCategory ? 'Describe it…' : 'Ask Ember…'}
+              disabled={isPending || showFeedbackChooser}
               className="flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
             />
             <button
-              disabled={isPending || !input.trim()}
+              disabled={isPending || showFeedbackChooser || !input.trim()}
               className="rounded bg-zinc-900 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
             >
               Send

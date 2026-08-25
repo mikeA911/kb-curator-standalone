@@ -14,11 +14,12 @@ export async function createConversation(
   supabase: SupabaseClient<Database>,
   userId: string,
   title?: string,
-  projectId?: string | null
+  projectId?: string | null,
+  kind?: 'chat' | 'feedback'
 ): Promise<Conversation> {
   const { data, error } = await supabase
     .from('conversations')
-    .insert({ user_id: userId, title: title ?? null, project_id: projectId ?? null })
+    .insert({ user_id: userId, title: title ?? null, project_id: projectId ?? null, kind: kind ?? 'chat' })
     .select()
     .single()
   if (error || !data) throw error ?? new Error('Failed to create conversation')
@@ -40,6 +41,9 @@ export async function listRecentConversations(
     .from('conversations')
     .select('*')
     .eq('user_id', userId)
+    // Feedback-intake conversations are never resumed and never shown in
+    // the normal History list -- see conversations.kind's own comment.
+    .eq('kind', 'chat')
     .order('last_message_at', { ascending: false, nullsFirst: false })
     .limit(opts.limit ?? 10)
   if (opts.projectId !== undefined) {
