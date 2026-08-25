@@ -1,6 +1,32 @@
 import { describe, it, expect } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { listUnpublishedArticles, listArticlesForLinking, getWikiStats } from './queries'
+import { listArticles, listUnpublishedArticles, listArticlesForLinking, getWikiStats } from './queries'
+
+describe('listArticles', () => {
+  it('applies category and status as separate eq filters, independent of each other', async () => {
+    const supabase = createFakeSupabase({
+      wiki_articles: [{ data: [], error: null }],
+    })
+
+    await listArticles(supabase as never, { category: 'foundations', status: 'approved' })
+
+    const eqCalls = supabase._calls.filter((c) => c.method === 'eq')
+    expect(eqCalls).toEqual([
+      { table: 'wiki_articles', method: 'eq', args: { column: 'category', value: 'foundations' } },
+      { table: 'wiki_articles', method: 'eq', args: { column: 'status', value: 'approved' } },
+    ])
+  })
+
+  it('applies no filters when none are given', async () => {
+    const supabase = createFakeSupabase({
+      wiki_articles: [{ data: [], error: null }],
+    })
+
+    await listArticles(supabase as never)
+
+    expect(supabase._calls.filter((c) => c.method === 'eq')).toEqual([])
+  })
+})
 
 describe('listUnpublishedArticles', () => {
   it('queries only draft/review status, newest edit first', async () => {

@@ -1,9 +1,10 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, WikiCategoryId } from '@/types/database'
+import type { Database, WikiArticleStatus, WikiCategoryId } from '@/types/database'
 
 export interface ListArticlesFilter {
   category?: WikiCategoryId
+  status?: WikiArticleStatus
   search?: string
 }
 
@@ -14,6 +15,7 @@ export async function listArticles(supabase: SupabaseClient<Database>, filter: L
   let query = supabase.from('wiki_articles').select('*').order('title', { ascending: true })
 
   if (filter.category) query = query.eq('category', filter.category)
+  if (filter.status) query = query.eq('status', filter.status)
   if (filter.search) query = query.or(`title.ilike.%${filter.search}%,short_description.ilike.%${filter.search}%`)
 
   const { data, error } = await query
