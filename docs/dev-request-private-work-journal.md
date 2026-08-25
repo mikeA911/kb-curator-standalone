@@ -26,6 +26,8 @@ The journal should help a user answer questions such as:
 
 The tone should feel reflective and human rather than like an employee-performance report. It may help the user reminisce, notice progress, and recover context they have forgotten.
 
+The journal should distinguish **My activity** from **Related activity**. Related activity means an authorized event involving the user directly or occurring in a project where the user is an active member. Render each related event as one concise, attributable line rather than a narrative about another person's work, for example: “Maria approved the proposal” or “The project lead changed the delivery milestone.”
+
 ## Primary experience
 
 Add a **Journal** button in an appropriate personal area and optionally in the Assistant history panel. Selecting it opens a simple form with:
@@ -60,6 +62,8 @@ The generator may read only records the requesting user is currently authorized 
 - artifacts, notes, and other records attributable to the user;
 - explicit decisions and confirmed facts from conversation summaries;
 - navigation/activity events only if they carry meaningful, privacy-reviewed provenance.
+
+The source set may also include activity by other people when it is visible to the user and either directly relates to the user or belongs to a project where the user is an active member. Examples include assignments, comments, replies, reviews, approvals, returns for changes, membership or authority changes, project decisions, artifact updates, and milestones. Each event must retain the actual actor, timestamp, project/context, relationship, and source link. Do not include inaccessible records or general activity outside the user's projects.
 
 Do not infer that the user personally performed an action merely because they can view a shared project. Include shared or collaborative records only when the journal can accurately describe the user's relationship to them.
 
@@ -139,6 +143,8 @@ Before generation, explain:
 
 Allow the user to exclude individual conversations, projects, or source categories before final generation. The preview should make AI-generated reflection visibly distinct from direct quotations or recorded facts.
 
+Allow separate inclusion/exclusion of **My activity** and **Related project activity**. Related project activity should appear as a compact chronological list with one line per event and must never be attributed to the user unless the user was the recorded actor.
+
 Avoid long verbatim reproduction of conversations. Summarize by default and use short excerpts only when they materially support a memorable point.
 
 ## Functional requirements
@@ -173,6 +179,145 @@ Treat in-product sharing as a separate design increment requiring explicit grant
 - in-product sharing or collaborative editing;
 - permanent hosting of downloaded journals.
 
+## Phase 2 — Private Calendar and Memory Map
+
+Add a private visual calendar/timeline that helps the user browse the activity from which journals can be generated. This is a personal navigation and reflection surface, not a manager dashboard or productivity scorecard.
+
+The default implementation should map the user's authorized source activity rather than permanently storing AI-generated journal prose. Each calendar day or month may show that relevant activity exists, with private counts and lightweight categories derived from records the user can already access.
+
+Suggested views:
+
+- monthly calendar with activity markers;
+- six-month or yearly contribution-style heat map;
+- chronological timeline grouped by week or month;
+- project/theme lanes for seeing how attention changed over time; and
+- a selected-range summary with **Generate journal for this period**.
+
+Suggested filters:
+
+- date range;
+- project;
+- Assistant conversation;
+- workstream;
+- source type: conversations, artifacts, notes, decisions, milestones, or other reliably attributable activity;
+- theme or tag where supported by approved metadata;
+- completed/open/revisit status where the underlying source genuinely supports it; and
+- include/exclude collaborative activity.
+- activity lens: My activity or Related project activity.
+
+Calendar cells and filter counts must be computed within the requesting user's current authorization. They must not disclose the existence, title, project, customer, classification, or count of records the user cannot access. If project access is later revoked, the calendar must stop showing that activity.
+
+Clicking a period should show a private, source-linked activity list and allow the user to select or exclude items before journal generation. Avoid describing a shared project event as the user's personal accomplishment unless actor/authorship provenance supports that statement.
+
+The visual design should feel reflective rather than evaluative. Do not add productivity scores, streak pressure, leaderboards, working-hours surveillance, comparative employee metrics, or manager access. Empty days are not failures and should not be framed negatively.
+
+If a later release permits users to save their own journal entries or reflections inside KB Sandbox, treat that as a separate privacy increment requiring:
+
+- explicit save action;
+- user-only RLS and encryption/operational review;
+- visible retention and deletion controls;
+- no employer, manager, project-owner, or ordinary administrator access;
+- no automatic indexing, Assistant memory, evaluation, or project ingestion;
+- explicit, revocable sharing; and
+- a clear distinction between source activity, AI-generated reflection, and user-authored text.
+
+Phase 2 acceptance criteria:
+
+1. Only the user can open their calendar/memory map.
+2. Calendar markers and counts contain only currently authorized, user-attributable source activity.
+3. Filters never leak restricted project or customer metadata.
+4. The user can select a date range from the visualization and generate a journal for that range.
+5. The user can inspect and exclude source items before generation.
+6. Revoked source access removes the corresponding calendar activity.
+7. The interface contains no employer analytics, productivity scoring, or comparative metrics.
+8. The calendar does not cause generated journal prose to be permanently retained or added to Assistant memory.
+9. Related activity is limited to currently authorized events involving the user or projects where the user is an active member.
+10. Every related event is rendered as one concise line with its real actor and context.
+
+## Optional Phase 3 — Ember Weekly Continuity Summaries
+
+**Priority:** Nice to have during the pilot; not pilot-gating. Implement only after project/evidence isolation and core Assistant reliability remain green.
+
+Create one private, source-linked continuity summary for each completed calendar week. This is distinct from the downloadable reflective journal: it is a compact memory aid designed to reduce “I already told you this” frustration when the user returns to Ember.
+
+The weekly process should:
+
+1. scan newly eligible conversations and activity for the completed week;
+2. re-check user, project, and evidence-level authorization;
+3. summarize confirmed facts, user corrections, decisions, stated preferences, progress, commitments, open questions, and related project events;
+4. preserve source links, actor attribution, project scope, and access classification;
+5. store the compact summary as private user continuity data; and
+6. make it visible and correctable from the user's Journal/Memory Map.
+
+The user does not need to select a period for automatic weekly creation. Date selection remains available for journal generation and calendar exploration.
+
+### Ember context use
+
+Do not insert every historical weekly summary into every prompt. Build a bounded **User Continuity Context** containing:
+
+- the most recent two to four eligible weekly summaries; and
+- older summaries retrieved because they are relevant to the current question.
+
+Project-bound Ember conversations may use only summaries and source events authorized for that project plus permitted general personal context. General Ember conversations must not receive restricted project content.
+
+Weekly summaries are continuity context, not approved business evidence. Ember must prefer approved project knowledge for factual recommendations and cite the underlying evidence rather than treating a memory summary as canonical.
+
+User corrections such as “I already told you that…” should be captured with high priority and linked to the source conversation so Ember can avoid repeating the same mistake. A later correction supersedes an earlier summary statement without deleting the historical record invisibly.
+
+### Transparency and control
+
+Explain the value and boundary clearly:
+
+> Ember creates a private weekly summary to help you continue your work without repeating yourself. Your employer and project managers cannot browse these summaries. You can inspect, correct, exclude, or delete them. Nothing becomes shared company knowledge unless you deliberately promote it.
+
+Provide controls to:
+
+- enable or disable automatic weekly summaries;
+- inspect the included source events;
+- correct inaccurate summary statements;
+- exclude an event or project from future continuity context;
+- delete a weekly summary;
+- disable use of continuity context for one conversation; and
+- deliberately promote an item to a project note, artifact, or knowledge-review proposal.
+
+Promotion creates a separately governed record with its own visibility, provenance, and approval state. It does not expose the rest of the private weekly summary.
+
+### Privacy and retention
+
+- Weekly continuity summaries belong to the user.
+- Employers, managers, project owners, organization owners, and ordinary administrators cannot browse their content.
+- They are not employee-performance records or organizational analytics.
+- Source authorization is re-checked whenever a summary is used; protected source details must be removed or excluded after access revocation.
+- Operational staff access, if technically unavoidable, must be accurately disclosed and tightly controlled.
+- Summary content is not used for model training or human evaluation without separate informed consent.
+
+### Optional pilot evaluation
+
+Weekly continuity may help evaluate the pilot without exposing private summary content. Use privacy-preserving product measures and voluntary user feedback, such as:
+
+- user-reported reduction in repeating established context;
+- time taken to resume a prior project conversation;
+- rate of Ember asking questions already answered in accessible history;
+- number of user corrections required after returning to a conversation;
+- voluntary use of “continue this thread” navigation;
+- voluntary promotion of a private memory item into governed project knowledge; and
+- perceived usefulness and trust.
+
+Do not expose summary prose, personal themes, project details, journal frequency, activity volume, empty weeks, or individual productivity comparisons to pilot evaluators. Prefer user-controlled survey responses and aggregate operational measures with minimum cohort/privacy thresholds.
+
+Phase 3 acceptance criteria:
+
+1. Exactly one idempotent summary is produced per eligible user/week when enabled.
+2. The summary is visible, correctable, excludable, and deletable only by its user.
+3. Ember uses a bounded recent/relevant subset rather than all weekly history.
+4. General and project-bound conversations preserve project/evidence isolation.
+5. Corrections supersede inaccurate continuity statements visibly.
+6. Revoked access removes protected content from future context.
+7. Promotion creates a separate governed record and shares nothing else.
+8. Pilot evaluation cannot inspect personal summary content or rank individual activity.
+9. Disabling the feature stops new scans and removes summaries from Ember context.
+10. The feature remains optional and does not block the Sandz pilot launch.
+
 ## Acceptance criteria
 
 1. A user can choose a supported date range and generate a journal from their own authorized history.
@@ -191,6 +336,7 @@ Treat in-product sharing as a separate design increment requiring explicit grant
 14. Minimal operational logs contain no generated journal prose or raw conversation content.
 15. Deleting an underlying conversation before generation prevents it from being included.
 16. Tests cover user isolation, organization-boundary access, custom date ranges, excluded sources, large histories, expiry, failed jobs, and download authorization.
+17. Tests cover related project activity, actor attribution, one-line rendering, revoked membership, and exclusion of activity from projects where the user is not a member.
 
 ## Suggested validation scenarios
 

@@ -46,4 +46,30 @@ describe('renderJournalDocx', () => {
 
     expect(buffer.length).toBeGreaterThan(0)
   })
+
+  it('includes related activity when provided, and renders without it otherwise', async () => {
+    const withRelated = await renderJournalDocx({
+      title: 'My Journal',
+      rangeLabel: 'last 30 days',
+      content: EMPTY_CONTENT,
+      conversations: [],
+      relatedActivity: [{ id: 'note-1', date: '2026-08-01T00:00:00Z', actorName: 'Maria', line: 'Maria approved the proposal.', projectId: 'proj-1', projectName: 'Project One' }],
+      truncated: false,
+      providerDisplayName: 'Groq',
+      modelDisplayName: 'GPT-OSS 120B',
+    })
+    expect(withRelated.length).toBeGreaterThan(0)
+
+    const withoutRelated = await renderJournalDocx({
+      title: 'My Journal',
+      rangeLabel: 'last 30 days',
+      content: EMPTY_CONTENT,
+      conversations: [],
+      relatedActivity: [],
+      truncated: false,
+      providerDisplayName: 'Groq',
+      modelDisplayName: 'GPT-OSS 120B',
+    })
+    expect(withoutRelated.length).toBeGreaterThan(0)
+  })
 })
