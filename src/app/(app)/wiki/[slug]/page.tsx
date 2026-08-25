@@ -6,7 +6,7 @@ import { getSourcesForVersion, listKnowledgeSourcesForLinking } from '@/lib/wiki
 import { getRelatedArticles } from '@/lib/wiki/relations'
 import { getProjectsForArticle } from '@/lib/wiki/project-links'
 import { listProjectsForLinking } from '@/lib/projects/queries'
-import { MarkdownLite } from '@/components/wiki/MarkdownLite'
+import { Markdown } from '@/components/shared/Markdown'
 import { ArticleReviewActions } from '@/components/wiki/ArticleReviewActions'
 import { SourceManager, SourceRemoveButton } from '@/components/wiki/SourceManager'
 import { RelatedArticlesManager, RelatedArticleRemoveButton } from '@/components/wiki/RelatedArticlesManager'
@@ -70,7 +70,7 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
               <span className="font-medium">Quick help: </span>
               {version.quick_help}
             </p>
-            <MarkdownLite text={version.content} />
+            <Markdown text={version.content} />
             {version.implementation_notes && (
               <div className="mt-4">
                 <h3 className="font-semibold text-zinc-900">Implementation notes</h3>
