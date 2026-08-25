@@ -915,6 +915,10 @@ export interface Conversation {
   // a page refresh, unlike in-memory isPending state. See runAssistantTurn
   // and ChatPanel's mount-time recovery check.
   pending_turn_started_at: string | null
+  // Owner Roadmap and Ember Feedback Board. 'feedback' conversations are
+  // never resumed and never shown in the normal History list -- orthogonal
+  // to project_id, not a replacement for it.
+  kind: 'chat' | 'feedback'
 }
 
 export type ConversationInsert = Omit<
@@ -932,6 +936,7 @@ export type ConversationInsert = Omit<
   | 'summary_version'
   | 'project_id'
   | 'pending_turn_started_at'
+  | 'kind'
 > &
   Partial<
     Pick<
@@ -946,6 +951,7 @@ export type ConversationInsert = Omit<
       | 'summary_version'
       | 'project_id'
       | 'pending_turn_started_at'
+      | 'kind'
     >
   >
 export type ConversationUpdate = Partial<Omit<Conversation, 'id' | 'user_id' | 'created_at'>>
@@ -1655,6 +1661,97 @@ export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' |
 
 export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
 
+// Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
+// roadmap-and-ember-feedback-board.md). Authorization is a hardcoded
+// two-identity allowlist (platform_owners), deliberately independent of
+// UserRole -- "platform admin status alone does not grant owner-board
+// access."
+export interface PlatformOwner {
+  user_id: string
+  email: string
+  added_by: string | null
+  added_at: string
+}
+
+export type FeedbackType = 'bug' | 'improvement' | 'feature_request' | 'usability' | 'documentation'
+export type FeedbackStatus = 'new' | 'triaged' | 'accepted' | 'deferred' | 'declined' | 'in_progress' | 'ready_to_verify' | 'resolved'
+export type FeedbackClassification = 'standard' | 'confidential_security'
+export type FeedbackSeverity = 'critical' | 'high' | 'medium' | 'low'
+
+export interface FeedbackReport {
+  id: string
+  report_number: number
+  reporter_id: string
+  source_conversation_id: string | null
+  type: FeedbackType
+  title: string
+  description: string
+  expected_result: string | null
+  actual_result: string | null
+  impact: string | null
+  reproduction_steps: string | null
+  severity: FeedbackSeverity | null
+  status: FeedbackStatus
+  classification: FeedbackClassification
+  current_page: string | null
+  project_id: string | null
+  application_version: string | null
+  environment: string | null
+  duplicate_of: string | null
+  owner_decision: string | null
+  owner_decision_rationale: string | null
+  affected_version: string | null
+  fixed_version: string | null
+  deployed_version: string | null
+  assignee_id: string | null
+  roadmap_ref: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface FeedbackReportStatusHistoryEntry {
+  id: string
+  feedback_report_id: string
+  from_status: FeedbackStatus | null
+  to_status: FeedbackStatus
+  changed_by: string | null
+  reason: string | null
+  created_at: string
+}
+
+export type FeedbackReportInsert = Omit<
+  FeedbackReport,
+  'id' | 'report_number' | 'status' | 'classification' | 'created_at' | 'updated_at'
+> &
+  Partial<Pick<FeedbackReport, 'status' | 'classification'>>
+export type FeedbackReportUpdate = Partial<Omit<FeedbackReport, 'id' | 'report_number' | 'reporter_id' | 'created_at'>>
+
+export type FeedbackReportStatusHistoryEntryInsert = Omit<FeedbackReportStatusHistoryEntry, 'id' | 'created_at'>
+
+// Owner Roadmap register, in-app (see 20260825130001_roadmap_register.sql's
+// own comment) -- the tabular OR-XXX register from docs/commercial/
+// ROADMAP.md, moved into an authenticated, owner-editable, exportable
+// record. The Markdown file's longer prose detail sections stay where they
+// are; this is specifically the register table.
+export type RoadmapStatus = 'captured' | 'assessing' | 'proposed' | 'approved' | 'in_progress' | 'validate' | 'done' | 'deferred' | 'declined' | 'superseded'
+
+export interface RoadmapItem {
+  id: string
+  item_ref: string
+  title: string
+  item_type: string
+  public_milestone: string | null
+  priority: string | null
+  status: RoadmapStatus
+  pilot_position: string | null
+  decision_next_action: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type RoadmapItemInsert = Omit<RoadmapItem, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<RoadmapItem, 'status'>>
+export type RoadmapItemUpdate = Partial<Omit<RoadmapItem, 'id' | 'item_ref' | 'created_at'>>
+
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
   'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
@@ -1817,6 +1914,15 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      platform_owners: { Row: PlatformOwner; Insert: PlatformOwner; Update: never; Relationships: [] }
+      feedback_reports: { Row: FeedbackReport; Insert: FeedbackReportInsert; Update: FeedbackReportUpdate; Relationships: [] }
+      feedback_report_status_history: {
+        Row: FeedbackReportStatusHistoryEntry
+        Insert: FeedbackReportStatusHistoryEntryInsert
+        Update: never
+        Relationships: []
+      }
+      roadmap_items: { Row: RoadmapItem; Insert: RoadmapItemInsert; Update: RoadmapItemUpdate; Relationships: [] }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }

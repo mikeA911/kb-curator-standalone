@@ -18,6 +18,8 @@ import {
   runSearchProjectKnowledge,
   type ProjectKnowledgeHit,
 } from './project-knowledge-tool'
+import { SUBMIT_FEEDBACK_REPORT_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL_NAME, runSubmitFeedbackReport } from './feedback-tool'
+import type { FeedbackType } from '@/types/database'
 
 // Version string stamped onto anything the Assistant creates
 // (created_via='assistant') -- bump when the system prompt or tool set
@@ -67,6 +69,41 @@ function buildProjectPromptAddendum(context: { name: string; goal: string | null
 You have an additional tool, search_project_knowledge, that searches this project's own attached knowledge first. Call it before search_wiki when you need evidence -- its results are tagged layer:'project' (this project's own approved evidence -- prefer this, it wins over general platform guidance when the two conflict) or layer:'platform' (general shared knowledge, used only to fill a genuine gap). If project evidence and platform guidance materially conflict, say so explicitly rather than silently merging them. If the project has no relevant attached knowledge for this question, say that plainly instead of presenting platform guidance as if it were project-specific evidence.
 
 Some evidence in this project may be access-restricted to specific people (e.g. customer pricing visible only to Sales/Finance) -- your tools only ever return what you're personally authorized to see, the same as any other user. If the user seems to expect something you can't retrieve, don't guess why or speculate about what might exist. Say plainly that the information isn't available in your current project access scope and suggest they ask the project owner or access steward to review their access -- never name or describe a restricted resource you can't actually see.`
+}
+
+const FEEDBACK_CATEGORY_LABELS: Record<FeedbackType, string> = {
+  bug: 'Report a problem',
+  improvement: 'Suggest an improvement',
+  feature_request: 'Request a new feature',
+  usability: 'Usability feedback',
+  documentation: 'Documentation issue',
+}
+
+const FEEDBACK_CATEGORY_QUESTIONS: Record<FeedbackType, string> = {
+  bug: 'What went wrong?',
+  improvement: 'What could work better?',
+  feature_request: 'What would you like KB Sandbox to do?',
+  usability: 'What could work better?',
+  documentation: 'What went wrong?',
+}
+
+// Owner Roadmap and Ember Feedback Board, Phase 1. A full replacement for
+// SYSTEM_PROMPT, not an addendum (unlike buildProjectPromptAddendum) --
+// feedback intake is a different task register from Workbench navigation,
+// not a variant of it. submit_feedback_report is modeled as an ordinary,
+// non-terminal tool (like search_project_knowledge), not a second terminal
+// path -- the model still finishes every reply, including the confirmation,
+// with present_assistant_response.
+function buildFeedbackSystemPrompt(feedbackContext: { category: FeedbackType; currentPage: string }): string {
+  return `You are Ember, helping a KB Sandbox user file feedback with the product team. The user chose "${FEEDBACK_CATEGORY_LABELS[feedbackContext.category]}" and is currently on the page ${feedbackContext.currentPage} -- that page will be attached to the report automatically.
+
+Start by asking: "${FEEDBACK_CATEGORY_QUESTIONS[feedbackContext.category]}" -- unless the user's first message already answered it, in which case don't re-ask.
+
+Reuse anything the user has already told you in this conversation -- never make them repeat themselves. Ask at most ONE follow-up question, and only if a genuinely essential fact is still missing (for a bug, typically what was expected vs. what actually happened). Everything else is optional -- draft your best reasonable version rather than interrogating the user.
+
+Once you have enough for a useful report (at minimum a clear title and description), call submit_feedback_report exactly once. After it succeeds, confirm the report number to the user in your own words as your final reply -- don't just repeat the raw tool output.
+
+You cannot accept or decline the report, promise a timeline, or set its final severity or priority -- a human reviews it. Always call present_assistant_response as your last action for every reply in this conversation, whether you're asking the clarifying question or confirming submission.`
 }
 
 // A create_* tool succeeded; the loop stamps provenance on the row it just
@@ -134,7 +171,8 @@ export async function runAssistantTurn(
   conversationId: string | null,
   userMessage: string,
   modelSelection?: ModelSelection,
-  projectId?: string | null
+  projectId?: string | null,
+  feedbackContext?: { category: FeedbackType; currentPage: string }
 ): Promise<AssistantTurnResult> {
   let conversation: Conversation
   if (conversationId) {
@@ -142,7 +180,13 @@ export async function runAssistantTurn(
     if (error || !data) throw error ?? new Error('Conversation not found')
     conversation = data
   } else {
-    conversation = await createConversation(ctx.supabase, ctx.user.id, userMessage.slice(0, 80), projectId ?? null)
+    conversation = await createConversation(
+      ctx.supabase,
+      ctx.user.id,
+      userMessage.slice(0, 80),
+      projectId ?? null,
+      feedbackContext ? 'feedback' : 'chat'
+    )
   }
   const resolvedProjectId = conversation.project_id
 
@@ -169,12 +213,16 @@ export async function runAssistantTurn(
   const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
 
   const projectContext = resolvedProjectId ? await getProjectContext(ctx, resolvedProjectId) : null
-  const systemPrompt = projectContext
-    ? SYSTEM_PROMPT + buildProjectPromptAddendum(projectContext, describeProjectKnowledgeScope(projectContext))
-    : SYSTEM_PROMPT
-  const tools = projectContext
-    ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, PRESENT_RESPONSE_TOOL]
-    : [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
+  const systemPrompt = feedbackContext
+    ? buildFeedbackSystemPrompt(feedbackContext)
+    : projectContext
+      ? SYSTEM_PROMPT + buildProjectPromptAddendum(projectContext, describeProjectKnowledgeScope(projectContext))
+      : SYSTEM_PROMPT
+  const tools = feedbackContext
+    ? [PRESENT_RESPONSE_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL]
+    : projectContext
+      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, PRESENT_RESPONSE_TOOL]
+      : [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
   const toolsUsed = new Set<string>()
   try {
   // A model that ignores the prompt's "search no more than twice" instruction
@@ -349,6 +397,25 @@ export async function runAssistantTurn(
               if (hit.sourceType === 'wiki_article') retrievedWikiArticleSlugs.set(hit.sourceId, info)
               else retrievedKnowledgeSourceIds.set(hit.sourceId, info)
             }
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+          }
+        }
+      } else if (toolCall.name === SUBMIT_FEEDBACK_REPORT_TOOL_NAME) {
+        // Not in src/lib/mcp/tools.ts's general registry -- same
+        // interception pattern as search_project_knowledge, because its
+        // behavior depends on feedbackContext, which callTool's generic
+        // (ctx, name, input) dispatch has no way to carry.
+        if (!feedbackContext) {
+          toolResultText = JSON.stringify({ error: 'submit_feedback_report is only available in a feedback-intake conversation.' })
+        } else {
+          try {
+            const output = await runSubmitFeedbackReport(
+              ctx,
+              { category: feedbackContext.category, currentPage: feedbackContext.currentPage, conversationId: conversation.id },
+              toolCall.arguments
+            )
+            toolResultText = JSON.stringify(output)
           } catch (err) {
             toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
           }
