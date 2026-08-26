@@ -16,10 +16,15 @@ const buildPersistedEnvelopeMock = vi.fn()
 const resolveEnvelopeForDisplayMock = vi.fn()
 const resolveCreatedRecordMock = vi.fn()
 
-vi.mock('@/lib/ai', () => ({
-  resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
-  getDefaultModel: (...args: unknown[]) => getDefaultModelMock(...args),
-}))
+vi.mock('@/lib/ai', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/ai')>('@/lib/ai')
+  return {
+    AIProviderError: actual.AIProviderError,
+    classifyProviderError: actual.classifyProviderError,
+    resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
+    getDefaultModel: (...args: unknown[]) => getDefaultModelMock(...args),
+  }
+})
 vi.mock('@/lib/mcp/tools', () => ({
   callTool: (...args: unknown[]) => callToolMock(...args),
   getToolSpecs: (...args: unknown[]) => getToolSpecsMock(...args),
@@ -51,6 +56,7 @@ vi.mock('./created-records', () => ({
 }))
 
 const { runAssistantTurn, MAX_TOOL_ITERATIONS, SEARCH_WIKI_LIMIT } = await import('./loop')
+const { AIProviderError } = await import('@/lib/ai')
 
 // project_id: null keeps every existing test on the general (unbound) path
 // -- project-bound behavior (getProjectContext, search_project_knowledge)
@@ -288,6 +294,39 @@ describe('runAssistantTurn', () => {
       { role: 'assistant', content: 'earlier answer', toolCalls: undefined, toolCallId: undefined, toolName: undefined },
       { role: 'user', content: 'follow-up question' },
     ])
+  })
+
+  // Regression coverage for a live incident: an uncaught AIProviderError
+  // (Groq's TPM/413 rate limit) crossed the sendChatMessageAction Server
+  // Action boundary and reached the user as an opaque production Next.js
+  // digest error ("Minified React error #441") instead of a readable
+  // message. generateChat failing must resolve normally, never throw.
+  it('turns a provider failure into a normal, friendly result instead of throwing', async () => {
+    generateChatMock.mockRejectedValue(
+      new AIProviderError('groq', 'generate_chat', 'groq generateChat failed: 413 Request too large...', {
+        status: 413,
+        message: 'Request too large for model on tokens per minute (TPM): Limit 8000, Requested 9029',
+      })
+    )
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'what can i offer health care providers')
+
+    expect(result.isProviderError).toBe(true)
+    expect(result.reply).toMatch(/capacity limit with groq/i)
+    expect(result.conversationId).toBe('conv-1')
+    // A failed attempt must not be persisted as if it were a real turn.
+    expect(appendMessageMock).toHaveBeenCalledTimes(1) // only the user message
+    expect(appendMessageMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ role: 'user' }))
+    expect(maybeRefreshSummaryMock).not.toHaveBeenCalled()
+  })
+
+  it('still produces a normal-shaped friendly result for a non-AIProviderError throw', async () => {
+    generateChatMock.mockRejectedValue(new Error('socket hang up'))
+
+    const result = await runAssistantTurn(fakeCtx(), null, 'hello')
+
+    expect(result.isProviderError).toBe(true)
+    expect(result.reply).toMatch(/couldn't get a response/i)
   })
 })
 

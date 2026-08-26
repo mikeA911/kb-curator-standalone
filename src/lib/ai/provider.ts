@@ -143,7 +143,12 @@ export function classifyProviderError(err: unknown): ProviderErrorCode {
   if (status === 404 || message.includes('does not exist') || message.includes('not found') || message.includes('no longer available')) {
     return 'model_unavailable'
   }
-  if (status === 429 || message.includes('rate limit')) {
+  // Groq's TPM (tokens-per-minute) ceiling returns 413 "Request too large"
+  // rather than 429 -- same capacity-limit family as a plain rate limit
+  // (observed live: `code: 'rate_limit_exceeded'` in the SDK error body, but
+  // that substring is on `.code`, not `.message`, so it needs its own check
+  // rather than falling out of the 'rate limit' text match below).
+  if (status === 429 || status === 413 || message.includes('rate limit') || message.includes('tokens per minute') || message.includes('rate_limit_exceeded')) {
     return message.includes('quota') || message.includes('credit') ? 'quota_exceeded' : 'rate_limit'
   }
   if (message.includes('quota') || message.includes('insufficient_quota') || message.includes('credit')) {

@@ -333,6 +333,16 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       // never overwrite what's currently displayed.
       if (myTurn !== turnSeqRef.current) return
       setConversationId(result.conversationId)
+      // A provider failure (rate limit, capacity, ...) comes back as a
+      // normal result rather than a thrown error -- see runAssistantTurn's
+      // generateChat catch -- so it needs the same red-text-plus-Retry
+      // treatment as the catch block below, not a normal assistant bubble.
+      if (result.isProviderError) {
+        setError(result.reply)
+        setLastFailedMessage(message)
+        setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))
+        return
+      }
       setMessages((prev) => [
         ...prev,
         {
