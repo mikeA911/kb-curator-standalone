@@ -26,6 +26,19 @@ describe('classifyProviderError', () => {
     expect(classifyProviderError(new Error('insufficient_quota: add credits to continue'))).toBe('quota_exceeded')
   })
 
+  // Groq's TPM (tokens-per-minute) ceiling returns 413, not 429 -- caught
+  // live during Sandz pilot testing where this fell through to 'unknown'
+  // and the resulting AIProviderError crossed the Server Action boundary
+  // uncaught, reaching the user as an opaque production error.
+  it('classifies a Groq TPM 413 as rate_limit', () => {
+    expect(
+      classifyProviderError({
+        status: 413,
+        message: 'Request too large for model on tokens per minute (TPM): Limit 8000, Requested 9029',
+      })
+    ).toBe('rate_limit')
+  })
+
   it('falls back to unknown for an unrecognized error shape', () => {
     expect(classifyProviderError(new Error('something broke'))).toBe('unknown')
   })

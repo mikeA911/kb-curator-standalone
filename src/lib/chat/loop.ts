@@ -1,5 +1,5 @@
 import 'server-only'
-import { resolveChatProvider, getDefaultModel } from '@/lib/ai'
+import { resolveChatProvider, getDefaultModel, AIProviderError, classifyProviderError } from '@/lib/ai'
 import type { ChatMessage } from '@/lib/ai'
 import { callTool, getToolSpecs } from '@/lib/mcp/tools'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
@@ -155,6 +155,40 @@ export interface AssistantTurnResult {
   embeddingModelDisplayName?: string
   structured: VerifiedAssistantEnvelope | null
   createdRecords: ResolvedCreatedRecord[]
+  // Set when `reply` is a friendly stand-in for a failed provider call
+  // (rate limit, capacity, auth, ...) rather than a real assistant answer --
+  // see the generateChat catch below. A normal AssistantTurnResult (not a
+  // thrown error) so it can never surface as an uncaught Server Action
+  // exception, which production Next.js redacts to an opaque digest-only
+  // error (observed live: a Groq TPM/413 error reached the user as "Minified
+  // React error #441" instead of an actionable message). ChatPanel routes
+  // this the same way it already routes a thrown error -- red text plus a
+  // one-click Retry of the same message -- rather than as a normal reply.
+  isProviderError?: boolean
+}
+
+// Short, safe, user-facing text per failure category -- never the raw SDK
+// error (which can include org/account identifiers, billing-tier upsell
+// copy, etc.). classifyProviderError only reads `.status`/`.message`, so it
+// works the same whether `err` is a real AIProviderError or an unrelated
+// thrown value.
+function friendlyProviderErrorMessage(err: unknown): string {
+  const provider = err instanceof AIProviderError ? err.provider : undefined
+  const providerLabel = provider ? ` with ${provider}` : ''
+  const code = classifyProviderError(err instanceof AIProviderError ? (err.cause ?? err) : err)
+  switch (code) {
+    case 'rate_limit':
+    case 'quota_exceeded':
+      return `Ember hit a capacity limit${providerLabel} for this response. Try again in a moment, or switch to a different model using the dropdown above.`
+    case 'model_unavailable':
+      return "The selected model isn't available right now. Try a different model using the dropdown above."
+    case 'authentication':
+      return `Ember couldn't authenticate${providerLabel} right now. Please try again shortly, or let an administrator know if this continues.`
+    case 'invalid_request':
+      return `Ember couldn't process that request${providerLabel}. Try rephrasing, or switch to a different model using the dropdown above.`
+    default:
+      return `Ember couldn't get a response${providerLabel} right now. Try again, or switch to a different model using the dropdown above.`
+  }
 }
 
 // projectId is only consulted when starting a brand-new conversation
@@ -323,12 +357,35 @@ export async function runAssistantTurn(
       maxOutputTokens: chatProvider.maxOutputTokens,
     })
     contextWasTruncated = contextWasTruncated || working.wasTruncated
-    const result = await chatProvider.provider.generateChat({
-      messages: working.messages,
-      system: systemPrompt,
-      tools,
-      maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
-    })
+    let result: Awaited<ReturnType<typeof chatProvider.provider.generateChat>>
+    try {
+      result = await chatProvider.provider.generateChat({
+        messages: working.messages,
+        system: systemPrompt,
+        tools,
+        maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
+      })
+    } catch (err) {
+      // A provider failure (rate limit, capacity, auth, ...) here must
+      // resolve normally rather than throw -- an uncaught exception crossing
+      // the sendChatMessageAction Server Action boundary reaches production
+      // Next.js's opaque digest-only error path (seen live as "Minified
+      // React error #441" for a Groq TPM/413 error), not a readable message.
+      // Nothing is persisted to chat_messages for this turn -- a failed
+      // attempt shouldn't become part of the model's own context on retry.
+      return {
+        conversationId: conversation.id,
+        reply: friendlyProviderErrorMessage(err),
+        providerName: chatProvider.providerName,
+        providerDisplayName: chatProvider.providerDisplayName,
+        modelId: chatProvider.modelId,
+        modelDisplayName: chatProvider.modelDisplayName,
+        toolsUsed: [...toolsUsed],
+        structured: null,
+        createdRecords: [],
+        isProviderError: true,
+      }
+    }
     history.push(result.message)
 
     // Submitting the final structured response is always terminal. If the
