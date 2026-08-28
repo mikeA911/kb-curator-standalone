@@ -113,6 +113,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
   // of the normal send() -> performTurn() path.
   const [resumedPendingConversationId, setResumedPendingConversationId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const messageListRef = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
   const artifactsDetailsRef = useRef<HTMLDetailsElement>(null)
   // Synchronous re-entry guard for send()/retry() -- isPending (state) isn't
@@ -257,6 +258,18 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       cancelled = true
     }
   }, [open, historyLoaded, projectId])
+
+  // Auto-scroll to the latest message whenever the panel opens or the
+  // message list changes (new turn, switched conversation, resumed
+  // history) -- otherwise a long-running conversation opens scrolled to
+  // its oldest message, reading as an intimidating wall of text the user
+  // has to scroll through just to see what Ember said last.
+  useEffect(() => {
+    if (!open) return
+    const el = messageListRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [open, messages])
 
   useEffect(() => {
     if (!open) return
@@ -745,7 +758,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
               </button>
             )}
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+          <div ref={messageListRef} className="flex-1 space-y-2 overflow-y-auto p-3">
             {showFeedbackChooser && (
               <div className="flex flex-col gap-3">
                 <p className="text-sm text-zinc-600">
