@@ -57,6 +57,26 @@ describe('callTool', () => {
     expect(approveProjectMock).not.toHaveBeenCalled()
   })
 
+  it('get_navigation_guide returns the full catalogue when no topic is given, excluding the Ember-behavior/process sections', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', {})) as { guide: string }
+    expect(result.guide).toContain('Navigation map')
+    expect(result.guide).toContain('Sign in')
+    expect(result.guide).not.toContain('## Ember response contract for navigation')
+    expect(result.guide).not.toContain('## Update checklist')
+  })
+
+  it('get_navigation_guide narrows to matching sections when a topic is given', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'agent registry' })) as { guide: string }
+    expect(result.guide).toContain('Agent Registry')
+    expect(result.guide).not.toContain('### Draft and submit an article')
+  })
+
+  it('get_navigation_guide falls back to the full catalogue when a topic matches nothing', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'zzz-no-such-topic-zzz' })) as { guide: string }
+    expect(result.guide).toContain('Navigation map')
+    expect(result.guide.length).toBeGreaterThan(1000)
+  })
+
   it('search_wiki embeds the query, calls match_wiki_vectors, and shapes the output with content and category', async () => {
     embedMock.mockResolvedValue({ embedding: [0.1, 0.2, 0.3], model: 'embed-model', dimensions: 3, usage: { inputTokens: 3, outputTokens: 0 } })
     rpcMock.mockResolvedValue({
@@ -167,9 +187,10 @@ describe('callTool', () => {
 })
 
 describe('listTools', () => {
-  it('lists all six registered tools with descriptions', () => {
+  it('lists all seven registered tools with descriptions', () => {
     const names = listTools().map((t) => t.name)
     expect(names).toEqual([
+      'get_navigation_guide',
       'search_wiki',
       'list_project_notes',
       'create_project',

@@ -181,6 +181,11 @@ const NODES: AssistantFlowNode[] = [
 // sync mechanically the way promptVersion/maxToolIterations/tool
 // name-description-parameters are kept in sync above.
 const TOOL_METADATA: Record<string, Pick<AssistantToolDescriptor, 'requiredPermission' | 'enforcement' | 'enforcedBy'>> = {
+  get_navigation_guide: {
+    requiredPermission: 'Any signed-in user; reads a file committed with the application, not a database-gated resource.',
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-CATALOGUE.md, read directly -- no approval workflow (see src/lib/mcp/tools.ts)',
+  },
   search_wiki: {
     requiredPermission: 'Any signed-in user; results are already-approved Wiki content only.',
     enforcement: 'kb_sandbox_enforced',
