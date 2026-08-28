@@ -7,6 +7,10 @@ export async function listActiveKnowledgeBases(supabase: SupabaseClient<Database
     .from('knowledge_bases')
     .select('*')
     .eq('lifecycle_status', 'active')
+    // Pending KBs stay selectable -- a curator should be able to keep
+    // uploading into one they just created while it awaits admin review.
+    // Only rejected ones drop out of the upload picker.
+    .neq('status', 'rejected')
     .order('name')
   // Deployment-safe transition: application instances may briefly run
   // before the migration reaches the database. Preserve the previous list
@@ -37,9 +41,38 @@ export async function listAttachableKnowledgeBases(
   if (linkedError) throw linkedError
   const attachedIds = (linked ?? []).map((l) => l.knowledge_base_id)
 
-  let query = supabase.from('knowledge_bases').select('*').eq('lifecycle_status', 'active').order('name')
+  // Only admin-approved knowledge can be attached to a project -- a project
+  // attaching a KB is a stronger, "this is now trusted project knowledge"
+  // signal than just being able to upload more sources into it.
+  let query = supabase.from('knowledge_bases').select('*').eq('lifecycle_status', 'active').eq('status', 'approved').order('name')
   if (attachedIds.length > 0) query = query.not('id', 'in', `(${attachedIds.join(',')})`)
   const { data, error } = await query
+  if (error) throw error
+  return data ?? []
+}
+
+// Public-facing synopsis list for the Wiki page (any signed-in user, not
+// just curator/admin) -- per Mike, 2026-08-28: users should be able to see
+// what knowledge bases exist and what each is used for, without seeing the
+// KB's actual content or curator-facing operational fields (status,
+// classification, origin). A narrow select() rather than '*' so a future
+// column addition doesn't silently leak into this view. RLS
+// (kb_select_global_or_member) already scopes this to platform/public KBs
+// plus any project-private one the caller is a strict member of -- no extra
+// filter needed here for that boundary.
+export interface KnowledgeBaseSynopsis {
+  id: string
+  name: string
+  description: string | null
+}
+
+export async function listKnowledgeBaseSynopses(supabase: SupabaseClient<Database>): Promise<KnowledgeBaseSynopsis[]> {
+  const { data, error } = await supabase
+    .from('knowledge_bases')
+    .select('id, name, description')
+    .eq('lifecycle_status', 'active')
+    .eq('status', 'approved')
+    .order('name')
   if (error) throw error
   return data ?? []
 }

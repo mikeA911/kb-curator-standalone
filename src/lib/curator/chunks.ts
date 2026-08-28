@@ -129,10 +129,19 @@ export interface RejectChunkInput {
 export async function rejectChunk(supabase: SupabaseClient<Database>, input: RejectChunkInput) {
   const { data: chunk, error: chunkError } = await supabase
     .from('document_chunks')
-    .select('document_id')
+    .select('document_id, review_status')
     .eq('id', input.chunkId)
     .single()
   if (chunkError || !chunk) throw chunkError ?? new Error('Chunk not found')
+
+  // A chunk can be re-reviewed after already being approved (no status guard
+  // in the reviewer UI) -- if it was, approveChunk already embedded it into
+  // kb_vectors, which match_documents (the RAG search RPC) queries directly
+  // with no join back to review_status. Without deleting it here, a
+  // "rejected" chunk would stay silently retrievable by Ember.
+  const wasApproved = chunk.review_status === 'approved'
+  const { error: vectorError } = await supabase.from('kb_vectors').delete().eq('chunk_id', input.chunkId)
+  if (vectorError) throw vectorError
 
   const { error } = await supabase
     .from('document_chunks')
@@ -145,6 +154,10 @@ export async function rejectChunk(supabase: SupabaseClient<Database>, input: Rej
     .eq('id', input.chunkId)
   if (error) throw error
 
+  // Undo the earlier increment_approved_chunks call so the document's
+  // approved/total counter (shown throughout the curator/admin UI) doesn't
+  // keep counting a chunk that's no longer approved.
+  if (wasApproved) await supabase.rpc('decrement_approved_chunks', { doc_id: chunk.document_id })
   await supabase.rpc('increment_rejected_chunks', { doc_id: chunk.document_id })
 }
 

@@ -32,6 +32,7 @@ export default async function AdminPage() {
     { data: queue },
     { data: profiles },
     { data: pendingDocs },
+    { data: allDocuments },
     aiProviders,
     aiModels,
     unpublishedWikiArticles,
@@ -44,6 +45,7 @@ export default async function AdminPage() {
     supabase.from('curation_queue').select('*').order('created_at', { ascending: false }),
     supabase.from('profiles').select('*').order('email'),
     supabase.from('documents').select('*').eq('processing_status', 'submitted').order('upload_date'),
+    supabase.from('documents').select('*').order('upload_date', { ascending: false }),
     listProviders(supabase),
     listModels(supabase),
     listUnpublishedArticles(supabase),
@@ -74,7 +76,7 @@ export default async function AdminPage() {
         tabs={[
           { id: 'approvals', label: 'Pending Approvals', content: <PendingApprovals documents={pendingDocs ?? []} /> },
           { id: 'users', label: 'Users', content: <UserManagement profiles={profiles ?? []} knowledgeBases={activeKnowledgeBases} /> },
-          { id: 'kbs', label: 'Knowledge Bases', content: <KBManagement knowledgeBases={knowledgeBases ?? []} /> },
+          { id: 'kbs', label: 'Knowledge Bases', content: <KBManagement knowledgeBases={knowledgeBases ?? []} documents={allDocuments ?? []} /> },
           {
             id: 'queue',
             label: 'Curation Queue',

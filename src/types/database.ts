@@ -5,6 +5,10 @@ export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
 export type KnowledgeBaseClassification = 'platform' | 'legacy_sample' | 'project' | 'partner_pilot'
 export type KnowledgeBaseLifecycleStatus = 'active' | 'reference' | 'archived'
+// Orthogonal to lifecycle_status (a retention concept) -- this is the
+// curator-creates/admin-approves review state. See
+// supabase/migrations/20260828120001_knowledge_base_curator_review.sql.
+export type KnowledgeBaseStatus = 'pending' | 'approved' | 'rejected'
 
 export type ProcessingStatus =
   | 'pending'
@@ -54,7 +58,12 @@ export interface KnowledgeBase {
   project_id: string | null
   classification: KnowledgeBaseClassification
   lifecycle_status: KnowledgeBaseLifecycleStatus
+  status: KnowledgeBaseStatus
   origin: string | null
+  // Same convention/values as WikiVisibilityScope -- added to the DB in
+  // 20260824180001_project_knowledge_visibility_retrieval_fix.sql but missed
+  // in this hand-maintained interface until now.
+  visibility_scope: WikiVisibilityScope
   created_at: string
   updated_at: string
 }
@@ -242,6 +251,7 @@ export type WikiCategoryId =
   | 'governance'
   | 'improvement'
   | 'platform_handbook'
+  | 'product_handbook'
 
 export type WikiArticleStatus = 'draft' | 'review' | 'approved' | 'archived'
 export type WikiVerificationStatus = 'unverified' | 'verified' | 'needs_review'
@@ -331,6 +341,13 @@ export interface WikiVersion {
   // Which Trending item (if any) this version was promoted from -- see
   // trending_items / promoteTrendingToWikiAction.
   promoted_from_trending_item_id: string | null
+  // Product Handbook metadata (Ember Product Knowledge Publishing Pipeline,
+  // Stage 1). Nullable/optional -- only meaningful for product_handbook
+  // articles, but not enforced at the schema level since a general Wiki
+  // article could reasonably use them too.
+  applicable_roles: string[] | null
+  related_routes: string[] | null
+  applicable_version: string | null
 }
 
 export interface WikiSource {
@@ -544,7 +561,20 @@ export type ProjectNoteReplyInsert = Omit<ProjectNoteReply, 'id' | 'created_at'>
 // ============================================
 
 export type ProjectType = 'learning' | 'experiment' | 'consulting' | 'transformation' | 'knowledge'
-export type ProjectStatus = 'draft' | 'active' | 'completed' | 'archived'
+export type ProjectStatus = 'draft' | 'active' | 'review' | 'completed' | 'archived'
+
+// Written only from the service layer (src/lib/workbench/projects.ts), never
+// a database trigger -- actor_id needs the real acting user, which a
+// service-role write can't get from auth.uid(). See
+// supabase/migrations/20260828110001_project_status_history.sql.
+export interface ProjectStatusHistoryEntry {
+  id: string
+  project_id: string
+  from_status: ProjectStatus | null
+  to_status: ProjectStatus
+  actor_id: string | null
+  created_at: string
+}
 
 // private = members/admin only (default, never auto-changed). internal =
 // any authenticated user can view (editing still gated by project_members).
@@ -1542,6 +1572,56 @@ export interface AgentVersion {
   activated_at: string | null
 }
 
+export type ExternalAgentProtocol = 'mcp' | 'https'
+export type ExternalAgentStatus = 'draft' | 'active' | 'archived'
+export type ExternalAgentCertificationStatus =
+  | 'experimental'
+  | 'sandbox_tested'
+  | 'security_reviewed'
+  | 'outlet_accepted'
+  | 'production_approved'
+  | 'deprecated'
+  | 'suspended'
+
+// Registers agents that run OUTSIDE KB Sandbox (a builder's agent on Sandz or
+// customer infrastructure) so KB Sandbox can govern them -- distinct from
+// Agent/AgentVersion above, which are KBS-native graph-based agents Ember
+// runs itself. See supabase/migrations/20260827150001_external_agent_registry.sql.
+export interface ExternalAgent {
+  id: string
+  name: string
+  slug: string
+  purpose: string
+  protocol: ExternalAgentProtocol
+  endpoint_url: string | null
+  project_id: string | null
+  active_version_id: string | null
+  status: ExternalAgentStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Immutable except for certification_status/approved_by/approved_at (staff-
+// only, see the migration's dedicated update policy). "Approval applies to a
+// specific version" -- a new version always starts back at 'experimental'.
+export interface ExternalAgentVersion {
+  id: string
+  external_agent_id: string
+  version_number: number
+  skills: { name: string; description: string; provider?: string }[]
+  credentials_policy: Record<string, unknown>
+  spending_limits: { perOrderMax?: number; dailyMax?: number; currency?: string }
+  approval_policy: { requiresHumanConfirmation?: boolean; confirmationFields?: string[] }
+  permitted_scope: { projectIds?: string[]; userIds?: string[] }
+  certification_status: ExternalAgentCertificationStatus
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  approved_by: string | null
+  approved_at: string | null
+}
+
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
 export type ProfileUpdate = Partial<Omit<Profile, 'id' | 'created_at'>>
 
@@ -1660,6 +1740,7 @@ export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
 export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
 
 export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
+export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
 // roadmap-and-ember-feedback-board.md). Authorization is a hardcoded
@@ -1807,6 +1888,20 @@ export type AgentUpdate = Partial<Omit<Agent, 'id' | 'created_at'>>
 // as graph_versions/wiki_versions).
 export type AgentVersionInsert = Omit<AgentVersion, 'id' | 'created_at'>
 
+export type ExternalAgentInsert = Omit<ExternalAgent, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
+  Partial<Pick<ExternalAgent, 'active_version_id'>>
+export type ExternalAgentUpdate = Partial<Omit<ExternalAgent, 'id' | 'created_at'>>
+
+export type ExternalAgentVersionInsert = Omit<
+  ExternalAgentVersion,
+  'id' | 'created_at' | 'certification_status' | 'approved_by' | 'approved_at'
+> &
+  Partial<Pick<ExternalAgentVersion, 'certification_status'>>
+// Only certification changes go through UPDATE -- every other field is
+// immutable once created (a material change means a new version).
+export type ExternalAgentVersionUpdate = Pick<ExternalAgentVersion, 'certification_status'> &
+  Partial<Pick<ExternalAgentVersion, 'approved_by' | 'approved_at'>>
+
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
 // doesn't error, it silently collapses every Row/Insert/Update type to
@@ -1914,6 +2009,7 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      project_status_history: { Row: ProjectStatusHistoryEntry; Insert: ProjectStatusHistoryEntryInsert; Update: never; Relationships: [] }
       platform_owners: { Row: PlatformOwner; Insert: PlatformOwner; Update: never; Relationships: [] }
       feedback_reports: { Row: FeedbackReport; Insert: FeedbackReportInsert; Update: FeedbackReportUpdate; Relationships: [] }
       feedback_report_status_history: {
@@ -1938,6 +2034,13 @@ export interface Database {
       agent_templates: { Row: AgentTemplate; Insert: AgentTemplateInsert; Update: AgentTemplateUpdate; Relationships: [] }
       agents: { Row: Agent; Insert: AgentInsert; Update: AgentUpdate; Relationships: [] }
       agent_versions: { Row: AgentVersion; Insert: AgentVersionInsert; Update: never; Relationships: [] }
+      external_agents: { Row: ExternalAgent; Insert: ExternalAgentInsert; Update: ExternalAgentUpdate; Relationships: [] }
+      external_agent_versions: {
+        Row: ExternalAgentVersion
+        Insert: ExternalAgentVersionInsert
+        Update: ExternalAgentVersionUpdate
+        Relationships: []
+      }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }
       conversations: { Row: Conversation; Insert: ConversationInsert; Update: ConversationUpdate; Relationships: [] }
       chat_messages: { Row: ChatMessageRow; Insert: ChatMessageInsert; Update: never; Relationships: [] }
