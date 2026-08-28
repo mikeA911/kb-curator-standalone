@@ -10,6 +10,7 @@
 6. Private AI Deployment Is an Operating Model, Not a Docker File
 7. One Default AI Model Is Not Enough
 8. Before the AI-Native SDLC: Test What Is Worth Building
+9. A Method Is Not an Agent Graph
 
 ## Suggested cadence
 
