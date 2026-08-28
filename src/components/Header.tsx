@@ -37,9 +37,7 @@ export function Header({ profile, logoUrl }: { profile: Profile; logoUrl: string
             <Link href="/dashboard" className="hover:text-zinc-900">Workbench</Link>
             <Link href="/projects" className="hover:text-zinc-900">Projects</Link>
             <Link href="/wiki" className="hover:text-zinc-900">Wiki</Link>
-            {(profile.role === 'curator' || profile.role === 'admin') && (
-              <Link href="/contribute/blog" className="hover:text-zinc-900">Blog</Link>
-            )}
+            <Link href="/blog" className="hover:text-zinc-900">Blog</Link>
             <Link href="/trending" className="hover:text-zinc-900">Trending</Link>
             <NavDropdown label="Explore" items={EXPLORE_ITEMS} />
           </nav>
