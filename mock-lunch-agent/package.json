@@ -1,0 +1,16 @@
+{
+  "name": "mock-lunch-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway mock MCP server for the Lunch Agent (Food Outlet AI-Readiness Showcase) -- for local testing of the Agent Gateway concept only. Not deployed, not real, no live payment. See README.md.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node test-client.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
+  }
+}

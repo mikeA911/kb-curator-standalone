@@ -11,6 +11,7 @@ const EXPLORE_ITEMS = [
   { href: '/evals', label: 'Evals' },
   { href: '/graphs', label: 'Graphs' },
   { href: '/agents', label: 'Agents' },
+  { href: '/agent-registry', label: 'Agent Registry (external)' },
 ]
 
 export function Header({ profile, logoUrl }: { profile: Profile; logoUrl: string }) {
