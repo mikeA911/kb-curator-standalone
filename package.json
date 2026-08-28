@@ -11,13 +11,16 @@
     "test": "vitest run",
     "db:check": "node --env-file=.env.local scripts/check-db-state.mjs",
     "db:seed-kbs": "node --env-file=.env.local scripts/seed-knowledge-bases.mjs",
-    "db:seed-users": "node --env-file=.env.local scripts/seed-test-users.mjs"
+    "db:seed-users": "node --env-file=.env.local scripts/seed-test-users.mjs",
+    "wiki:export": "node --env-file=.env.local scripts/export-approved-wikis.mjs",
+    "methods:export": "node --env-file=.env.local scripts/export-approved-wikis.mjs --methods-only"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
     "@langchain/langgraph": "^1.4.9",
+    "@supabase/server": "^1.4.1",
     "@supabase/ssr": "^0.7.0",
-    "@supabase/supabase-js": "2.45.4",
+    "@supabase/supabase-js": "^2.112.4",
     "clsx": "^2.1.1",
     "docx": "^9.7.1",
     "jszip": "^3.10.1",
