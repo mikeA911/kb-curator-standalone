@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { listProjectNotes } from '@/lib/projects/notes'
 import * as workbenchProjects from '@/lib/workbench/projects'
 import * as workbenchWorkstreams from '@/lib/workbench/workstreams'
+import { createManualDraftArticle, WikiValidationError } from '@/lib/wiki/articles'
+import { linkRelatedArticle } from '@/lib/wiki/relations'
 import { getActiveEmbeddingProvider } from '@/lib/ai'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type { Database } from '@/types/database'
@@ -31,6 +33,25 @@ const ArtifactTypeSchema = z.enum([
 ])
 
 const ProjectTypeSchema = z.enum(['learning', 'experiment', 'consulting', 'transformation', 'knowledge'])
+
+// create_wiki_draft is restricted to these two categories -- not the general
+// AI-engineering reference taxonomy (foundations/knowledge_engineering/etc),
+// which is curator-curated conceptual content with its own editorial
+// standards, not something a chat-generated draft should land in
+// unsupervised. platform_handbook (Workbench Methods) and product_handbook
+// (product knowledge/release notes) are exactly the categories this session
+// already established as "AI/curator co-authored content flowing through
+// the normal draft -> review -> approve gate."
+const WikiDraftCategorySchema = z.enum(['platform_handbook', 'product_handbook'])
+
+function slugifyTitle(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'article'
+  )
+}
 
 // get_navigation_guide reads docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-
 // CATALOGUE.md directly from disk rather than ingesting it into wiki_articles
@@ -87,6 +108,75 @@ const tools: Record<string, ToolDefinition<any, any>> = {
       const chunks = full.split(/\n(?=#{1,3} )/)
       const matched = chunks.filter((c) => c.toLowerCase().includes(needle))
       return { guide: matched.length > 0 ? matched.join('\n\n') : full }
+    },
+  },
+
+  create_wiki_draft: {
+    description:
+      "Save a fully-composed Workbench Handbook article (a Method, or Product Handbook content) as a draft Wiki article, so the user doesn't have to copy the text out of this conversation and paste it into the Wiki UI themselves. Only usable by a curator or admin -- fails otherwise. ALWAYS creates status='draft': never approved or made retrievable by search_wiki as part of this call. Only call this once the user has confirmed the finished content is what they want saved -- do not call it on a rough draft still being discussed, and never call it more than once for the same piece of content. After saving, tell the user it's a draft awaiting their own review/approval in the Wiki UI; do not claim it is now approved knowledge.",
+    inputSchema: z.object({
+      title: z.string(),
+      category: WikiDraftCategorySchema,
+      quickHelp: z.string(),
+      content: z.string(),
+      shortDescription: z.string().optional(),
+      relatedArticleTitles: z.array(z.string()).max(10).optional(),
+    }),
+    outputSchema: z.object({ articleId: z.string(), slug: z.string(), status: z.literal('draft') }),
+    handler: async (
+      ctx,
+      input: {
+        title: string
+        category: z.infer<typeof WikiDraftCategorySchema>
+        quickHelp: string
+        content: string
+        shortDescription?: string
+        relatedArticleTitles?: string[]
+      }
+    ) => {
+      const baseSlug = slugifyTitle(input.title)
+      let slug = baseSlug
+      let article
+      try {
+        ;({ article } = await createManualDraftArticle(ctx.supabase, {
+          slug,
+          title: input.title,
+          category: input.category,
+          shortDescription: input.shortDescription ?? null,
+          quickHelp: input.quickHelp,
+          content: input.content,
+          createdBy: ctx.user.id,
+        }))
+      } catch (err) {
+        // Same retry-once-with-suffix convention as the curator-facing
+        // "create a new knowledge base" flow (DocumentUploader.tsx) -- a
+        // slug collision is expected occasionally (two similarly-titled
+        // articles), not exceptional, so retry rather than surface a raw
+        // Postgres unique-violation to the model/user.
+        if (err instanceof WikiValidationError) {
+          slug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`
+          ;({ article } = await createManualDraftArticle(ctx.supabase, {
+            slug,
+            title: input.title,
+            category: input.category,
+            shortDescription: input.shortDescription ?? null,
+            quickHelp: input.quickHelp,
+            content: input.content,
+            createdBy: ctx.user.id,
+          }))
+        } else {
+          throw err
+        }
+      }
+
+      if (input.relatedArticleTitles?.length) {
+        for (const relatedTitle of input.relatedArticleTitles) {
+          const { data: related } = await ctx.supabase.from('wiki_articles').select('id').eq('title', relatedTitle).maybeSingle()
+          if (related) await linkRelatedArticle(ctx.supabase, article.id, related.id)
+        }
+      }
+
+      return { articleId: article.id, slug: article.slug, status: 'draft' as const }
     },
   },
 

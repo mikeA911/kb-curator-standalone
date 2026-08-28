@@ -6,10 +6,15 @@ const createProjectMock = vi.fn()
 const approveProjectMock = vi.fn()
 const createWorkstreamMock = vi.fn()
 const attachArtifactMock = vi.fn()
+const createManualDraftArticleMock = vi.fn()
+const linkRelatedArticleMock = vi.fn()
 const getActiveEmbeddingProviderMock = vi.fn()
 const embedMock = vi.fn()
 const rpcMock = vi.fn()
 const wikiArticlesInMock = vi.fn()
+const wikiArticlesMaybeSingleMock = vi.fn()
+
+class FakeWikiValidationError extends Error {}
 
 vi.mock('@/lib/projects/notes', () => ({ listProjectNotes: (...args: unknown[]) => listProjectNotesMock(...args) }))
 vi.mock('@/lib/workbench/projects', () => ({
@@ -20,6 +25,11 @@ vi.mock('@/lib/workbench/workstreams', () => ({
   createWorkstream: (...args: unknown[]) => createWorkstreamMock(...args),
   attachArtifact: (...args: unknown[]) => attachArtifactMock(...args),
 }))
+vi.mock('@/lib/wiki/articles', () => ({
+  createManualDraftArticle: (...args: unknown[]) => createManualDraftArticleMock(...args),
+  WikiValidationError: FakeWikiValidationError,
+}))
+vi.mock('@/lib/wiki/relations', () => ({ linkRelatedArticle: (...args: unknown[]) => linkRelatedArticleMock(...args) }))
 vi.mock('@/lib/ai', () => ({ getActiveEmbeddingProvider: (...args: unknown[]) => getActiveEmbeddingProviderMock(...args) }))
 
 const { callTool, listTools } = await import('./tools')
@@ -29,7 +39,12 @@ const ctx = {
   profile: { id: 'user-1', role: 'admin' },
   supabase: {
     rpc: (...args: unknown[]) => rpcMock(...args),
-    from: () => ({ select: () => ({ in: (...inArgs: unknown[]) => wikiArticlesInMock(...inArgs) }) }),
+    from: () => ({
+      select: () => ({
+        in: (...inArgs: unknown[]) => wikiArticlesInMock(...inArgs),
+        eq: () => ({ maybeSingle: (...singleArgs: unknown[]) => wikiArticlesMaybeSingleMock(...singleArgs) }),
+      }),
+    }),
   },
 } as unknown as WorkbenchCallerContext
 
@@ -39,12 +54,16 @@ beforeEach(() => {
   approveProjectMock.mockReset()
   createWorkstreamMock.mockReset()
   attachArtifactMock.mockReset()
+  createManualDraftArticleMock.mockReset()
+  linkRelatedArticleMock.mockReset()
   getActiveEmbeddingProviderMock.mockReset()
   embedMock.mockReset()
   rpcMock.mockReset()
   wikiArticlesInMock.mockReset()
+  wikiArticlesMaybeSingleMock.mockReset()
   getActiveEmbeddingProviderMock.mockResolvedValue({ embed: embedMock })
   wikiArticlesInMock.mockResolvedValue({ data: [] })
+  wikiArticlesMaybeSingleMock.mockResolvedValue({ data: null })
 })
 
 describe('callTool', () => {
@@ -55,6 +74,69 @@ describe('callTool', () => {
   it('rejects input that fails the schema before the handler runs', async () => {
     await expect(callTool(ctx, 'approve_project', { projectId: 123 })).rejects.toThrow()
     expect(approveProjectMock).not.toHaveBeenCalled()
+  })
+
+  it('create_wiki_draft creates a draft article via createManualDraftArticle, always as status draft', async () => {
+    createManualDraftArticleMock.mockResolvedValue({ article: { id: 'article-1', slug: 'my-method' } })
+
+    const result = await callTool(ctx, 'create_wiki_draft', {
+      title: 'My Method',
+      category: 'platform_handbook',
+      quickHelp: 'Use this when...',
+      content: '## Goal\n\n...',
+    })
+
+    expect(createManualDraftArticleMock).toHaveBeenCalledWith(
+      ctx.supabase,
+      expect.objectContaining({
+        slug: 'my-method',
+        title: 'My Method',
+        category: 'platform_handbook',
+        quickHelp: 'Use this when...',
+        content: '## Goal\n\n...',
+        createdBy: 'user-1',
+      })
+    )
+    expect(result).toEqual({ articleId: 'article-1', slug: 'my-method', status: 'draft' })
+  })
+
+  it('create_wiki_draft rejects a category outside the allowed Handbook/Product-Handbook set', async () => {
+    await expect(
+      callTool(ctx, 'create_wiki_draft', { title: 'X', category: 'governance', quickHelp: 'x', content: 'x' })
+    ).rejects.toThrow()
+    expect(createManualDraftArticleMock).not.toHaveBeenCalled()
+  })
+
+  it('create_wiki_draft retries once with a suffixed slug on a slug collision', async () => {
+    createManualDraftArticleMock
+      .mockRejectedValueOnce(new FakeWikiValidationError('Slug "my-method-workbench-method" is already in use'))
+      .mockResolvedValueOnce({ article: { id: 'article-2', slug: 'my-method-workbench-method-abcd' } })
+
+    const result = await callTool(ctx, 'create_wiki_draft', {
+      title: 'My Method',
+      category: 'platform_handbook',
+      quickHelp: 'Use this when...',
+      content: '## Goal',
+    })
+
+    expect(createManualDraftArticleMock).toHaveBeenCalledTimes(2)
+    expect(result).toEqual({ articleId: 'article-2', slug: 'my-method-workbench-method-abcd', status: 'draft' })
+  })
+
+  it('create_wiki_draft links each found related article title, skipping ones that do not resolve', async () => {
+    createManualDraftArticleMock.mockResolvedValue({ article: { id: 'article-1', slug: 'my-method-workbench-method' } })
+    wikiArticlesMaybeSingleMock.mockResolvedValueOnce({ data: { id: 'related-1' } }).mockResolvedValueOnce({ data: null })
+
+    await callTool(ctx, 'create_wiki_draft', {
+      title: 'My Method',
+      category: 'platform_handbook',
+      quickHelp: 'x',
+      content: 'x',
+      relatedArticleTitles: ['Existing Method (Workbench Method)', 'Nonexistent Method (Workbench Method)'],
+    })
+
+    expect(linkRelatedArticleMock).toHaveBeenCalledTimes(1)
+    expect(linkRelatedArticleMock).toHaveBeenCalledWith(ctx.supabase, 'article-1', 'related-1')
   })
 
   it('get_navigation_guide returns the full catalogue when no topic is given, excluding the Ember-behavior/process sections', async () => {
@@ -187,10 +269,11 @@ describe('callTool', () => {
 })
 
 describe('listTools', () => {
-  it('lists all seven registered tools with descriptions', () => {
+  it('lists all eight registered tools with descriptions', () => {
     const names = listTools().map((t) => t.name)
     expect(names).toEqual([
       'get_navigation_guide',
+      'create_wiki_draft',
       'search_wiki',
       'list_project_notes',
       'create_project',

@@ -186,6 +186,11 @@ const TOOL_METADATA: Record<string, Pick<AssistantToolDescriptor, 'requiredPermi
     enforcement: 'kb_sandbox_enforced',
     enforcedBy: 'docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-CATALOGUE.md, read directly -- no approval workflow (see src/lib/mcp/tools.ts)',
   },
+  create_wiki_draft: {
+    requiredPermission: 'Curator or admin only -- fails via RLS for any other role.',
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'wiki_articles_insert_staff row-level security; always status=\'draft\', never approved by this or any AI-generated path',
+  },
   search_wiki: {
     requiredPermission: 'Any signed-in user; results are already-approved Wiki content only.',
     enforcement: 'kb_sandbox_enforced',
