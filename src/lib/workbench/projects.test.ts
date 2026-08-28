@@ -8,6 +8,11 @@ vi.mock('@/lib/supabase/admin', () => ({
       select: () => ({
         in: async () => ({ data: [{ id: 'user-2', email: 'teammate@example.com' }], error: null }),
       }),
+      // createProject's best-effort project_status_history log (see
+      // logStatusChange in ./projects) also goes through this admin
+      // client -- a no-op insert here keeps that logging silent in tests
+      // that don't care about it, rather than a swallowed-but-noisy error.
+      insert: async () => ({ data: null, error: null }),
     }),
   }),
 }))

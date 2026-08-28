@@ -1,7 +1,7 @@
 import 'server-only'
 import { AuthError } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import type { WorkbenchCallerContext } from './context'
@@ -67,6 +67,7 @@ export async function createProject(
     .select()
     .single()
   if (error || !project) throw error ?? new Error('Failed to create project')
+  await logStatusChange(project.id, null, 'draft', user.id)
 
   if (input.knowledgeBaseId) {
     await supabase
@@ -195,22 +196,82 @@ export async function updateProjectNotes(ctx: WorkbenchCallerContext, projectId:
 // column-level. The permission check below is the real gate for this one
 // narrow column.
 export async function approveProject(ctx: WorkbenchCallerContext, projectId: string) {
-  const { user, profile, supabase } = ctx
+  await requireCanApprove(ctx, projectId)
+  const admin = createAdminClient()
+  // Approve is intentionally unconditional (works from any pre-approved
+  // status, not just 'review') -- read the current value first so the
+  // history entry's from_status is accurate rather than assumed.
+  const { data: before, error: readError } = await admin.from('projects').select('status').eq('id', projectId).single()
+  if (readError || !before) throw readError ?? new Error('Project not found')
+  const { error } = await admin.from('projects').update({ status: 'completed' }).eq('id', projectId)
+  if (error) throw error
+  await logStatusChange(projectId, before.status, 'completed', ctx.user.id)
+}
 
+// Initial Draft -> Working on it -> For Approval -> Approved (or back to
+// Working on it). Same permission bar as approveProject -- whoever can
+// approve a project can also move it through the stages leading up to
+// that. Each transition function only fires from its expected prior status
+// -- the .eq(...) guard, checked via the returned row so a stale/raced
+// click reports a clear error instead of silently logging a transition
+// that didn't happen.
+async function requireCanApprove(ctx: WorkbenchCallerContext, projectId: string) {
+  const { user, profile, supabase } = ctx
   const { data: membership } = await supabase
     .from('project_members')
     .select('role')
     .eq('project_id', projectId)
     .eq('user_id', user.id)
     .maybeSingle()
-
   const canApprove =
     profile.role === 'admin' || profile.role === 'curator' || membership?.role === 'owner' || membership?.role === 'curator'
-  if (!canApprove) throw new AuthError('Only a curator or admin can approve this project')
+  if (!canApprove) throw new AuthError('Only a curator or admin can update this project\'s status')
+}
 
+// Written only from here (the service layer), never a database trigger --
+// see the migration comment for why actor_id needs the real acting user
+// rather than auth.uid(). Best-effort: a logging failure must not turn a
+// successful status change into a reported failure.
+async function logStatusChange(projectId: string, fromStatus: ProjectStatus | null, toStatus: ProjectStatus, actorId: string) {
+  try {
+    const admin = createAdminClient()
+    await admin.from('project_status_history').insert({ project_id: projectId, from_status: fromStatus, to_status: toStatus, actor_id: actorId })
+  } catch (err) {
+    console.error(`Failed to log project status change (${projectId}: ${fromStatus} -> ${toStatus}):`, err)
+  }
+}
+
+async function transitionProjectStatus(projectId: string, from: ProjectStatus, to: ProjectStatus, actorId: string) {
   const admin = createAdminClient()
-  const { error } = await admin.from('projects').update({ status: 'completed' }).eq('id', projectId)
+  const { data, error } = await admin.from('projects').update({ status: to }).eq('id', projectId).eq('status', from).select('id')
   if (error) throw error
+  if (!data || data.length === 0) throw new ProjectValidationError(`Project is not currently "${from}" -- someone else may have already changed its status`)
+  await logStatusChange(projectId, from, to, actorId)
+}
+
+export async function startWorkingOnProject(ctx: WorkbenchCallerContext, projectId: string) {
+  await requireCanApprove(ctx, projectId)
+  await transitionProjectStatus(projectId, 'draft', 'active', ctx.user.id)
+}
+
+export async function submitProjectForApproval(ctx: WorkbenchCallerContext, projectId: string) {
+  await requireCanApprove(ctx, projectId)
+  await transitionProjectStatus(projectId, 'active', 'review', ctx.user.id)
+}
+
+export async function sendProjectBackToWorking(ctx: WorkbenchCallerContext, projectId: string) {
+  await requireCanApprove(ctx, projectId)
+  await transitionProjectStatus(projectId, 'review', 'active', ctx.user.id)
+}
+
+export async function listProjectStatusHistory(ctx: WorkbenchCallerContext, projectId: string) {
+  const { data, error } = await ctx.supabase
+    .from('project_status_history')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data ?? []
 }
 
 // Shared method/approach, common to every workstream in the project -- see
