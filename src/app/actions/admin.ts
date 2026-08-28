@@ -10,10 +10,31 @@ import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 // the same two-step pattern the old app's admin-api edge function used, just
 // living in this app's server runtime instead of a separate Edge Function.
 
+// Curator-creatable (per Mike, 2026-08-28 -- creation moved off the admin
+// page and into the /upload flow); always inserted as 'pending' regardless
+// of caller, since only kb_admin_manage's RLS policy can move it to
+// 'approved'/'rejected' -- see approveKnowledgeBaseAction/rejectKnowledgeBaseAction.
 export async function createKnowledgeBase(id: string, name: string, description: string) {
+  await requireRole('curator')
+  const admin = createAdminClient()
+  const { error } = await admin.from('knowledge_bases').insert({ id, name, description: description || null, status: 'pending' })
+  if (error) throw error
+  revalidatePath('/admin')
+  revalidatePath('/upload')
+}
+
+export async function approveKnowledgeBaseAction(id: string) {
   await requireRole('admin')
   const admin = createAdminClient()
-  const { error } = await admin.from('knowledge_bases').insert({ id, name, description: description || null })
+  const { error } = await admin.from('knowledge_bases').update({ status: 'approved' }).eq('id', id)
+  if (error) throw error
+  revalidatePath('/admin')
+}
+
+export async function rejectKnowledgeBaseAction(id: string) {
+  await requireRole('admin')
+  const admin = createAdminClient()
+  const { error } = await admin.from('knowledge_bases').update({ status: 'rejected' }).eq('id', id)
   if (error) throw error
   revalidatePath('/admin')
 }
