@@ -12,7 +12,9 @@ function randomPassword() {
 }
 
 const ROLES = ['consultant', 'curator', 'admin']
-const ALL_KBS = ['fhir', 'vbc', 'grants', 'billing']
+// 'fhir' dropped -- now retained-for-reference only, assigning it to a new/
+// updated profile is rejected by a DB trigger.
+const ALL_KBS = ['vbc', 'grants', 'billing']
 
 async function findUserByEmail(email) {
   // supabase-js 2.45 has no getUserByEmail admin method; page through listUsers.
@@ -56,7 +58,11 @@ for (const role of ROLES) {
     full_name: `Test ${role[0].toUpperCase()}${role.slice(1)}`,
     role,
     is_active: true,
-    assigned_kbs: role === 'consultant' ? [] : ALL_KBS,
+    // ALL_KBS entries have since been retired to reference-only, one by one,
+    // and a DB trigger now rejects assigning any of them to a profile --
+    // leaving this empty for every role rather than chasing which KBs are
+    // still assignable (KB assignment isn't needed for this script's purpose).
+    assigned_kbs: [],
   })
   if (profileError) throw profileError
 
