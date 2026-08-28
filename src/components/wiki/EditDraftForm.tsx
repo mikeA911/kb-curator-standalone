@@ -5,6 +5,13 @@ import { useRouter } from 'next/navigation'
 import type { WikiVersion } from '@/types/database'
 import { editDraftAction } from '@/app/actions/wiki'
 
+function splitCommaList(value: string): string[] {
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 export function EditDraftForm({
   articleId,
   slug,
@@ -19,6 +26,9 @@ export function EditDraftForm({
   const [content, setContent] = useState(initialVersion?.content ?? '')
   const [implementationNotes, setImplementationNotes] = useState(initialVersion?.implementation_notes ?? '')
   const [limitations, setLimitations] = useState(initialVersion?.limitations ?? '')
+  const [applicableRoles, setApplicableRoles] = useState((initialVersion?.applicable_roles ?? []).join(', '))
+  const [relatedRoutes, setRelatedRoutes] = useState((initialVersion?.related_routes ?? []).join(', '))
+  const [applicableVersion, setApplicableVersion] = useState(initialVersion?.applicable_version ?? '')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -27,7 +37,15 @@ export function EditDraftForm({
     setError(null)
     setSubmitting(true)
     try {
-      await editDraftAction(articleId, { quickHelp, content, implementationNotes, limitations })
+      await editDraftAction(articleId, {
+        quickHelp,
+        content,
+        implementationNotes,
+        limitations,
+        applicableRoles: splitCommaList(applicableRoles),
+        relatedRoutes: splitCommaList(relatedRoutes),
+        applicableVersion: applicableVersion.trim() || null,
+      })
       router.push(`/wiki/${slug}`)
       router.refresh()
     } catch (err) {
@@ -53,6 +71,18 @@ export function EditDraftForm({
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Limitations</span>
         <textarea rows={3} value={limitations} onChange={(e) => setLimitations(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Applicable roles (comma-separated)</span>
+        <input value={applicableRoles} onChange={(e) => setApplicableRoles(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Related routes (comma-separated)</span>
+        <input value={relatedRoutes} onChange={(e) => setRelatedRoutes(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm font-mono" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Applicable version / deployment reference</span>
+        <input value={applicableVersion} onChange={(e) => setApplicableVersion(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
       </label>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button disabled={submitting} className="self-start rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

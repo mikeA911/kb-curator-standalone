@@ -70,6 +70,15 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
               <span className="font-medium">Quick help: </span>
               {version.quick_help}
             </p>
+            {(version.applicable_roles?.length || version.related_routes?.length || version.applicable_version) && (
+              <p className="mb-4 text-xs text-zinc-500">
+                {version.applicable_roles?.length ? <>Roles: {version.applicable_roles.join(', ')}</> : null}
+                {version.applicable_roles?.length && (version.related_routes?.length || version.applicable_version) ? ' · ' : null}
+                {version.related_routes?.length ? <>Routes: {version.related_routes.join(', ')}</> : null}
+                {version.related_routes?.length && version.applicable_version ? ' · ' : null}
+                {version.applicable_version ? <>Version: {version.applicable_version}</> : null}
+              </p>
+            )}
             <Markdown text={version.content} />
             {version.implementation_notes && (
               <div className="mt-4">

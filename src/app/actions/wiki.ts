@@ -70,6 +70,9 @@ export async function createManualArticleAction(input: {
   implementationNotes: string
   limitations: string
   knowledgeBaseId: string | null
+  applicableRoles?: string[]
+  relatedRoutes?: string[]
+  applicableVersion?: string | null
 }) {
   const { user, supabase } = await requireRole('curator')
 
@@ -82,6 +85,9 @@ export async function createManualArticleAction(input: {
     content: input.content,
     implementationNotes: input.implementationNotes || null,
     limitations: input.limitations || null,
+    applicableRoles: input.applicableRoles?.length ? input.applicableRoles : null,
+    relatedRoutes: input.relatedRoutes?.length ? input.relatedRoutes : null,
+    applicableVersion: input.applicableVersion || null,
     knowledgeBaseId: input.knowledgeBaseId,
     createdBy: user.id,
   })
@@ -223,7 +229,15 @@ async function createAIAssistedDraftFromArtifact(
 
 export async function editDraftAction(
   articleId: string,
-  input: { quickHelp: string; content: string; implementationNotes: string; limitations: string }
+  input: {
+    quickHelp: string
+    content: string
+    implementationNotes: string
+    limitations: string
+    applicableRoles?: string[]
+    relatedRoutes?: string[]
+    applicableVersion?: string | null
+  }
 ) {
   const { user, supabase } = await requireRole('curator')
   await createNextDraftVersion(
@@ -234,6 +248,9 @@ export async function editDraftAction(
       content: input.content,
       implementationNotes: input.implementationNotes || null,
       limitations: input.limitations || null,
+      applicableRoles: input.applicableRoles?.length ? input.applicableRoles : null,
+      relatedRoutes: input.relatedRoutes?.length ? input.relatedRoutes : null,
+      applicableVersion: input.applicableVersion || null,
     },
     user.id
   )

@@ -65,6 +65,13 @@ function slugify(title: string) {
     .replace(/(^-|-$)/g, '')
 }
 
+function splitCommaList(value: string): string[] {
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 function ManualForm({ categories }: { categories: WikiCategory[] }) {
   const router = useRouter()
   const [title, setTitle] = useState('')
@@ -76,6 +83,9 @@ function ManualForm({ categories }: { categories: WikiCategory[] }) {
   const [content, setContent] = useState('')
   const [implementationNotes, setImplementationNotes] = useState('')
   const [limitations, setLimitations] = useState('')
+  const [applicableRoles, setApplicableRoles] = useState('')
+  const [relatedRoutes, setRelatedRoutes] = useState('')
+  const [applicableVersion, setApplicableVersion] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -98,6 +108,9 @@ function ManualForm({ categories }: { categories: WikiCategory[] }) {
         content,
         implementationNotes,
         limitations,
+        applicableRoles: splitCommaList(applicableRoles),
+        relatedRoutes: splitCommaList(relatedRoutes),
+        applicableVersion: applicableVersion.trim() || null,
         knowledgeBaseId: null,
       })
       router.push(`/wiki/${result.slug}`)
@@ -144,6 +157,15 @@ function ManualForm({ categories }: { categories: WikiCategory[] }) {
       </Field>
       <Field label="Limitations (optional)">
         <textarea rows={3} value={limitations} onChange={(e) => setLimitations(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
+      </Field>
+      <Field label="Applicable roles (comma-separated, optional — e.g. curator, admin)">
+        <input value={applicableRoles} onChange={(e) => setApplicableRoles(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
+      </Field>
+      <Field label="Related routes (comma-separated, optional — e.g. /projects, /wiki)">
+        <input value={relatedRoutes} onChange={(e) => setRelatedRoutes(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm font-mono" />
+      </Field>
+      <Field label="Applicable version / deployment reference (optional)">
+        <input value={applicableVersion} onChange={(e) => setApplicableVersion(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm" />
       </Field>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button disabled={submitting} className="self-start rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

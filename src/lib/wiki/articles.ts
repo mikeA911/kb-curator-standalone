@@ -9,6 +9,9 @@ export interface DraftContentInput {
   content: string
   implementationNotes?: string | null
   limitations?: string | null
+  applicableRoles?: string[] | null
+  relatedRoutes?: string[] | null
+  applicableVersion?: string | null
 }
 
 export interface CreateManualArticleInput extends DraftContentInput {
@@ -114,6 +117,9 @@ async function insertVersion(
       content: input.content,
       implementation_notes: input.implementationNotes ?? null,
       limitations: input.limitations ?? null,
+      applicable_roles: input.applicableRoles ?? null,
+      related_routes: input.relatedRoutes ?? null,
+      applicable_version: input.applicableVersion ?? null,
       verification_status: 'unverified',
       last_verified_at: null,
       generated_by: input.generatedBy,
