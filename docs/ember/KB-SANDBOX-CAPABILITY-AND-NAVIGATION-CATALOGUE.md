@@ -3,7 +3,7 @@
 **Purpose:** Living product-navigation knowledge for Ember, release documentation, future application discovery, and a possible KB Sandbox MCP interface  
 **Status:** Initial baseline — expand as workflows are verified  
 **Application version:** 0.1.0  
-**Last code verification:** 2026-08-28  
+**Last code verification:** 2026-08-29  
 
 ## How this document is used
 
@@ -143,9 +143,22 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Navigation:** Projects → select project → choose the relevant workstream, assessment, notes, members, access, governance, publication, or Ember action.
 - **Outcome:** Work remains bound to the selected project and its approved evidence.
 - **Ember guidance:** When entered through **Ask Assistant about this project**, Ember should preserve the project binding, search only authorized project knowledge plus approved platform guidance, and label citations accordingly.
-- **Boundaries:** General unbound chat must not retrieve project-private evidence merely because the user happens to be a project member. Consequential decisions remain human- or authority-approved.
+- **Boundaries:** General unbound chat must not retrieve project-private evidence merely because the user happens to be a project member. Consequential decisions remain human- or authority-approved. As of 2026-08-29, a project or resource classified above the selected model's approved AI-processing sensitivity blocks the turn before any content reaches that model -- Ember explains the block and names the sensitivity tier rather than silently refusing or answering without the restricted evidence.
 - **Exposure:** Ember-readable/actionable within the project binding; MCP access must preserve caller identity, project membership, and approval rules.
-- **Verification:** Project routes and previously live-verified project-bound retrieval behavior; reviewed 2026-08-28.
+- **Verification:** Project routes and previously live-verified project-bound retrieval behavior; reviewed 2026-08-29.
+
+### Manage access and AI-processing sensitivity
+
+- **Intent:** Restrict a source, article, artifact, or the project itself to specific people/groups (human access) and separately control which AI providers may process it (AI-processing sensitivity).
+- **Users and authority:** Project owner, or platform admin via the same manage boundary.
+- **Prerequisites:** Access to the selected project; owner or admin authority.
+- **Start:** `/projects/[id]/access`
+- **Navigation:** Project → **Access & Evidence** → classify a listed resource, or set the project's own sensitivity in the **This project** section → save.
+- **Outcome:** A resource or the project gains (or changes) a human-access classification, an AI-processing sensitivity tier, or both -- independently. Restricting human access requires granting at least one group or named member in the same action. An unclassified resource or project defaults to Internal for AI-processing purposes, never Public.
+- **Ember guidance:** Ember does not perform classification itself; it may explain that a blocked response is due to this policy and direct an eligible user to this page. Ember must not name or describe a resource the current user cannot see.
+- **Boundaries:** Human access and AI-processing sensitivity are separate axes -- changing one never implies the other. All classification and grant changes are recorded in an audit log.
+- **Exposure:** Not an Ember-actionable tool; administrative page only, reached via navigation guidance.
+- **Verification:** `/projects/[id]/access`, `AccessEvidenceManager.tsx`; code verified 2026-08-29.
 
 ## 4. Wiki
 
