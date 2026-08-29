@@ -19,6 +19,13 @@ export default async function WikiArticlePage({ params }: { params: Promise<{ sl
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  // /wiki/* lives under the (app) route group, whose own layout
+  // (src/app/(app)/layout.tsx) already redirects any signed-out visitor to
+  // /login before this page renders at all -- so this page never needs its
+  // own is_public-aware branching. A genuinely public reference (the About
+  // page's inlined key terms, for example) is kept as plain copy on a
+  // public page instead of linking here, rather than adding a second public
+  // route for this one case (per Mike, 2026-08-28).
   if (!user) redirect('/login')
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   const isStaff = profile?.role === 'curator' || profile?.role === 'admin'

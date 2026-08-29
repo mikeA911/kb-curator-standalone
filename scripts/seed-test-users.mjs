@@ -12,9 +12,6 @@ function randomPassword() {
 }
 
 const ROLES = ['consultant', 'curator', 'admin']
-// 'fhir' dropped -- now retained-for-reference only, assigning it to a new/
-// updated profile is rejected by a DB trigger.
-const ALL_KBS = ['vbc', 'grants', 'billing']
 
 async function findUserByEmail(email) {
   // supabase-js 2.45 has no getUserByEmail admin method; page through listUsers.
