@@ -21,6 +21,13 @@ vi.mock('@/lib/ai', async () => {
   return {
     AIProviderError: actual.AIProviderError,
     classifyProviderError: actual.classifyProviderError,
+    // Real implementations (not mocked) -- they only touch ctx.supabase,
+    // which fakeCtx() below stubs with sensible defaults ('public'/no
+    // eligibility row -> never blocks) for every test that isn't
+    // specifically about the sensitivity check itself.
+    AISensitivityError: actual.AISensitivityError,
+    getEffectiveSensitivity: actual.getEffectiveSensitivity,
+    assertProviderEligible: actual.assertProviderEligible,
     resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
     getDefaultModel: (...args: unknown[]) => getDefaultModelMock(...args),
   }
@@ -62,16 +69,38 @@ const { AIProviderError } = await import('@/lib/ai')
 // -- project-bound behavior (getProjectContext, search_project_knowledge)
 // has its own dedicated coverage in project-knowledge-tool.test.ts and
 // project-context.test.ts, not here.
+// Table-aware from() -- the Information Sensitivity Classification check
+// (src/lib/ai/sensitivity.ts) added its own queries against ai_providers,
+// resource_access_policies, wiki_articles, and ai_provider_sensitivity_eligibility
+// that run on every generateChat call, alongside the pre-existing
+// conversations-table calls this stub already supported. Defaults below
+// (no policy rows, no eligibility row) resolve to 'public'/'internal' with
+// no test-visible effect -- see sensitivity.test.ts for the classification
+// logic itself; this file only needs the check to not crash or block.
 function fakeCtx(): WorkbenchCallerContext {
   return {
     user: { id: 'user-1' },
     profile: { id: 'user-1', role: 'curator' },
     supabase: {
-      from: () => ({
-        update: (...args: unknown[]) => updateMock(...args),
-        eq: () => ({}),
-        select: () => ({ eq: () => ({ single: async () => ({ data: { id: 'conv-1', project_id: null }, error: null }) }) }),
-      }),
+      from: (table: string) => {
+        if (table === 'ai_providers') {
+          return { select: () => ({ eq: () => ({ single: async () => ({ data: { id: 'provider-1' }, error: null }) }) }) }
+        }
+        if (table === 'resource_access_policies') {
+          return { select: () => ({ eq: () => ({ in: async () => ({ data: [], error: null }) }) }) }
+        }
+        if (table === 'wiki_articles') {
+          return { select: () => ({ in: async () => ({ data: [], error: null }) }) }
+        }
+        if (table === 'ai_provider_sensitivity_eligibility') {
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }
+        }
+        return {
+          update: (...args: unknown[]) => updateMock(...args),
+          eq: () => ({}),
+          select: () => ({ eq: () => ({ single: async () => ({ data: { id: 'conv-1', project_id: null }, error: null }) }) }),
+        }
+      },
     },
   } as unknown as WorkbenchCallerContext
 }
@@ -148,8 +177,9 @@ describe('runAssistantTurn', () => {
     // A brand-new conversation (conversationId param was null) can't have a
     // summary yet -- not even looked up.
     expect(getConversationSummaryMock).not.toHaveBeenCalled()
-    // Refreshed after a successful reply, with the turn's truncation status.
-    expect(maybeRefreshSummaryMock).toHaveBeenCalledWith(expect.anything(), 'conv-1', false)
+    // Refreshed after a successful reply, with the turn's truncation status
+    // and (for this non-project conversation) an undefined projectSensitivity.
+    expect(maybeRefreshSummaryMock).toHaveBeenCalledWith(expect.anything(), 'conv-1', false, undefined)
   })
 
   it('passes an explicit model selection straight through to resolveChatProvider', async () => {
@@ -395,6 +425,88 @@ describe('runAssistantTurn -- structured responses', () => {
     expect(buildPersistedEnvelopeMock).toHaveBeenCalledTimes(1)
     const retrieved = buildPersistedEnvelopeMock.mock.calls[0][2]
     expect(retrieved.wikiArticleSlugs.has('openapi-discovery-workbench-method')).toBe(true)
+
+    // Phase 2, increment 1: the same retrieval also has to be persisted onto
+    // the tool-role row (not just held in-memory for this turn), since
+    // summary.ts has no access to loop.ts's in-memory maps and rebuilds its
+    // policy manifest from chat_messages.retrieved_resources alone.
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.role === 'tool')
+    expect(toolAppend?.[1].retrievedResources).toEqual([{ resourceType: 'wiki_article', resourceId: 'openapi-discovery-workbench-method' }])
+  })
+
+  // Information Sensitivity Classification (Shadow AI blog, 2026-08-28):
+  // once a retrieved resource is classified above what the active provider
+  // is approved to receive, the NEXT generateChat call (which would include
+  // that resource's content in its prompt) must never fire -- the check
+  // runs before inference, not after.
+  it('blocks the next generateChat call once retrieved evidence exceeds the provider\'s approved sensitivity', async () => {
+    getToolSpecsMock.mockReturnValue([{ name: 'search_wiki', description: '', parameters: {} }])
+    callToolMock.mockResolvedValue({ articles: [{ articleId: 'a1', slug: 'restricted-article', title: 'Restricted', category: null, similarity: 0.9, content: '...' }] })
+    generateChatMock.mockResolvedValueOnce({
+      message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_wiki', arguments: { query: 'restricted' } }] },
+      model: 'test-model',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    })
+    // If the block didn't fire, this second response would be consumed --
+    // asserting generateChatMock is called exactly once (below) is what
+    // actually proves the pre-inference check worked.
+
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'wiki_articles') {
+        return { select: () => ({ in: async () => ({ data: [{ id: 'article-restricted' }], error: null }) }) }
+      }
+      if (table === 'resource_access_policies') {
+        return { select: () => ({ eq: () => ({ in: async () => ({ data: [{ resource_id: 'article-restricted', information_sensitivity: 'restricted' }], error: null }) }) }) }
+      }
+      if (table === 'ai_provider_sensitivity_eligibility') {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { max_sensitivity: 'internal' }, error: null }) }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+
+    const result = await runAssistantTurn(ctx, null, 'What does the restricted article say?')
+
+    expect(result.isSensitivityBlock).toBe(true)
+    expect(result.reply).toMatch(/Restricted information/i)
+    expect(generateChatMock).toHaveBeenCalledTimes(1)
+  })
+
+  // Closes the gap flagged in docs/dev-request-enterprise-shadow-ai-
+  // governance-later-phases.md: a project's own name/goal is embedded into
+  // the system prompt on every turn (buildProjectPromptAddendum), not only
+  // once a tool has retrieved something -- so a classified project must
+  // block the VERY FIRST generateChat call, before any search_wiki/
+  // search_project_knowledge call could even run.
+  it("blocks the first generateChat call when the bound project itself is classified above the provider's approved sensitivity", async () => {
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { id: 'proj-1', name: 'Restricted Project', goal: null, information_sensitivity: 'restricted' }, error: null }),
+            }),
+          }),
+        }
+      }
+      if (table === 'project_knowledge_bases' || table === 'project_wiki_articles') {
+        return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+      }
+      if (table === 'ai_provider_sensitivity_eligibility') {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { max_sensitivity: 'internal' }, error: null }) }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+    createConversationMock.mockResolvedValueOnce({ id: 'conv-1', project_id: 'proj-1' })
+
+    const result = await runAssistantTurn(ctx, null, 'What is this project about?', undefined, 'proj-1')
+
+    expect(result.isSensitivityBlock).toBe(true)
+    expect(result.reply).toMatch(/Restricted information/i)
+    expect(generateChatMock).not.toHaveBeenCalled()
   })
 
   it('drops other requested tool calls when present_assistant_response is submitted in the same batch', async () => {

@@ -4,6 +4,14 @@ import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/lib/auth'
 import * as evidenceAccess from '@/lib/projects/evidence-access'
 import type { AccessGroupInput, ClassifyResourceInput } from '@/lib/projects/evidence-access'
+import type { InformationSensitivity } from '@/types/database'
+
+export async function setProjectInformationSensitivityAction(projectId: string, informationSensitivity: InformationSensitivity | null) {
+  const ctx = await requireUser()
+  await evidenceAccess.setProjectInformationSensitivity(ctx, projectId, informationSensitivity)
+  revalidatePath(`/projects/${projectId}/access`)
+  revalidatePath(`/projects/${projectId}`)
+}
 
 export async function createAccessGroupAction(projectId: string, input: AccessGroupInput) {
   const ctx = await requireUser()

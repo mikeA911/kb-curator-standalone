@@ -23,12 +23,13 @@ export default async function ProviderDetailPage({ params }: { params: Promise<{
   // §1: "must show assignments across all providers, even when viewing one
   // provider's detail page"), so this fetches everything rather than just
   // this provider's own models.
-  const [models, allProviders, allModels, conversationalOptions, structuredOutputOptions] = await Promise.all([
+  const [models, allProviders, allModels, conversationalOptions, structuredOutputOptions, sensitivityEligibility] = await Promise.all([
     listModels(supabase, { providerId: id }),
     listProviders(supabase),
     listModels(supabase),
     listChatCapableModels(supabase),
     listStructuredOutputCapableModels(supabase),
+    supabase.from('ai_provider_sensitivity_eligibility').select('max_sensitivity').eq('provider_id', id).maybeSingle(),
   ])
   const configured = Boolean(env.byName(provider.api_key_env_var))
 
@@ -49,6 +50,7 @@ export default async function ProviderDetailPage({ params }: { params: Promise<{
         configured={configured}
         currentConversational={currentConversational}
         currentStructuredOutput={currentStructuredOutput}
+        maxSensitivity={sensitivityEligibility.data?.max_sensitivity ?? null}
       />
     </div>
   )

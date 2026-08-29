@@ -27,3 +27,6 @@ export {
   listStructuredOutputCapableModels,
 } from './registry'
 export type { ChatProviderInfo, ChatModelOption } from './registry'
+
+export { AISensitivityError, SENSITIVITY_RANK, getEffectiveSensitivity, assertProviderEligible, evaluatePolicy, withPolicyGate } from './sensitivity'
+export type { ContextManifest, ContextManifestEntry, PolicySubject, PolicyDecision } from './sensitivity'

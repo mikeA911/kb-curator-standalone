@@ -5,6 +5,7 @@ import type {
   EvidenceAuditEventType,
   EvidenceClassification,
   EvidenceResourceType,
+  InformationSensitivity,
   ProjectAccessGroup,
   ProjectAccessGroupMember,
   ResourceAccessAuditLogEntry,
@@ -147,6 +148,27 @@ export async function revokeGroupMembership(ctx: WorkbenchCallerContext, project
   })
 }
 
+// --- Project-level AI sensitivity ----------------------------------------------
+// Deliberately NOT part of classifyResource/resource_access_policies below --
+// this closes the "project metadata in system prompts" gap (docs/dev-
+// request-enterprise-shadow-ai-governance-later-phases.md): a project's own
+// name/goal is embedded into the system prompt on every turn regardless of
+// what's retrieved, and has no EvidenceClassification (human-access)
+// dimension of its own -- see the column comment in
+// 20260829120001_project_information_sensitivity.sql for why this is a
+// plain projects column, not a resource_access_policies row. Authorization
+// is the caller's own RLS-scoped client against projects_update_managers
+// (can_manage_project), same boundary as classifyResource's five tables.
+export async function setProjectInformationSensitivity(
+  ctx: WorkbenchCallerContext,
+  projectId: string,
+  informationSensitivity: InformationSensitivity | null
+): Promise<void> {
+  requireManager(ctx)
+  const { error } = await ctx.supabase.from('projects').update({ information_sensitivity: informationSensitivity }).eq('id', projectId)
+  if (error) throw error
+}
+
 // --- Resource classification and grants ---------------------------------------
 
 export interface EvidenceResourceSummary {
@@ -211,6 +233,12 @@ export interface ClassifyResourceInput {
   resourceType: EvidenceResourceType
   resourceId: string
   classification: EvidenceClassification
+  // Separate axis from `classification` -- "which AI models may process this
+  // content" (src/lib/ai/sensitivity.ts), not "which humans may see it".
+  // Omitted = leave whatever was previously set untouched (this upsert
+  // writes the whole row, so the existing value is read back and re-applied
+  // below rather than silently cleared).
+  informationSensitivity?: InformationSensitivity | null
   rationale?: string | null
   accessStewardUserId?: string | null
   reviewAt?: string | null
@@ -243,7 +271,7 @@ export async function classifyResource(ctx: WorkbenchCallerContext, projectId: s
 
   const { data: existing } = await ctx.supabase
     .from('resource_access_policies')
-    .select('id, classification')
+    .select('id, classification, information_sensitivity')
     .eq('resource_type', input.resourceType)
     .eq('resource_id', input.resourceId)
     .maybeSingle()
@@ -256,6 +284,7 @@ export async function classifyResource(ctx: WorkbenchCallerContext, projectId: s
         resource_type: input.resourceType,
         resource_id: input.resourceId,
         classification: input.classification,
+        information_sensitivity: input.informationSensitivity !== undefined ? input.informationSensitivity : (existing?.information_sensitivity ?? null),
         access_steward_user_id: input.accessStewardUserId ?? null,
         review_at: input.reviewAt ?? null,
         rationale: input.rationale ?? null,

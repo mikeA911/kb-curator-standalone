@@ -2,7 +2,7 @@ import 'server-only'
 import OpenAI from 'openai'
 import { env } from '@/lib/env'
 import { AIConfigError } from '@/lib/ai'
-import type { AIModelType, AIModelStatus, AIProviderType } from '@/types/database'
+import type { AIModelType, AIModelStatus, AIProviderType, InformationSensitivity } from '@/types/database'
 import type { WorkbenchCallerContext } from './context'
 
 // Model/provider configuration is admin-only throughout this module --
@@ -36,6 +36,18 @@ export async function createProvider(
 
 export async function updateProviderEnabled(ctx: WorkbenchCallerContext, providerId: string, enabled: boolean) {
   const { error } = await ctx.supabase.from('ai_providers').update({ enabled }).eq('id', providerId)
+  if (error) throw error
+}
+
+// Information Sensitivity Classification (Shadow AI blog, 2026-08-28) --
+// the highest sensitivity tier this provider is approved to receive. Admin
+// only (RLS: ai_provider_sensitivity_eligibility_admin_manage). No row =
+// treated as 'internal'-only by the enforcement side (src/lib/ai/sensitivity.ts),
+// so this upsert is the only way to raise a provider's ceiling.
+export async function setProviderMaxSensitivity(ctx: WorkbenchCallerContext, providerId: string, maxSensitivity: InformationSensitivity) {
+  const { error } = await ctx.supabase
+    .from('ai_provider_sensitivity_eligibility')
+    .upsert({ provider_id: providerId, max_sensitivity: maxSensitivity, updated_by: ctx.user.id }, { onConflict: 'provider_id' })
   if (error) throw error
 }
 

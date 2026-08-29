@@ -1,5 +1,6 @@
 import 'server-only'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
+import type { InformationSensitivity } from '@/types/database'
 import { listKnowledgeBasesForProject } from '@/lib/projects/queries'
 import { listArticlesForProject } from '@/lib/wiki/project-links'
 
@@ -11,6 +12,12 @@ export interface ProjectContext {
   id: string
   name: string
   goal: string | null
+  // Read by loop.ts's pre-inference sensitivity check -- name/goal are
+  // embedded into the system prompt every turn (buildProjectPromptAddendum),
+  // independent of whether any tool ever retrieves anything, so this has to
+  // travel with the context rather than being folded in only when evidence
+  // is retrieved. See 20260829120001_project_information_sensitivity.sql.
+  informationSensitivity: InformationSensitivity | null
   knowledgeBases: { id: string; name: string }[]
   wikiArticles: { id: string; slug: string; title: string }[]
 }
@@ -20,7 +27,11 @@ export interface ProjectContext {
 // confidentiality gate on the knowledge itself (RLS on the underlying
 // tables is that gate, enforced when the tools actually retrieve content).
 export async function getProjectContext(ctx: WorkbenchCallerContext, projectId: string): Promise<ProjectContext | null> {
-  const { data: project, error } = await ctx.supabase.from('projects').select('id, name, goal').eq('id', projectId).maybeSingle()
+  const { data: project, error } = await ctx.supabase
+    .from('projects')
+    .select('id, name, goal, information_sensitivity')
+    .eq('id', projectId)
+    .maybeSingle()
   if (error) throw error
   if (!project) return null
 
@@ -33,6 +44,7 @@ export async function getProjectContext(ctx: WorkbenchCallerContext, projectId: 
     id: project.id,
     name: project.name,
     goal: project.goal,
+    informationSensitivity: project.information_sensitivity,
     knowledgeBases,
     wikiArticles: articleLinks
       .map((l) => l.article)

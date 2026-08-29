@@ -629,6 +629,13 @@ export interface Project {
   // visitors, not just the curated public_profile summary. See
   // setPublicFullDetailAction and 20260817120001_public_full_detail.sql.
   public_full_detail: boolean
+  // Information Sensitivity Classification (Shadow AI blog, 2026-08-28):
+  // "which AI models may process this project's own name/goal" -- the same
+  // axis and enforcement as resource_access_policies.information_sensitivity,
+  // kept as a plain column here rather than a resource_access_policies row
+  // (see 20260829120001_project_information_sensitivity.sql). null =
+  // unclassified, treated as 'internal' by src/lib/ai/sensitivity.ts.
+  information_sensitivity: InformationSensitivity | null
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -755,6 +762,13 @@ export type EvidenceClassification =
   | 'customer_visible'
 export type AccessGrantStatus = 'active' | 'revoked'
 
+// Information Sensitivity Classification (Shadow AI blog, 2026-08-28):
+// answers "which AI models may process this resource's content" -- a
+// machine-eligibility axis, deliberately separate from EvidenceClassification
+// above (which answers "which humans can see this resource"). A simple
+// ordinal ladder -- see src/lib/ai/sensitivity.ts's SENSITIVITY_RANK.
+export type InformationSensitivity = 'public' | 'internal' | 'confidential' | 'restricted'
+
 export interface ProjectAccessGroup {
   id: string
   project_id: string
@@ -789,11 +803,22 @@ export interface ResourceAccessPolicy {
   resource_type: EvidenceResourceType
   resource_id: string
   classification: EvidenceClassification
+  information_sensitivity: InformationSensitivity | null
   access_steward_user_id: string | null
   review_at: string | null
   rationale: string | null
   created_by: string | null
   created_at: string
+  updated_at: string
+}
+
+// One row per AI provider -- the highest InformationSensitivity tier that
+// provider is approved to receive. No row = treated as 'internal'-only by
+// the enforcement side (the safe default), not "approved for everything".
+export interface AiProviderSensitivityEligibility {
+  provider_id: string
+  max_sensitivity: InformationSensitivity
+  updated_by: string | null
   updated_at: string
 }
 
@@ -1015,14 +1040,24 @@ export interface ChatMessageRow {
   // as pre-resolved routes, and a future schema-version change must fall
   // back gracefully rather than being assumed to match today's shape.
   response_payload: Record<string, unknown> | null
+  // Phase 2, increment 1: the COMPLETE set of resources this 'tool' row's
+  // call actually retrieved -- deliberately separate from
+  // response_payload.citations (a subset: only what the model chose to
+  // cite). Powers src/lib/chat/summary.ts's policy manifest, which needs
+  // every retrieved resource across the whole transcript, not just cited
+  // ones. Set only on a 'tool' row whose call retrieved something; null
+  // everywhere else, same convention as response_payload.
+  retrieved_resources: { resourceType: 'wiki_article' | 'knowledge_source'; resourceId: string }[] | null
   created_at: string
 }
 
 export type ChatMessageInsert = Omit<
   ChatMessageRow,
-  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'
+  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload' | 'retrieved_resources'
 > &
-  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'>>
+  Partial<
+    Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload' | 'retrieved_resources'>
+  >
 
 // ============================================
 // Workstream System Understanding Assessment
@@ -1693,6 +1728,7 @@ export type ProjectInsert = Omit<
   | 'published_by'
   | 'goal'
   | 'public_full_detail'
+  | 'information_sensitivity'
   | 'created_via'
   | 'assistant_prompt_version'
   | 'assistant_conversation_id'
@@ -1707,6 +1743,7 @@ export type ProjectInsert = Omit<
       | 'published_by'
       | 'goal'
       | 'public_full_detail'
+      | 'information_sensitivity'
       | 'created_via'
       | 'assistant_prompt_version'
       | 'assistant_conversation_id'
@@ -1733,8 +1770,13 @@ export type ProjectAccessGroupUpdate = Partial<Omit<ProjectAccessGroup, 'id' | '
 export type ProjectAccessGroupMemberInsert = Omit<ProjectAccessGroupMember, 'id'>
 export type ProjectAccessGroupMemberUpdate = Partial<Omit<ProjectAccessGroupMember, 'id' | 'project_access_group_id' | 'project_member_id'>>
 
-export type ResourceAccessPolicyInsert = Omit<ResourceAccessPolicy, 'id' | 'created_at' | 'updated_at'>
+export type ResourceAccessPolicyInsert = Omit<ResourceAccessPolicy, 'id' | 'created_at' | 'updated_at' | 'information_sensitivity'> &
+  Partial<Pick<ResourceAccessPolicy, 'information_sensitivity'>>
 export type ResourceAccessPolicyUpdate = Partial<Omit<ResourceAccessPolicy, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'created_at'>>
+
+export type AiProviderSensitivityEligibilityInsert = Omit<AiProviderSensitivityEligibility, 'updated_at'> &
+  Partial<Pick<AiProviderSensitivityEligibility, 'updated_at'>>
+export type AiProviderSensitivityEligibilityUpdate = Partial<Omit<AiProviderSensitivityEligibility, 'provider_id'>>
 
 export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
 export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
@@ -2009,6 +2051,12 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      ai_provider_sensitivity_eligibility: {
+        Row: AiProviderSensitivityEligibility
+        Insert: AiProviderSensitivityEligibilityInsert
+        Update: AiProviderSensitivityEligibilityUpdate
+        Relationships: []
+      }
       project_status_history: { Row: ProjectStatusHistoryEntry; Insert: ProjectStatusHistoryEntryInsert; Update: never; Relationships: [] }
       platform_owners: { Row: PlatformOwner; Insert: PlatformOwner; Update: never; Relationships: [] }
       feedback_reports: { Row: FeedbackReport; Insert: FeedbackReportInsert; Update: FeedbackReportUpdate; Relationships: [] }

@@ -57,6 +57,7 @@ function row(overrides: Partial<ChatMessageRow>): ChatMessageRow {
     provider: null,
     model: null,
     response_payload: null,
+    retrieved_resources: null,
     created_at: '2026-08-20T00:00:00Z',
     ...overrides,
   }

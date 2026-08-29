@@ -1,5 +1,13 @@
 import 'server-only'
-import { resolveChatProvider, getDefaultModel, AIProviderError, classifyProviderError } from '@/lib/ai'
+import {
+  resolveChatProvider,
+  getDefaultModel,
+  AIProviderError,
+  classifyProviderError,
+  AISensitivityError,
+  getEffectiveSensitivity,
+  assertProviderEligible,
+} from '@/lib/ai'
 import type { ChatMessage } from '@/lib/ai'
 import { callTool, getToolSpecs } from '@/lib/mcp/tools'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
@@ -165,6 +173,11 @@ export interface AssistantTurnResult {
   // this the same way it already routes a thrown error -- red text plus a
   // one-click Retry of the same message -- rather than as a normal reply.
   isProviderError?: boolean
+  // Same non-throwing shape as isProviderError above, for the Information
+  // Sensitivity Classification policy check (src/lib/ai/sensitivity.ts) --
+  // the selected model isn't eligible to process what was retrieved this
+  // turn. ChatPanel routes this exactly like isProviderError.
+  isSensitivityBlock?: boolean
 }
 
 // Short, safe, user-facing text per failure category -- never the raw SDK
@@ -245,6 +258,16 @@ export async function runAssistantTurn(
   await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'user', content: userMessage })
 
   const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
+  // ChatProviderInfo.provider is the built client (has .generateChat(), not
+  // .id) -- the eligibility check needs the ai_providers row id, resolved
+  // once per turn since chatProvider.providerName is fixed for the turn.
+  const { data: chatProviderRow, error: chatProviderRowError } = await ctx.supabase
+    .from('ai_providers')
+    .select('id')
+    .eq('name', chatProvider.providerName)
+    .single()
+  if (chatProviderRowError || !chatProviderRow) throw chatProviderRowError ?? new Error(`Provider row not found: ${chatProvider.providerName}`)
+  const chatProviderId = chatProviderRow.id
 
   const projectContext = resolvedProjectId ? await getProjectContext(ctx, resolvedProjectId) : null
   const systemPrompt = feedbackContext
@@ -292,7 +315,7 @@ export async function runAssistantTurn(
   async function finishTurn(reply: string, structured: VerifiedAssistantEnvelope | null): Promise<AssistantTurnResult> {
     const usedEmbeddingRetrieval = toolsUsed.has('search_wiki') || toolsUsed.has(SEARCH_PROJECT_KNOWLEDGE_TOOL_NAME)
     const embeddingModelDisplayName = usedEmbeddingRetrieval ? (await getDefaultModel(ctx.supabase, 'embedding')).model.display_name : undefined
-    await maybeRefreshSummary(ctx, conversation.id, contextWasTruncated)
+    await maybeRefreshSummary(ctx, conversation.id, contextWasTruncated, projectContext ? projectContext.informationSensitivity : undefined)
     const resolvedCreatedRecords = (await Promise.all(createdRecordRefs.map((ref) => resolveCreatedRecord(ctx, ref)))).filter(
       (r): r is ResolvedCreatedRecord => r !== null
     )
@@ -359,6 +382,23 @@ export async function runAssistantTurn(
     contextWasTruncated = contextWasTruncated || working.wasTruncated
     let result: Awaited<ReturnType<typeof chatProvider.provider.generateChat>>
     try {
+      // Information Sensitivity Classification check -- runs every
+      // iteration, right before the content actually reaches the model
+      // ("the policy decision can happen before the model ever sees the
+      // prompt"). Cheap on iteration 0 of a non-project conversation (no
+      // resources retrieved yet, no project bound -> getEffectiveSensitivity
+      // returns 'public' with no DB query at all); becomes meaningful once
+      // search_wiki/search_project_knowledge have retrieved something, OR
+      // immediately (iteration 0) for a project-bound conversation, since
+      // the project's own name/goal is already in the system prompt via
+      // buildProjectPromptAddendum before any tool ever runs.
+      const sensitivity = await getEffectiveSensitivity(ctx.supabase, {
+        wikiArticleSlugs: [...retrievedWikiArticleSlugs.keys()],
+        knowledgeSourceIds: [...retrievedKnowledgeSourceIds.keys()],
+        projectSensitivity: projectContext ? projectContext.informationSensitivity : undefined,
+      })
+      await assertProviderEligible(ctx.supabase, chatProviderId, sensitivity)
+
       result = await chatProvider.provider.generateChat({
         messages: working.messages,
         system: systemPrompt,
@@ -366,6 +406,23 @@ export async function runAssistantTurn(
         maxOutputTokens: chatProvider.maxOutputTokens ?? undefined,
       })
     } catch (err) {
+      if (err instanceof AISensitivityError) {
+        // Same non-throwing-result shape as the AIProviderError catch below
+        // -- nothing persisted to chat_messages for this turn, so a blocked
+        // attempt never becomes part of the model's own context on retry.
+        return {
+          conversationId: conversation.id,
+          reply: err.message,
+          providerName: chatProvider.providerName,
+          providerDisplayName: chatProvider.providerDisplayName,
+          modelId: chatProvider.modelId,
+          modelDisplayName: chatProvider.modelDisplayName,
+          toolsUsed: [...toolsUsed],
+          structured: null,
+          createdRecords: [],
+          isSensitivityBlock: true,
+        }
+      }
       // A provider failure (rate limit, capacity, auth, ...) here must
       // resolve normally rather than throw -- an uncaught exception crossing
       // the sendChatMessageAction Server Action boundary reaches production
@@ -434,6 +491,12 @@ export async function runAssistantTurn(
     for (const toolCall of result.message.toolCalls ?? []) {
       toolsUsed.add(toolCall.name)
       let toolResultText: string
+      // This call's own contribution to retrievedWikiArticleSlugs/
+      // retrievedKnowledgeSourceIds below -- persisted onto this row via
+      // appendMessage's retrievedResources so summary.ts (which never sees
+      // this turn's in-memory maps) can rebuild the full retrieval manifest
+      // from chat_messages alone. See 20260829130001_chat_message_retrieved_resources.sql.
+      const newlyRetrieved: { resourceType: 'wiki_article' | 'knowledge_source'; resourceId: string }[] = []
       if (toolCall.name === 'search_wiki' && ++searchWikiCalls > SEARCH_WIKI_LIMIT) {
         toolResultText = JSON.stringify({
           error: `search_wiki has already been called ${SEARCH_WIKI_LIMIT} times this turn. Do not search again -- answer using what you already found, or ask the user a clarifying question instead.`,
@@ -453,6 +516,7 @@ export async function runAssistantTurn(
               const info: RetrievedHitInfo = { layer: hit.layer, documentVersionId: hit.documentVersionId }
               if (hit.sourceType === 'wiki_article') retrievedWikiArticleSlugs.set(hit.sourceId, info)
               else retrievedKnowledgeSourceIds.set(hit.sourceId, info)
+              newlyRetrieved.push({ resourceType: hit.sourceType, resourceId: hit.sourceId })
             }
           } catch (err) {
             toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
@@ -486,6 +550,7 @@ export async function runAssistantTurn(
           if (toolCall.name === 'search_wiki' && output && typeof output === 'object' && 'articles' in output) {
             for (const article of (output as { articles: { slug: string }[] }).articles) {
               retrievedWikiArticleSlugs.set(article.slug, { layer: 'platform', documentVersionId: null })
+              newlyRetrieved.push({ resourceType: 'wiki_article', resourceId: article.slug })
             }
           } else if (toolCall.name === 'create_project' && output && typeof output === 'object' && 'projectId' in output) {
             createdRecordRefs.push({ kind: 'project', id: (output as { projectId: string }).projectId })
@@ -508,6 +573,7 @@ export async function runAssistantTurn(
         content: toolResultText,
         toolCallId: toolCall.id,
         toolName: toolCall.name,
+        retrievedResources: newlyRetrieved.length ? newlyRetrieved : null,
       })
     }
   }

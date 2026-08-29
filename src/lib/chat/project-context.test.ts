@@ -16,7 +16,7 @@ describe('getProjectContext', () => {
 
   it('resolves name, goal, attached knowledge bases, and attached wiki articles', async () => {
     const supabase = createFakeSupabase({
-      projects: [{ data: { id: 'proj-1', name: 'Zadara Pilot', goal: 'Answer helpdesk questions' }, error: null }],
+      projects: [{ data: { id: 'proj-1', name: 'Zadara Pilot', goal: 'Answer helpdesk questions', information_sensitivity: null }, error: null }],
       project_knowledge_bases: [{ data: [{ knowledge_base_id: 'zadara_sandz' }], error: null }],
       knowledge_bases: [{ data: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }], error: null }],
       project_wiki_articles: [{ data: [{ id: 'link-1', wiki_article_id: 'article-1' }], error: null }],
@@ -34,9 +34,22 @@ describe('getProjectContext', () => {
       id: 'proj-1',
       name: 'Zadara Pilot',
       goal: 'Answer helpdesk questions',
+      informationSensitivity: null,
       knowledgeBases: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }],
       wikiArticles: [{ id: 'article-1', slug: 'zadara-copilot', title: 'Zadara Copilot' }],
     })
+  })
+
+  it('carries a classified project sensitivity tier through unchanged', async () => {
+    const supabase = createFakeSupabase({
+      projects: [{ data: { id: 'proj-1', name: 'Zadara Pilot', goal: null, information_sensitivity: 'restricted' }, error: null }],
+      project_knowledge_bases: [{ data: [], error: null }],
+      project_wiki_articles: [{ data: [], error: null }],
+    })
+
+    const result = await getProjectContext(fakeCtx(supabase), 'proj-1')
+
+    expect(result?.informationSensitivity).toBe('restricted')
   })
 })
 
@@ -46,6 +59,7 @@ describe('describeProjectKnowledgeScope', () => {
       id: 'proj-1',
       name: 'Zadara Pilot',
       goal: null,
+      informationSensitivity: null,
       knowledgeBases: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }],
       wikiArticles: [{ id: 'a1', slug: 'zadara-copilot', title: 'Zadara Copilot' }],
     })
@@ -53,7 +67,14 @@ describe('describeProjectKnowledgeScope', () => {
   })
 
   it('says plainly when nothing is attached', () => {
-    const text = describeProjectKnowledgeScope({ id: 'proj-1', name: 'Empty Project', goal: null, knowledgeBases: [], wikiArticles: [] })
+    const text = describeProjectKnowledgeScope({
+      id: 'proj-1',
+      name: 'Empty Project',
+      goal: null,
+      informationSensitivity: null,
+      knowledgeBases: [],
+      wikiArticles: [],
+    })
     expect(text).toBe('no attached knowledge base; no attached Wiki articles')
   })
 })

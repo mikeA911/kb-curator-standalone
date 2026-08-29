@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/ai-providers'
-import type { AIModelType, AIModelStatus, AIProviderType } from '@/types/database'
+import type { AIModelType, AIModelStatus, AIProviderType, InformationSensitivity } from '@/types/database'
 import type { CreateModelInput } from '@/lib/workbench/ai-providers'
 
 export type { CreateModelInput }
@@ -25,6 +25,12 @@ export async function updateProviderEnabledAction(providerId: string, enabled: b
   const ctx = await requireRole('admin')
   await workbench.updateProviderEnabled(ctx, providerId, enabled)
   revalidatePath('/admin')
+}
+
+export async function setProviderMaxSensitivityAction(providerId: string, maxSensitivity: InformationSensitivity) {
+  const ctx = await requireRole('admin')
+  await workbench.setProviderMaxSensitivity(ctx, providerId, maxSensitivity)
+  revalidatePath(`/admin/providers/${providerId}`)
 }
 
 export async function createModelAction(input: CreateModelInput) {

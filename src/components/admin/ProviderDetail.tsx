@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { AIModelRow, AIModelStatus, AIProviderRow } from '@/types/database'
+import type { AIModelRow, AIModelStatus, AIProviderRow, InformationSensitivity } from '@/types/database'
 import {
   discoverModelsAction,
   setDefaultModelAction,
@@ -10,11 +10,19 @@ import {
   updateModelEnabledAction,
   updateModelStatusAction,
   updateProviderEnabledAction,
+  setProviderMaxSensitivityAction,
 } from '@/app/actions/ai-providers'
 import { AddModelForm } from './AddModelForm'
 import type { RoleOption } from './ModelAssignmentsSummary'
 
 const STATUS_OPTIONS: AIModelStatus[] = ['active', 'deprecated', 'disabled', 'unavailable']
+const SENSITIVITY_OPTIONS: InformationSensitivity[] = ['public', 'internal', 'confidential', 'restricted']
+const SENSITIVITY_LABELS: Record<InformationSensitivity, string> = {
+  public: 'Public',
+  internal: 'Internal',
+  confidential: 'Confidential',
+  restricted: 'Restricted',
+}
 
 function roleOptionLabel(o: RoleOption): string {
   return `${o.providerDisplayName} · ${o.modelDisplayName}`
@@ -26,12 +34,17 @@ export function ProviderDetail({
   configured,
   currentConversational,
   currentStructuredOutput,
+  maxSensitivity,
 }: {
   provider: AIProviderRow
   models: AIModelRow[]
   configured: boolean
   currentConversational: RoleOption | null
   currentStructuredOutput: RoleOption | null
+  // Information Sensitivity Classification (Shadow AI blog, 2026-08-28) --
+  // null = no ai_provider_sensitivity_eligibility row yet, which the
+  // enforcement side (src/lib/ai/sensitivity.ts) treats as 'internal'-only.
+  maxSensitivity: InformationSensitivity | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -96,6 +109,24 @@ export function ProviderDetail({
           <div className="flex justify-between">
             <span className="text-zinc-500">Credentials</span>
             <span>{configured ? 'Configured ✓' : `Missing (set ${provider.api_key_env_var})`}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-500">Max AI sensitivity approved to receive</span>
+            <select
+              value={maxSensitivity ?? ''}
+              disabled={isPending}
+              onChange={(e) => run(() => setProviderMaxSensitivityAction(provider.id, e.target.value as InformationSensitivity))}
+              className="rounded border border-zinc-300 px-2 py-1 text-sm"
+            >
+              <option value="" disabled>
+                Unset (treated as Internal-only)
+              </option>
+              {SENSITIVITY_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {SENSITIVITY_LABELS[s]}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>

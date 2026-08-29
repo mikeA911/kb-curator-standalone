@@ -160,6 +160,7 @@ export async function appendMessage(
     provider?: string | null
     model?: string | null
     responsePayload?: PersistedAssistantEnvelope | null
+    retrievedResources?: { resourceType: 'wiki_article' | 'knowledge_source'; resourceId: string }[] | null
   }
 ): Promise<ChatMessageRow> {
   const { data, error } = await supabase
@@ -175,6 +176,7 @@ export async function appendMessage(
       provider: input.provider ?? null,
       model: input.model ?? null,
       response_payload: input.responsePayload ?? null,
+      retrieved_resources: input.retrievedResources ?? null,
     })
     .select()
     .single()

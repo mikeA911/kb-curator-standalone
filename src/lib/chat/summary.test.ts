@@ -8,9 +8,17 @@ const getActiveStructuredOutputProviderMock = vi.fn()
 vi.mock('./conversations', () => ({
   listMessages: (...args: unknown[]) => listMessagesMock(...args),
 }))
-vi.mock('@/lib/ai', () => ({
-  getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
-}))
+vi.mock('@/lib/ai', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/ai')>('@/lib/ai')
+  return {
+    // withPolicyGate stays REAL -- these tests exercise the actual gate
+    // against fakeCtx's queued ai_providers/resource_access_policies/
+    // ai_provider_sensitivity_eligibility results, same as loop.test.ts does
+    // for getEffectiveSensitivity/assertProviderEligible.
+    withPolicyGate: actual.withPolicyGate,
+    getActiveStructuredOutputProvider: (...args: unknown[]) => getActiveStructuredOutputProviderMock(...args),
+  }
+})
 
 const { maybeRefreshSummary, getConversationSummary } = await import('./summary')
 
@@ -68,6 +76,7 @@ describe('maybeRefreshSummary', () => {
         { data: { summary_json: null, summary_through_message_id: null }, error: null },
         { data: null, error: null },
       ],
+      ai_providers: [{ data: { id: 'provider-1' }, error: null }],
     })
     listMessagesMock.mockResolvedValue(userRows(10))
     const generateStructured = vi.fn().mockResolvedValue({ data: { objective: 'o' }, model: 'test-model' })
@@ -84,6 +93,7 @@ describe('maybeRefreshSummary', () => {
         { data: { summary_json: null, summary_through_message_id: null }, error: null },
         { data: null, error: null },
       ],
+      ai_providers: [{ data: { id: 'provider-1' }, error: null }],
     })
     listMessagesMock.mockResolvedValue(userRows(1))
     const generateStructured = vi.fn().mockResolvedValue({ data: { objective: 'o' }, model: 'test-model' })
@@ -92,6 +102,43 @@ describe('maybeRefreshSummary', () => {
     await maybeRefreshSummary(fakeCtx(supabase), 'conv-1', true)
 
     expect(generateStructured).toHaveBeenCalled()
+  })
+
+  // Phase 2, increment 1: the separately-resolved summary provider must be
+  // gated too, not just the live turn's own chatProvider -- this is the gap
+  // docs/design-notes/ai-policy-enforcement-service-and-context-manifest.md
+  // flagged as the most urgent. A blocked decision must skip the refresh
+  // (generateStructured never called, conversations row never updated)
+  // without throwing out of maybeRefreshSummary -- caught by its own
+  // catch-all, same as the existing "never throws" test below.
+  it('skips the refresh (never calls generateStructured) when retrieved evidence exceeds the summary provider\'s approved sensitivity', async () => {
+    const rows = [
+      { id: 'm0', role: 'user', content: 'q0', tool_calls: null },
+      {
+        id: 'm1',
+        role: 'tool',
+        content: '{}',
+        tool_calls: null,
+        retrieved_resources: [{ resourceType: 'knowledge_source', resourceId: 'ks-restricted' }],
+      },
+      ...userRows(9),
+    ]
+    const supabase = createFakeSupabase({
+      conversations: [{ data: { summary_json: null, summary_through_message_id: null }, error: null }],
+      ai_providers: [{ data: { id: 'provider-1' }, error: null }],
+      resource_access_policies: [{ data: [{ resource_id: 'ks-restricted', information_sensitivity: 'restricted' }], error: null }],
+      ai_provider_sensitivity_eligibility: [{ data: { max_sensitivity: 'internal' }, error: null }],
+    })
+    listMessagesMock.mockResolvedValue(rows)
+    const generateStructured = vi.fn().mockResolvedValue({ data: { objective: 'o' }, model: 'test-model' })
+    getActiveStructuredOutputProviderMock.mockResolvedValue({ name: 'groq', generateStructured })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await maybeRefreshSummary(fakeCtx(supabase), 'conv-1', false)
+
+    expect(generateStructured).not.toHaveBeenCalled()
+    expect(supabase._calls.find((c) => c.table === 'conversations' && c.method === 'update')).toBeUndefined()
+    errorSpy.mockRestore()
   })
 
   it('never throws -- a generation failure is logged, not surfaced, mirroring embedApprovedVersion', async () => {

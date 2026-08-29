@@ -350,7 +350,11 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       // normal result rather than a thrown error -- see runAssistantTurn's
       // generateChat catch -- so it needs the same red-text-plus-Retry
       // treatment as the catch block below, not a normal assistant bubble.
-      if (result.isProviderError) {
+      // An Information Sensitivity Classification policy block (the
+      // selected model isn't eligible for what was retrieved -- see
+      // src/lib/ai/sensitivity.ts) is also a normal result, same reason and
+      // same treatment as isProviderError above.
+      if (result.isProviderError || result.isSensitivityBlock) {
         setError(result.reply)
         setLastFailedMessage(message)
         setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))

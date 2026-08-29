@@ -1,0 +1,19 @@
+-- Phase 2, increment 1 (docs/design-notes/ai-policy-enforcement-service-and-
+-- context-manifest.md). Persists the COMPLETE per-message retrieval
+-- provenance loop.ts already computes every turn (retrievedWikiArticleSlugs/
+-- retrievedKnowledgeSourceIds), separately from response_payload.citations --
+-- citations only capture what the model chose to cite, a subset of what was
+-- actually retrieved (see envelope-resolution.ts's own citation-verification
+-- comment). Reconstructing a policy manifest from citations alone would
+-- understate sensitivity for anything retrieved-but-not-cited, exactly the
+-- kind of silent gap this column exists to close for maybeRefreshSummary
+-- (src/lib/chat/summary.ts), which resends the whole transcript to a
+-- separately-resolved model and needs the FULL retrieval set, not just the
+-- cited subset, to evaluate policy correctly.
+--
+-- Nullable, written only on 'tool' role rows that actually retrieved
+-- something this call (search_wiki, search_project_knowledge) -- every
+-- other row (user/assistant, or a tool call that retrieved nothing) leaves
+-- this null, same as response_payload's own convention. No RLS change --
+-- existing chat_messages policies already cover the whole row.
+alter table chat_messages add column retrieved_resources jsonb;
