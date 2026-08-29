@@ -1,11 +1,13 @@
 # KB Sandbox Roadmap
 
-**Status:** Living internal roadmap aligned to the public About page  
-**Last updated:** 28 August 2026
+**Status:** Living internal roadmap; the public About page no longer mirrors it verbatim (see note below)  
+**Last updated:** 29 August 2026
 
 ## How to read this roadmap
 
-The public About page is the roadmap authority. Its ten milestones, names, order, descriptions, and public status form the permanent structure of this document. Internal development labels such as M5A, M5F, M6D, and M6E describe implementation increments; they do not replace or renumber the public roadmap.
+This document is the durable internal source of truth for the M1–M10 milestone structure -- names, order, and descriptions below are permanent regardless of what the public About page currently displays. Internal development labels such as M5A, M5F, M6D, and M6E describe implementation increments; they do not replace or renumber this roadmap.
+
+**2026-08-29:** The public About page's "Roadmap" section (the M1–M10 milestone table with Live/Planned status) was replaced with a "What makes KB Sandbox different" section -- twenty differentiators plus a positioning statement, aimed at a general/prospect audience rather than an internal build-status view. The About page is no longer the roadmap's public display surface; this document is now the primary place the M1–M10 structure and status are recorded. The "Public status" column below keeps its Live/Planned values as a record of each milestone's actual delivery state, not as a claim about what's shown publicly.
 
 Each milestone can continue to gain capabilities after its core is live. Internal work is placed under the public milestone whose product outcome it advances, even when the work spans several technical layers.
 
@@ -241,17 +243,27 @@ Status terms used below:
 - Project roles, RLS isolation, evidence provenance, evaluation history, Agent/workstream guardrail fields, and Assistant creation-path provenance.
 - Controlled tool registry and a bounded Assistant loop.
 
+### Recent internal development
+
+- Added Information Sensitivity Classification: a governed AI-processing axis (Public/Internal/Confidential/Restricted) kept deliberately separate from the existing human evidence-access classification -- "who may see this" and "which AI providers may process this" are independent decisions. Applies to knowledge sources, Wiki articles, workstream artifacts, and a project's own name/goal.
+- Enforced pre-inference in the Assistant's tool-calling loop: a blocked request never reaches the model, and Ember explains the block in plain language instead of failing silently. Closed a follow-up gap where project metadata embedded in the system prompt bypassed the check entirely.
+- Built a shared policy-enforcement service (`ContextManifest`/`evaluatePolicy`/`withPolicyGate`, mirroring the existing per-call operation-logging decorator) and used it to close the first concrete multi-path gap: the background conversation-summary refresh was resending full transcripts to a separately-resolved model with no eligibility check.
+- Added admin (max sensitivity a provider may receive) and project-owner (a resource's or project's own sensitivity) controls for the new axis.
+- Produced a phased design (`docs/dev-request-enterprise-shadow-ai-governance-later-phases.md`) and an architecture note (`docs/design-notes/ai-policy-enforcement-service-and-context-manifest.md`) covering the remaining AI-processing-boundary coverage, versioned org-level policy, and deterministic redact/route/approve outcomes -- paused after the first increment pending customer feedback before continuing.
+
 ### Next
 
 - Define the governance foundation: AI system inventory, accountable ownership, model inventory, data classification, risk classification, control definitions, evaluation gates, approval records, and audit evidence.
 - Replace free-text-only guardrails with reusable, versioned guardrail templates where runtime enforcement is meaningful.
 - Define the confirmation and approval policy for each Assistant tool.
 - Define retention and privacy boundaries for demand events, conversations, project knowledge, tool records, and model provenance.
+- Extend the AI-processing sensitivity gate to the remaining outbound AI call sites (evaluation judging/generation/retrieval, journal generation, curator enrichment, embedding calls) using the shared policy service already built -- deferred pending customer feedback on priority.
 
 ### Future
 
 - Connect governance records to existing configurations, evaluations, evidence, and approvals instead of requiring duplicate documentation.
 - Add risk-tier-aware controls and promotion gates for Agents, models, knowledge, and deployment profiles.
+- Model/deployment-level AI-processing eligibility (today's ceiling is provider-only), versioned organization-level AI-processing policy, and Phase 3's deterministic redact/route/require-approval outcomes.
 
 ---
 
@@ -342,7 +354,7 @@ These priorities span the roadmap but should remain attached to the public miles
 
 ## Roadmap maintenance rules
 
-- Keep the M1–M10 public names, order, descriptions, and public status aligned with `src/app/(public)/about/page.tsx`.
+- This document owns the M1–M10 names, order, descriptions, and status (see the 2026-08-29 note above -- the public About page no longer displays this table, so it is not the alignment target it once was).
 - Add internal development beneath these milestones; do not create a competing top-level milestone sequence.
 - Mark capabilities as live only when their core path is usable, not merely designed or migrated.
 - Separate repository implementation, deployed database/content state, validation evidence, and future intent.
@@ -352,9 +364,11 @@ These priorities span the roadmap but should remain attached to the public miles
 
 ## Supporting references
 
-- Public roadmap: `src/app/(public)/about/page.tsx`
+- Public About page (positioning copy, no longer the milestone table): `src/app/(public)/about/page.tsx`
 - Current implementation architecture: `docs/CURRENT-ARCHITECTURE.md`
 - Product brief and earlier roadmap history: `docs/KB Sandbox.md`
 - Workbench service layer and Assistant design: `docs/design-notes/workbench-service-layer-and-assistant-design.md`
 - Assistant identity, provenance & document-first principle: `docs/design-notes/assistant-identity-provenance-design.md`
 - Guided methods design: `docs/design-notes/guided-workbench-methods-design.md`
+- Shadow AI governance phased design: `docs/dev-request-enterprise-shadow-ai-governance-later-phases.md`
+- AI policy-enforcement service and context manifest architecture note: `docs/design-notes/ai-policy-enforcement-service-and-context-manifest.md`
