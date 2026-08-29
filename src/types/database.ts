@@ -5,6 +5,10 @@ export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
 export type KnowledgeBaseClassification = 'platform' | 'legacy_sample' | 'project' | 'partner_pilot'
 export type KnowledgeBaseLifecycleStatus = 'active' | 'reference' | 'archived'
+// Orthogonal to lifecycle_status (a retention concept) -- this is the
+// curator-creates/admin-approves review state. See
+// supabase/migrations/20260828120001_knowledge_base_curator_review.sql.
+export type KnowledgeBaseStatus = 'pending' | 'approved' | 'rejected'
 
 export type ProcessingStatus =
   | 'pending'
@@ -54,7 +58,12 @@ export interface KnowledgeBase {
   project_id: string | null
   classification: KnowledgeBaseClassification
   lifecycle_status: KnowledgeBaseLifecycleStatus
+  status: KnowledgeBaseStatus
   origin: string | null
+  // Same convention/values as WikiVisibilityScope -- added to the DB in
+  // 20260824180001_project_knowledge_visibility_retrieval_fix.sql but missed
+  // in this hand-maintained interface until now.
+  visibility_scope: WikiVisibilityScope
   created_at: string
   updated_at: string
 }
@@ -242,6 +251,7 @@ export type WikiCategoryId =
   | 'governance'
   | 'improvement'
   | 'platform_handbook'
+  | 'product_handbook'
 
 export type WikiArticleStatus = 'draft' | 'review' | 'approved' | 'archived'
 export type WikiVerificationStatus = 'unverified' | 'verified' | 'needs_review'
@@ -331,6 +341,13 @@ export interface WikiVersion {
   // Which Trending item (if any) this version was promoted from -- see
   // trending_items / promoteTrendingToWikiAction.
   promoted_from_trending_item_id: string | null
+  // Product Handbook metadata (Ember Product Knowledge Publishing Pipeline,
+  // Stage 1). Nullable/optional -- only meaningful for product_handbook
+  // articles, but not enforced at the schema level since a general Wiki
+  // article could reasonably use them too.
+  applicable_roles: string[] | null
+  related_routes: string[] | null
+  applicable_version: string | null
 }
 
 export interface WikiSource {
@@ -544,7 +561,20 @@ export type ProjectNoteReplyInsert = Omit<ProjectNoteReply, 'id' | 'created_at'>
 // ============================================
 
 export type ProjectType = 'learning' | 'experiment' | 'consulting' | 'transformation' | 'knowledge'
-export type ProjectStatus = 'draft' | 'active' | 'completed' | 'archived'
+export type ProjectStatus = 'draft' | 'active' | 'review' | 'completed' | 'archived'
+
+// Written only from the service layer (src/lib/workbench/projects.ts), never
+// a database trigger -- actor_id needs the real acting user, which a
+// service-role write can't get from auth.uid(). See
+// supabase/migrations/20260828110001_project_status_history.sql.
+export interface ProjectStatusHistoryEntry {
+  id: string
+  project_id: string
+  from_status: ProjectStatus | null
+  to_status: ProjectStatus
+  actor_id: string | null
+  created_at: string
+}
 
 // private = members/admin only (default, never auto-changed). internal =
 // any authenticated user can view (editing still gated by project_members).
@@ -599,6 +629,13 @@ export interface Project {
   // visitors, not just the curated public_profile summary. See
   // setPublicFullDetailAction and 20260817120001_public_full_detail.sql.
   public_full_detail: boolean
+  // Information Sensitivity Classification (Shadow AI blog, 2026-08-28):
+  // "which AI models may process this project's own name/goal" -- the same
+  // axis and enforcement as resource_access_policies.information_sensitivity,
+  // kept as a plain column here rather than a resource_access_policies row
+  // (see 20260829120001_project_information_sensitivity.sql). null =
+  // unclassified, treated as 'internal' by src/lib/ai/sensitivity.ts.
+  information_sensitivity: InformationSensitivity | null
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -725,6 +762,13 @@ export type EvidenceClassification =
   | 'customer_visible'
 export type AccessGrantStatus = 'active' | 'revoked'
 
+// Information Sensitivity Classification (Shadow AI blog, 2026-08-28):
+// answers "which AI models may process this resource's content" -- a
+// machine-eligibility axis, deliberately separate from EvidenceClassification
+// above (which answers "which humans can see this resource"). A simple
+// ordinal ladder -- see src/lib/ai/sensitivity.ts's SENSITIVITY_RANK.
+export type InformationSensitivity = 'public' | 'internal' | 'confidential' | 'restricted'
+
 export interface ProjectAccessGroup {
   id: string
   project_id: string
@@ -759,11 +803,22 @@ export interface ResourceAccessPolicy {
   resource_type: EvidenceResourceType
   resource_id: string
   classification: EvidenceClassification
+  information_sensitivity: InformationSensitivity | null
   access_steward_user_id: string | null
   review_at: string | null
   rationale: string | null
   created_by: string | null
   created_at: string
+  updated_at: string
+}
+
+// One row per AI provider -- the highest InformationSensitivity tier that
+// provider is approved to receive. No row = treated as 'internal'-only by
+// the enforcement side (the safe default), not "approved for everything".
+export interface AiProviderSensitivityEligibility {
+  provider_id: string
+  max_sensitivity: InformationSensitivity
+  updated_by: string | null
   updated_at: string
 }
 
@@ -985,14 +1040,24 @@ export interface ChatMessageRow {
   // as pre-resolved routes, and a future schema-version change must fall
   // back gracefully rather than being assumed to match today's shape.
   response_payload: Record<string, unknown> | null
+  // Phase 2, increment 1: the COMPLETE set of resources this 'tool' row's
+  // call actually retrieved -- deliberately separate from
+  // response_payload.citations (a subset: only what the model chose to
+  // cite). Powers src/lib/chat/summary.ts's policy manifest, which needs
+  // every retrieved resource across the whole transcript, not just cited
+  // ones. Set only on a 'tool' row whose call retrieved something; null
+  // everywhere else, same convention as response_payload.
+  retrieved_resources: { resourceType: 'wiki_article' | 'knowledge_source'; resourceId: string }[] | null
   created_at: string
 }
 
 export type ChatMessageInsert = Omit<
   ChatMessageRow,
-  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'
+  'id' | 'created_at' | 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload' | 'retrieved_resources'
 > &
-  Partial<Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload'>>
+  Partial<
+    Pick<ChatMessageRow, 'tool_calls' | 'tool_call_id' | 'tool_name' | 'content' | 'provider' | 'model' | 'response_payload' | 'retrieved_resources'>
+  >
 
 // ============================================
 // Workstream System Understanding Assessment
@@ -1542,6 +1607,56 @@ export interface AgentVersion {
   activated_at: string | null
 }
 
+export type ExternalAgentProtocol = 'mcp' | 'https'
+export type ExternalAgentStatus = 'draft' | 'active' | 'archived'
+export type ExternalAgentCertificationStatus =
+  | 'experimental'
+  | 'sandbox_tested'
+  | 'security_reviewed'
+  | 'outlet_accepted'
+  | 'production_approved'
+  | 'deprecated'
+  | 'suspended'
+
+// Registers agents that run OUTSIDE KB Sandbox (a builder's agent on Sandz or
+// customer infrastructure) so KB Sandbox can govern them -- distinct from
+// Agent/AgentVersion above, which are KBS-native graph-based agents Ember
+// runs itself. See supabase/migrations/20260827150001_external_agent_registry.sql.
+export interface ExternalAgent {
+  id: string
+  name: string
+  slug: string
+  purpose: string
+  protocol: ExternalAgentProtocol
+  endpoint_url: string | null
+  project_id: string | null
+  active_version_id: string | null
+  status: ExternalAgentStatus
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Immutable except for certification_status/approved_by/approved_at (staff-
+// only, see the migration's dedicated update policy). "Approval applies to a
+// specific version" -- a new version always starts back at 'experimental'.
+export interface ExternalAgentVersion {
+  id: string
+  external_agent_id: string
+  version_number: number
+  skills: { name: string; description: string; provider?: string }[]
+  credentials_policy: Record<string, unknown>
+  spending_limits: { perOrderMax?: number; dailyMax?: number; currency?: string }
+  approval_policy: { requiresHumanConfirmation?: boolean; confirmationFields?: string[] }
+  permitted_scope: { projectIds?: string[]; userIds?: string[] }
+  certification_status: ExternalAgentCertificationStatus
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  approved_by: string | null
+  approved_at: string | null
+}
+
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
 export type ProfileUpdate = Partial<Omit<Profile, 'id' | 'created_at'>>
 
@@ -1613,6 +1728,7 @@ export type ProjectInsert = Omit<
   | 'published_by'
   | 'goal'
   | 'public_full_detail'
+  | 'information_sensitivity'
   | 'created_via'
   | 'assistant_prompt_version'
   | 'assistant_conversation_id'
@@ -1627,6 +1743,7 @@ export type ProjectInsert = Omit<
       | 'published_by'
       | 'goal'
       | 'public_full_detail'
+      | 'information_sensitivity'
       | 'created_via'
       | 'assistant_prompt_version'
       | 'assistant_conversation_id'
@@ -1653,13 +1770,19 @@ export type ProjectAccessGroupUpdate = Partial<Omit<ProjectAccessGroup, 'id' | '
 export type ProjectAccessGroupMemberInsert = Omit<ProjectAccessGroupMember, 'id'>
 export type ProjectAccessGroupMemberUpdate = Partial<Omit<ProjectAccessGroupMember, 'id' | 'project_access_group_id' | 'project_member_id'>>
 
-export type ResourceAccessPolicyInsert = Omit<ResourceAccessPolicy, 'id' | 'created_at' | 'updated_at'>
+export type ResourceAccessPolicyInsert = Omit<ResourceAccessPolicy, 'id' | 'created_at' | 'updated_at' | 'information_sensitivity'> &
+  Partial<Pick<ResourceAccessPolicy, 'information_sensitivity'>>
 export type ResourceAccessPolicyUpdate = Partial<Omit<ResourceAccessPolicy, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'created_at'>>
+
+export type AiProviderSensitivityEligibilityInsert = Omit<AiProviderSensitivityEligibility, 'updated_at'> &
+  Partial<Pick<AiProviderSensitivityEligibility, 'updated_at'>>
+export type AiProviderSensitivityEligibilityUpdate = Partial<Omit<AiProviderSensitivityEligibility, 'provider_id'>>
 
 export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
 export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
 
 export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
+export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
 // roadmap-and-ember-feedback-board.md). Authorization is a hardcoded
@@ -1807,6 +1930,20 @@ export type AgentUpdate = Partial<Omit<Agent, 'id' | 'created_at'>>
 // as graph_versions/wiki_versions).
 export type AgentVersionInsert = Omit<AgentVersion, 'id' | 'created_at'>
 
+export type ExternalAgentInsert = Omit<ExternalAgent, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
+  Partial<Pick<ExternalAgent, 'active_version_id'>>
+export type ExternalAgentUpdate = Partial<Omit<ExternalAgent, 'id' | 'created_at'>>
+
+export type ExternalAgentVersionInsert = Omit<
+  ExternalAgentVersion,
+  'id' | 'created_at' | 'certification_status' | 'approved_by' | 'approved_at'
+> &
+  Partial<Pick<ExternalAgentVersion, 'certification_status'>>
+// Only certification changes go through UPDATE -- every other field is
+// immutable once created (a material change means a new version).
+export type ExternalAgentVersionUpdate = Pick<ExternalAgentVersion, 'certification_status'> &
+  Partial<Pick<ExternalAgentVersion, 'approved_by' | 'approved_at'>>
+
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
 // doesn't error, it silently collapses every Row/Insert/Update type to
@@ -1914,6 +2051,13 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      ai_provider_sensitivity_eligibility: {
+        Row: AiProviderSensitivityEligibility
+        Insert: AiProviderSensitivityEligibilityInsert
+        Update: AiProviderSensitivityEligibilityUpdate
+        Relationships: []
+      }
+      project_status_history: { Row: ProjectStatusHistoryEntry; Insert: ProjectStatusHistoryEntryInsert; Update: never; Relationships: [] }
       platform_owners: { Row: PlatformOwner; Insert: PlatformOwner; Update: never; Relationships: [] }
       feedback_reports: { Row: FeedbackReport; Insert: FeedbackReportInsert; Update: FeedbackReportUpdate; Relationships: [] }
       feedback_report_status_history: {
@@ -1938,6 +2082,13 @@ export interface Database {
       agent_templates: { Row: AgentTemplate; Insert: AgentTemplateInsert; Update: AgentTemplateUpdate; Relationships: [] }
       agents: { Row: Agent; Insert: AgentInsert; Update: AgentUpdate; Relationships: [] }
       agent_versions: { Row: AgentVersion; Insert: AgentVersionInsert; Update: never; Relationships: [] }
+      external_agents: { Row: ExternalAgent; Insert: ExternalAgentInsert; Update: ExternalAgentUpdate; Relationships: [] }
+      external_agent_versions: {
+        Row: ExternalAgentVersion
+        Insert: ExternalAgentVersionInsert
+        Update: ExternalAgentVersionUpdate
+        Relationships: []
+      }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }
       conversations: { Row: Conversation; Insert: ConversationInsert; Update: ConversationUpdate; Relationships: [] }
       chat_messages: { Row: ChatMessageRow; Insert: ChatMessageInsert; Update: never; Relationships: [] }

@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
 import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
-import { ApproveProjectButton } from '@/components/projects/ApproveProjectButton'
+import { ProjectStatusSection } from '@/components/projects/ProjectStatusSection'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
 import { listAttachableKnowledgeBases } from '@/lib/knowledge-bases'
@@ -44,6 +44,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     unattachedKnowledgeBases,
     linkedArticles,
     projectConversations,
+    { data: statusHistory },
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -58,7 +59,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     listAttachableKnowledgeBases(supabase, id),
     listArticlesForProject(supabase, id),
     user ? listRecentConversations(supabase, user.id, { projectId: id }) : Promise.resolve([]),
+    // RLS (project_status_history_select_curator) already limits this to
+    // curator+ viewers -- an ungated fetch just returns empty for anyone
+    // else, same as the rest of this page's queries.
+    supabase.from('project_status_history').select('*').eq('project_id', id).order('created_at', { ascending: false }),
   ])
+  const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
+  const { data: statusHistoryActors } =
+    statusHistoryActorIds.length > 0
+      ? await supabase.from('profiles').select('id, email').in('id', statusHistoryActorIds)
+      : { data: [] }
+  const statusHistoryActorEmail = new Map((statusHistoryActors ?? []).map((p) => [p.id, p.email]))
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
@@ -89,10 +100,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             {project.visibility === 'public' && project.published_at && (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Published</span>
             )}
-            {showStatusBadge && (
-              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{project.status}</span>
-            )}
-            {canApprove && project.status === 'draft' && <ApproveProjectButton projectId={project.id} />}
           </div>
           {canManage && (
             <div className="flex items-center gap-3">
@@ -240,17 +247,34 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {user && <ProjectAssistantSection projectId={project.id} recentConversations={projectConversations} />}
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Findings</h2>
-        <ProjectFindings projectId={project.id} initialNotes={project.notes} />
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Status</h2>
+        <ProjectStatusSection
+          projectId={project.id}
+          status={project.status}
+          canApprove={canApprove}
+          showStatus={showStatusBadge}
+          history={(statusHistory ?? []).map((h) => ({
+            fromStatus: h.from_status,
+            toStatus: h.to_status,
+            createdAt: h.created_at,
+            actorEmail: h.actor_id ? (statusHistoryActorEmail.get(h.actor_id) ?? null) : null,
+          }))}
+        />
       </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Notes</h2>
-          <Link href={`/projects/${project.id}/notes`} className="text-sm underline">
-            {openNotes.length > 0 ? `${openNotes.length} open` : 'View all'}
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href={`/projects/${project.id}/notes`} className="text-sm underline">
+              + Add
+            </Link>
+            <Link href={`/projects/${project.id}/notes`} className="text-sm underline">
+              {openNotes.length > 0 ? `${openNotes.length} open` : 'View all'}
+            </Link>
+          </div>
         </div>
+        <ProjectFindings projectId={project.id} initialNotes={project.notes} />
         {openNotes.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm">
             {openNotes.slice(0, 5).map((note) => (

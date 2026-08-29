@@ -52,6 +52,27 @@ export async function approveProjectAction(projectId: string) {
   revalidatePath(`/projects/${projectId}`)
 }
 
+export async function startWorkingOnProjectAction(projectId: string) {
+  const ctx = await requireUser()
+  await workbench.startWorkingOnProject(ctx, projectId)
+  revalidatePath('/projects')
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function submitProjectForApprovalAction(projectId: string) {
+  const ctx = await requireUser()
+  await workbench.submitProjectForApproval(ctx, projectId)
+  revalidatePath('/projects')
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function sendProjectBackToWorkingAction(projectId: string) {
+  const ctx = await requireUser()
+  await workbench.sendProjectBackToWorking(ctx, projectId)
+  revalidatePath('/projects')
+  revalidatePath(`/projects/${projectId}`)
+}
+
 export async function updateProjectGoalAction(projectId: string, goal: string) {
   const ctx = await requireUser()
   await workbench.updateProjectGoal(ctx, projectId, goal)

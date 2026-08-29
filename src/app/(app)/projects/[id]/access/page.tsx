@@ -16,7 +16,7 @@ export default async function ProjectAccessPage({ params }: { params: Promise<{ 
   const ctx = await requireUser()
   const supabase = await createClient()
 
-  const { data: project } = await supabase.from('projects').select('id, name').eq('id', id).single()
+  const { data: project } = await supabase.from('projects').select('id, name, information_sensitivity').eq('id', id).single()
   if (!project) notFound()
 
   const { data: viewerMembership } = await supabase
@@ -47,6 +47,7 @@ export default async function ProjectAccessPage({ params }: { params: Promise<{ 
     <AccessEvidenceManager
       projectId={id}
       projectName={project.name}
+      projectInformationSensitivity={project.information_sensitivity}
       members={(members ?? []).map((m) => ({ id: m.id, userId: m.user_id, email: emailById.get(m.user_id) ?? m.user_id }))}
       groups={groups}
       groupMembers={groupMembers}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type {
   EvidenceClassification,
+  InformationSensitivity,
   ProjectAccessGroup,
   ProjectAccessGroupMember,
   ResourceAccessAuditLogEntry,
@@ -18,6 +19,7 @@ import {
   revokeGroupMembershipAction,
   classifyResourceAction,
   revokeResourceAccessAction,
+  setProjectInformationSensitivityAction,
 } from '@/app/actions/evidence-access'
 
 // Project Evidence Access Controls, Stage 1
@@ -37,6 +39,19 @@ const CLASSIFICATION_LABELS: Record<EvidenceClassification, string> = {
   security_restricted: 'Security restricted',
   customer_confidential: 'Customer confidential',
   customer_visible: 'Customer visible',
+}
+
+// Deliberately a second, separate axis from classification above -- "which
+// humans can see this" vs. "which AI models may process this" (Shadow AI
+// blog, 2026-08-28; see supabase/migrations/20260828170001_information_
+// sensitivity_classification.sql). Unclassified (blank) is a real, distinct
+// option here -- the enforcement side (src/lib/ai/sensitivity.ts) treats it
+// as 'internal', not as "unset means public".
+const SENSITIVITY_LABELS: Record<InformationSensitivity, string> = {
+  public: 'Public',
+  internal: 'Internal',
+  confidential: 'Confidential',
+  restricted: 'Restricted',
 }
 
 const SUGGESTED_GROUP_NAMES = [
@@ -61,6 +76,7 @@ const EVENT_LABELS: Record<string, string> = {
 export function AccessEvidenceManager({
   projectId,
   projectName,
+  projectInformationSensitivity,
   members,
   groups,
   groupMembers,
@@ -71,6 +87,7 @@ export function AccessEvidenceManager({
 }: {
   projectId: string
   projectName: string
+  projectInformationSensitivity: InformationSensitivity | null
   members: MemberOption[]
   groups: ProjectAccessGroup[]
   groupMembers: ProjectAccessGroupMember[]
@@ -83,10 +100,12 @@ export function AccessEvidenceManager({
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
+  const [projectSensitivityDraft, setProjectSensitivityDraft] = useState<InformationSensitivity | ''>(projectInformationSensitivity ?? '')
   const [newGroupName, setNewGroupName] = useState('')
   const [addMemberByGroup, setAddMemberByGroup] = useState<Record<string, string>>({})
   const [openResourceKey, setOpenResourceKey] = useState<string | null>(null)
   const [classificationDraft, setClassificationDraft] = useState<EvidenceClassification>('project_general')
+  const [sensitivityDraft, setSensitivityDraft] = useState<InformationSensitivity | ''>('')
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set())
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set())
   const [rationaleDraft, setRationaleDraft] = useState('')
@@ -128,6 +147,7 @@ export function AccessEvidenceManager({
   function openClassify(resourceKey: string, current: ResourceAccessPolicy | undefined) {
     setOpenResourceKey(openResourceKey === resourceKey ? null : resourceKey)
     setClassificationDraft(current?.classification ?? 'project_general')
+    setSensitivityDraft(current?.information_sensitivity ?? '')
     setSelectedGroups(new Set())
     setSelectedMembers(new Set())
     setRationaleDraft(current?.rationale ?? '')
@@ -146,6 +166,38 @@ export function AccessEvidenceManager({
           same as today.
         </p>
       </div>
+
+      {/* Project-level AI sensitivity ------------------------------------ */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">This project</h2>
+        <p className="text-sm text-zinc-500">
+          The project&apos;s own name and goal are included in Ember&apos;s system prompt for every message in this project --
+          independent of which sources or Wiki articles get retrieved. Classify it the same way as a resource below if the
+          project itself (its name, goal, or the fact of its existence) shouldn&apos;t reach every AI model.
+        </p>
+        <div className="flex items-center gap-2">
+          <select
+            value={projectSensitivityDraft}
+            onChange={(e) => setProjectSensitivityDraft(e.target.value as InformationSensitivity | '')}
+            className="w-64 rounded border border-zinc-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">Unclassified (treated as Internal)</option>
+            {(Object.keys(SENSITIVITY_LABELS) as InformationSensitivity[]).map((s) => (
+              <option key={s} value={s}>
+                {SENSITIVITY_LABELS[s]}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={isPending || projectSensitivityDraft === (projectInformationSensitivity ?? '')}
+            onClick={() => run(() => setProjectInformationSensitivityAction(projectId, projectSensitivityDraft || null))}
+            className="rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </section>
 
       {/* Groups ---------------------------------------------------------- */}
       <section className="flex flex-col gap-3">
@@ -257,6 +309,7 @@ export function AccessEvidenceManager({
                 <tr>
                   <th className="px-4 py-2 font-medium">Resource</th>
                   <th className="px-4 py-2 font-medium">Classification</th>
+                  <th className="px-4 py-2 font-medium">AI sensitivity</th>
                   <th className="px-4 py-2 font-medium">Access</th>
                   <th className="px-4 py-2 font-medium"></th>
                 </tr>
@@ -275,6 +328,9 @@ export function AccessEvidenceManager({
                           {r.title}
                         </td>
                         <td className="px-4 py-3">{CLASSIFICATION_LABELS[policy?.classification ?? 'project_general']}</td>
+                        <td className="px-4 py-3">
+                          {policy?.information_sensitivity ? SENSITIVITY_LABELS[policy.information_sensitivity] : <span className="text-zinc-400">Unclassified</span>}
+                        </td>
                         <td className="px-4 py-3">
                           {activeGrants.length === 0 ? (
                             <span className="text-zinc-400">Whole project team</span>
@@ -312,7 +368,7 @@ export function AccessEvidenceManager({
                       </tr>
                       {openResourceKey === key && (
                         <tr className="border-b border-zinc-100 bg-zinc-50">
-                          <td colSpan={4} className="px-4 py-3">
+                          <td colSpan={5} className="px-4 py-3">
                             <div className="flex flex-col gap-2">
                               <label className="text-xs font-medium text-zinc-500">Classification</label>
                               <select
@@ -323,6 +379,22 @@ export function AccessEvidenceManager({
                                 {(Object.keys(CLASSIFICATION_LABELS) as EvidenceClassification[]).map((c) => (
                                   <option key={c} value={c}>
                                     {CLASSIFICATION_LABELS[c]}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <label className="mt-1 text-xs font-medium text-zinc-500">
+                                AI sensitivity -- which AI models may process this (separate from classification above)
+                              </label>
+                              <select
+                                value={sensitivityDraft}
+                                onChange={(e) => setSensitivityDraft(e.target.value as InformationSensitivity | '')}
+                                className="w-64 rounded border border-zinc-300 px-2 py-1.5 text-sm"
+                              >
+                                <option value="">Unclassified (treated as Internal)</option>
+                                {(Object.keys(SENSITIVITY_LABELS) as InformationSensitivity[]).map((s) => (
+                                  <option key={s} value={s}>
+                                    {SENSITIVITY_LABELS[s]}
                                   </option>
                                 ))}
                               </select>
@@ -374,6 +446,7 @@ export function AccessEvidenceManager({
                                         resourceType: r.resourceType,
                                         resourceId: r.resourceId,
                                         classification: classificationDraft,
+                                        informationSensitivity: sensitivityDraft || null,
                                         rationale: rationaleDraft || null,
                                         groupIds: Array.from(selectedGroups),
                                         memberIds: Array.from(selectedMembers),

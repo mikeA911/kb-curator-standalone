@@ -23,13 +23,36 @@ export default async function BlogIndexPage() {
   const supabase = await createClient()
   const posts = await listPublishedPosts(supabase)
 
+  // Non-blocking: this page stays public/auth-agnostic for everyone else --
+  // only used to surface a "My drafts" link for curators/admins, who no
+  // longer get a separate top-nav Blog link pointing at /contribute/blog
+  // (that link used to BE "Blog" in the nav, which meant a signed-in
+  // curator/admin saw only their own drafts where an anonymous visitor saw
+  // every published post -- this page is now the one "Blog" destination for
+  // everyone, any role).
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  let canContribute = false
+  if (user) {
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    canContribute = profile?.role === 'curator' || profile?.role === 'admin'
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <SectionHero image="/images/sections/front-page-ghibli.png" height="standard" priority />
 
-      <div>
-        <h1 className="text-xl font-semibold">Blog</h1>
-        <p className="mt-1 text-sm text-zinc-600">{DESCRIPTION}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Blog</h1>
+          <p className="mt-1 text-sm text-zinc-600">{DESCRIPTION}</p>
+        </div>
+        {canContribute && (
+          <Link href="/contribute/blog" className="shrink-0 rounded border border-zinc-300 px-3 py-1.5 text-sm">
+            My drafts
+          </Link>
+        )}
       </div>
 
       <div className="flex flex-col gap-3">

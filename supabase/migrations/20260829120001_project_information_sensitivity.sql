@@ -1,0 +1,29 @@
+-- Closes a gap flagged in docs/dev-request-enterprise-shadow-ai-governance-
+-- later-phases.md: "Project metadata placed in system prompts must also be
+-- reviewed against this rule." A project's name/goal is embedded directly
+-- into the system prompt on every turn of a project-bound conversation
+-- (src/lib/chat/loop.ts's buildProjectPromptAddendum), independent of
+-- whether search_wiki/search_project_knowledge ever runs -- so the
+-- Information Sensitivity Classification check (20260828170001) never saw
+-- it, even though it's real content reaching the model.
+--
+-- Deliberately a plain column on projects, not a resource_access_policies
+-- row keyed resource_type='project': that table's `classification` column
+-- (EvidenceClassification, "which humans may see this") is mandatory on
+-- every row and drives has_evidence_access() grant requirements designed
+-- for knowledge_source/wiki_article/workstream_artifact -- concepts that
+-- don't apply to a project's own metadata (a project's human visibility is
+-- already governed by project_members/RLS, not that table). Reusing it here
+-- would force a meaningless classification choice and create a policy row
+-- that looks like an access restriction but silently enforces nothing
+-- (has_evidence_access is never consulted by any projects RLS policy).
+-- A dedicated column keeps the two concerns from ever colliding.
+--
+-- Same three states as resource_access_policies.information_sensitivity:
+-- null = unclassified (src/lib/ai/sensitivity.ts treats this as 'internal',
+-- the same conservative default used for unclassified retrieved resources).
+-- No RLS change needed -- the existing "projects_update_managers" policy
+-- (can_manage_project: owner or platform admin) already covers every
+-- column on this table, including this one.
+alter table projects add column information_sensitivity text
+  check (information_sensitivity in ('public', 'internal', 'confidential', 'restricted'));

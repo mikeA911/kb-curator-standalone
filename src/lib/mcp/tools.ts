@@ -1,8 +1,12 @@
 import 'server-only'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 import { listProjectNotes } from '@/lib/projects/notes'
 import * as workbenchProjects from '@/lib/workbench/projects'
 import * as workbenchWorkstreams from '@/lib/workbench/workstreams'
+import { createManualDraftArticle, WikiValidationError } from '@/lib/wiki/articles'
+import { linkRelatedArticle } from '@/lib/wiki/relations'
 import { getActiveEmbeddingProvider } from '@/lib/ai'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type { Database } from '@/types/database'
@@ -30,6 +34,50 @@ const ArtifactTypeSchema = z.enum([
 
 const ProjectTypeSchema = z.enum(['learning', 'experiment', 'consulting', 'transformation', 'knowledge'])
 
+// create_wiki_draft is restricted to these two categories -- not the general
+// AI-engineering reference taxonomy (foundations/knowledge_engineering/etc),
+// which is curator-curated conceptual content with its own editorial
+// standards, not something a chat-generated draft should land in
+// unsupervised. platform_handbook (Workbench Methods) and product_handbook
+// (product knowledge/release notes) are exactly the categories this session
+// already established as "AI/curator co-authored content flowing through
+// the normal draft -> review -> approve gate."
+const WikiDraftCategorySchema = z.enum(['platform_handbook', 'product_handbook'])
+
+function slugifyTitle(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'article'
+  )
+}
+
+// get_navigation_guide reads docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-
+// CATALOGUE.md directly from disk rather than ingesting it into wiki_articles
+// (per Mike, 2026-08-28). That file is owner-authored ground truth about the
+// product's own navigation, already committed with the app -- routing it
+// through the Wiki's draft/review/approve ceremony (built for gating
+// unverified, curator-submitted content) would only add process, and
+// re-seeding on every edit reintroduces the same "watch a committed file,
+// auto-update knowledge" shape already rejected once today for the git-
+// merge-approval pipeline. Reading the file live means editing it *is* the
+// update -- no separate sync/approval step, ever. Module-scope cache is safe
+// for a running process: the file only changes between deployments.
+let cachedCatalogue: string | null = null
+
+function loadNavigationCatalogue(): string {
+  if (cachedCatalogue) return cachedCatalogue
+  const docPath = path.join(process.cwd(), 'docs', 'ember', 'KB-SANDBOX-CAPABILITY-AND-NAVIGATION-CATALOGUE.md')
+  const raw = readFileSync(docPath, 'utf8')
+  // Exclude maintainer-facing sections: how Ember should format its own
+  // answers (a behavioral/prompt concern, not something to cite as product
+  // knowledge), and process notes ("Update checklist", "Discovery backlog").
+  const stopIndex = raw.indexOf('## Ember response contract for navigation')
+  cachedCatalogue = (stopIndex === -1 ? raw : raw.slice(0, stopIndex)).trim()
+  return cachedCatalogue
+}
+
 interface ToolDefinition<TInput, TOutput> {
   description: string
   inputSchema: z.ZodType<TInput>
@@ -43,6 +91,95 @@ interface ToolDefinition<TInput, TOutput> {
 // and it's fully checked via generics at the call site.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tools: Record<string, ToolDefinition<any, any>> = {
+  get_navigation_guide: {
+    description:
+      "Look up how a user accomplishes something in KB Sandbox's own UI -- which page to start at, who is allowed to do it, and what to expect. Use this for questions about KB Sandbox's navigation, pages, or workflows (e.g. \"where do I create a project\", \"who can approve a Wiki article\", \"how do I register an external agent\"), not for domain/business knowledge -- use search_wiki for that. Optionally pass a topic keyword to narrow the result; omit it to get the full navigation map and every capability entry.",
+    inputSchema: z.object({ topic: z.string().optional() }),
+    outputSchema: z.object({ guide: z.string() }),
+    handler: async (_ctx, input: { topic?: string }) => {
+      const full = loadNavigationCatalogue()
+      if (!input.topic) return { guide: full }
+
+      const needle = input.topic.toLowerCase()
+      // Split on any heading (## or ###) and keep whichever chunks mention
+      // the topic anywhere in their own text -- deliberately simple
+      // substring matching, not semantic search, since this is a small,
+      // well-organized document a keyword should already match well against.
+      const chunks = full.split(/\n(?=#{1,3} )/)
+      const matched = chunks.filter((c) => c.toLowerCase().includes(needle))
+      return { guide: matched.length > 0 ? matched.join('\n\n') : full }
+    },
+  },
+
+  create_wiki_draft: {
+    description:
+      "Save a fully-composed Workbench Handbook article (a Method, or Product Handbook content) as a draft Wiki article, so the user doesn't have to copy the text out of this conversation and paste it into the Wiki UI themselves. Only usable by a curator or admin -- fails otherwise. ALWAYS creates status='draft': never approved or made retrievable by search_wiki as part of this call. Only call this once the user has confirmed the finished content is what they want saved -- do not call it on a rough draft still being discussed, and never call it more than once for the same piece of content. After saving, tell the user it's a draft awaiting their own review/approval in the Wiki UI; do not claim it is now approved knowledge.",
+    inputSchema: z.object({
+      title: z.string(),
+      category: WikiDraftCategorySchema,
+      quickHelp: z.string(),
+      content: z.string(),
+      shortDescription: z.string().optional(),
+      relatedArticleTitles: z.array(z.string()).max(10).optional(),
+    }),
+    outputSchema: z.object({ articleId: z.string(), slug: z.string(), status: z.literal('draft') }),
+    handler: async (
+      ctx,
+      input: {
+        title: string
+        category: z.infer<typeof WikiDraftCategorySchema>
+        quickHelp: string
+        content: string
+        shortDescription?: string
+        relatedArticleTitles?: string[]
+      }
+    ) => {
+      const baseSlug = slugifyTitle(input.title)
+      let slug = baseSlug
+      let article
+      try {
+        ;({ article } = await createManualDraftArticle(ctx.supabase, {
+          slug,
+          title: input.title,
+          category: input.category,
+          shortDescription: input.shortDescription ?? null,
+          quickHelp: input.quickHelp,
+          content: input.content,
+          createdBy: ctx.user.id,
+        }))
+      } catch (err) {
+        // Same retry-once-with-suffix convention as the curator-facing
+        // "create a new knowledge base" flow (DocumentUploader.tsx) -- a
+        // slug collision is expected occasionally (two similarly-titled
+        // articles), not exceptional, so retry rather than surface a raw
+        // Postgres unique-violation to the model/user.
+        if (err instanceof WikiValidationError) {
+          slug = `${baseSlug}-${Date.now().toString(36).slice(-4)}`
+          ;({ article } = await createManualDraftArticle(ctx.supabase, {
+            slug,
+            title: input.title,
+            category: input.category,
+            shortDescription: input.shortDescription ?? null,
+            quickHelp: input.quickHelp,
+            content: input.content,
+            createdBy: ctx.user.id,
+          }))
+        } else {
+          throw err
+        }
+      }
+
+      if (input.relatedArticleTitles?.length) {
+        for (const relatedTitle of input.relatedArticleTitles) {
+          const { data: related } = await ctx.supabase.from('wiki_articles').select('id').eq('title', relatedTitle).maybeSingle()
+          if (related) await linkRelatedArticle(ctx.supabase, article.id, related.id)
+        }
+      }
+
+      return { articleId: article.id, slug: article.slug, status: 'draft' as const }
+    },
+  },
+
   search_wiki: {
     description:
       'Semantic search over approved platform Wiki articles -- finds conceptually related content, not just literal keyword matches. Returns each matched article\'s full content (including, for Workbench Handbook articles, its Requirements/Deliverables/Boundary sections), not just a title -- one search is normally enough to both find the right method and read what it requires.',

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { KnowledgeBase } from '@/types/database'
 import { uploadAndProcessDocument } from '@/app/actions/curator'
+import { createKnowledgeBase } from '@/app/actions/admin'
 import { HelpTip } from '@/components/wiki/HelpTip'
 
 const ALLOWED_TYPES = [
@@ -12,6 +13,16 @@ const ALLOWED_TYPES = [
   'text/plain',
 ]
 const MAX_SIZE = 50 * 1024 * 1024
+const NEW_KB_OPTION = '__new__'
+
+function slugify(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'kb'
+  )
+}
 
 export function DocumentUploader({
   knowledgeBases,
@@ -26,6 +37,8 @@ export function DocumentUploader({
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState(defaultKb ?? knowledgeBases[0]?.id ?? '')
   const [sourceUrl, setSourceUrl] = useState(defaultSourceUrl ?? '')
+  const [newKbName, setNewKbName] = useState('')
+  const [newKbDescription, setNewKbDescription] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [stage, setStage] = useState<string | null>(null)
@@ -53,13 +66,36 @@ export function DocumentUploader({
       setError('Please select a knowledge base')
       return
     }
+    if (docType === NEW_KB_OPTION && !newKbName.trim()) {
+      setError('Please name the new knowledge base')
+      return
+    }
 
     setSubmitting(true)
-    setStage('Uploading and parsing…')
     try {
+      let targetKbId = docType
+      if (docType === NEW_KB_OPTION) {
+        setStage('Creating knowledge base…')
+        const baseId = slugify(newKbName)
+        try {
+          await createKnowledgeBase(baseId, newKbName.trim(), newKbDescription.trim())
+          targetKbId = baseId
+        } catch (err) {
+          // Postgres unique_violation on the id -- retry once with a short
+          // disambiguating suffix rather than pre-checking for a clash.
+          if (err && typeof err === 'object' && 'code' in err && err.code === '23505') {
+            targetKbId = `${baseId}-${Date.now().toString(36).slice(-4)}`
+            await createKnowledgeBase(targetKbId, newKbName.trim(), newKbDescription.trim())
+          } else {
+            throw err
+          }
+        }
+      }
+
+      setStage('Uploading and parsing…')
       const formData = new FormData()
       formData.set('file', file)
-      formData.set('docType', docType)
+      formData.set('docType', targetKbId)
       if (sourceUrl) formData.set('sourceUrl', sourceUrl)
 
       const result = await uploadAndProcessDocument(formData)
@@ -82,9 +118,32 @@ export function DocumentUploader({
           className="w-full rounded border border-zinc-300 px-3 py-2"
         >
           {knowledgeBases.map((kb) => (
-            <option key={kb.id} value={kb.id}>{kb.name}</option>
+            <option key={kb.id} value={kb.id}>
+              {kb.name}
+              {kb.status === 'pending' ? ' (pending review)' : ''}
+            </option>
           ))}
+          <option value={NEW_KB_OPTION}>+ Create a new knowledge base</option>
         </select>
+        {docType === NEW_KB_OPTION && (
+          <div className="mt-2 flex flex-col gap-2 rounded border border-zinc-200 bg-zinc-50 p-3">
+            <p className="text-xs text-zinc-500">
+              New knowledge bases start as pending until an admin reviews them -- you can still upload into it right away.
+            </p>
+            <input
+              placeholder="Name"
+              value={newKbName}
+              onChange={(e) => setNewKbName(e.target.value)}
+              className="w-full rounded border border-zinc-300 px-2 py-1.5 text-sm"
+            />
+            <input
+              placeholder="Description (optional)"
+              value={newKbDescription}
+              onChange={(e) => setNewKbDescription(e.target.value)}
+              className="w-full rounded border border-zinc-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+        )}
       </div>
 
       <div>

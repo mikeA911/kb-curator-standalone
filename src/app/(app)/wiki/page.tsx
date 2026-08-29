@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listArticles, listCategories, getWikiStats } from '@/lib/wiki/queries'
 import { listProjectsWithKnowledge } from '@/lib/projects/queries'
+import { listKnowledgeBaseSynopses } from '@/lib/knowledge-bases'
 import { SectionHero } from '@/components/SectionHero'
 import type { WikiArticleStatus, WikiCategoryId } from '@/types/database'
 
@@ -51,7 +52,7 @@ export default async function WikiListPage({
   const view: ViewMode = viewParam === 'list' ? 'list' : 'cards'
   const supabase = await createClient()
 
-  const [categories, articles, wikiStats, projectsWithKnowledge] = await Promise.all([
+  const [categories, articles, wikiStats, projectsWithKnowledge, knowledgeBaseSynopses] = await Promise.all([
     listCategories(supabase),
     listArticles(supabase, {
       category: category as WikiCategoryId | undefined,
@@ -60,6 +61,7 @@ export default async function WikiListPage({
     }),
     getWikiStats(supabase),
     listProjectsWithKnowledge(supabase),
+    listKnowledgeBaseSynopses(supabase),
   ])
 
   const filters: WikiFilters = { category, status, q, view }
@@ -108,6 +110,25 @@ export default async function WikiListPage({
           <p className="text-sm text-zinc-500">
             No project has attached its own knowledge base yet — a project can attach one from its Knowledge section.
           </p>
+        )}
+      </section>
+
+      {/* Synopsis only, per Mike 2026-08-28 -- name + description so users
+          understand what's available and what it's for, not the KB's actual
+          content (that stays behind curator/admin review). */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge bases</h2>
+        {knowledgeBaseSynopses.length === 0 ? (
+          <p className="text-sm text-zinc-500">No knowledge bases available yet.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-3">
+            {knowledgeBaseSynopses.map((kb) => (
+              <div key={kb.id} className="rounded border border-zinc-200 bg-white p-4">
+                <div className="font-medium">{kb.name}</div>
+                {kb.description && <p className="mt-1 text-sm text-zinc-600">{kb.description}</p>}
+              </div>
+            ))}
+          </div>
         )}
       </section>
 

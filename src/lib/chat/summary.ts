@@ -1,9 +1,9 @@
 import 'server-only'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, ChatMessageRow, ConversationSummary } from '@/types/database'
+import type { Database, ChatMessageRow, ConversationSummary, InformationSensitivity } from '@/types/database'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
-import { getActiveStructuredOutputProvider } from '@/lib/ai'
+import { getActiveStructuredOutputProvider, withPolicyGate, type ContextManifest } from '@/lib/ai'
 import { listMessages } from './conversations'
 
 export const SUMMARY_VERSION = 'v1'
@@ -67,12 +67,36 @@ function buildSummaryPrompt(rows: ChatMessageRow[], previous: ConversationSummar
   )
 }
 
+// Builds the FULL retrieval manifest for this conversation by unioning every
+// row's retrieved_resources -- not response_payload.citations, which only
+// captures what the model chose to cite (a subset of what was actually
+// retrieved; see 20260829130001_chat_message_retrieved_resources.sql's own
+// comment). buildSummaryPrompt below resends every row's raw content
+// regardless of citation status, so the policy check has to cover every row
+// too, or it would understate sensitivity for anything retrieved-but-never-
+// cited in an earlier turn.
+function buildManifest(rows: ChatMessageRow[], projectSensitivity: InformationSensitivity | null | undefined): ContextManifest {
+  return {
+    entries: rows.flatMap((r) => r.retrieved_resources ?? []),
+    projectSensitivity,
+  }
+}
+
 // Must never block a chat turn -- mirrors embedApprovedVersion's established
 // "best-effort, log and move on" pattern in src/lib/wiki/review.ts. Re-fetches
 // the persisted rows itself (rather than being passed the in-memory
 // ChatMessage[] history) because it needs real row ids for
 // summary_through_message_id, which the in-memory chat messages don't carry.
-export async function maybeRefreshSummary(ctx: WorkbenchCallerContext, conversationId: string, wasTruncated: boolean): Promise<void> {
+// projectSensitivity comes from the live turn's own already-resolved
+// projectContext (loop.ts) -- undefined for a non-project conversation, null
+// for a bound-but-unclassified project, matching getEffectiveSensitivity's
+// own convention throughout.
+export async function maybeRefreshSummary(
+  ctx: WorkbenchCallerContext,
+  conversationId: string,
+  wasTruncated: boolean,
+  projectSensitivity?: InformationSensitivity | null
+): Promise<void> {
   try {
     const { data: conversation, error } = await ctx.supabase
       .from('conversations')
@@ -87,7 +111,17 @@ export async function maybeRefreshSummary(ctx: WorkbenchCallerContext, conversat
     if (rows.length === 0) return
 
     const provider = await getActiveStructuredOutputProvider(ctx.supabase, { requestedBy: ctx.user.id })
-    const { data, model } = await provider.generateStructured({
+    // A separately-resolved provider than the live turn's chatProvider --
+    // exactly why this needs its own gate rather than trusting the turn's
+    // already-passed check (docs/design-notes/ai-policy-enforcement-service-
+    // and-context-manifest.md §2.3). A block throws AISensitivityError,
+    // caught by this function's own catch-all below -- refresh is skipped,
+    // the conversation continues normally, nothing reaches the model.
+    const { data: providerRow, error: providerRowError } = await ctx.supabase.from('ai_providers').select('id').eq('name', provider.name).single()
+    if (providerRowError || !providerRow) throw providerRowError ?? new Error(`Provider row not found: ${provider.name}`)
+    const gatedProvider = withPolicyGate(ctx.supabase, provider, buildManifest(rows, projectSensitivity), { providerId: providerRow.id })
+
+    const { data, model } = await gatedProvider.generateStructured({
       system: 'You maintain a running summary of a Workbench Assistant conversation so it can continue past its context window.',
       prompt: buildSummaryPrompt(rows, conversation.summary_json),
       schema: ConversationSummarySchema,

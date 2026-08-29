@@ -38,6 +38,11 @@ next-env.d.ts
 # scratch files, not meant for version control
 .tmp/
 
+# Codex scratch/build directories -- generated output, one symlinks
+# node_modules to a machine-specific cache path
+.codex-*/
+outputs/
+
 # internal commercial/business documents, not meant for version control
 /deliverables/
 /docs/commercial/

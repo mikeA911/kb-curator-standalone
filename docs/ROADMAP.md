@@ -1,7 +1,7 @@
 # KB Sandbox Roadmap
 
 **Status:** Living internal roadmap aligned to the public About page  
-**Last updated:** 20 August 2026
+**Last updated:** 28 August 2026
 
 ## How to read this roadmap
 
@@ -194,6 +194,7 @@ Status terms used below:
 - Implement project-level **Requirement Status** for method prerequisites, using at least: Available, Needed, Optional, and Can Be Produced Elsewhere.
 - Decide whether the first Wizard experience remains conversation-led or gains a thin visual setup/review surface. Any UI should be metadata-driven rather than 18 bespoke flows.
 - Select the first 2–4 methods for deeper guided support based on value and observed demand.
+- Extend **Legacy Feature Introduction** and **MCP Architecture** with AI-accessible capability discovery, business-rule and authority mapping, and capability-to-API-to-MCP traceability. First validate the approach on KB Sandbox through a committed Capability and Navigation Catalogue; external MCP transport remains a later decision. See `docs/dev-request-ai-accessible-application-discovery-and-mcp-method-extension.md`.
 - Instrument unmet-method demand without retaining unnecessary conversation content.
 - Make Assistant-proposed state changes consistently reviewable before execution.
 
@@ -357,4 +358,3 @@ These priorities span the roadmap but should remain attached to the public miles
 - Workbench service layer and Assistant design: `docs/design-notes/workbench-service-layer-and-assistant-design.md`
 - Assistant identity, provenance & document-first principle: `docs/design-notes/assistant-identity-provenance-design.md`
 - Guided methods design: `docs/design-notes/guided-workbench-methods-design.md`
-

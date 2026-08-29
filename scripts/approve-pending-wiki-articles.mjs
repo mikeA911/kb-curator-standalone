@@ -13,14 +13,14 @@ import { GoogleGenAI } from '@google/genai'
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-const googleApiKey = process.env.GOOGLE_API_KEY
+const geminiApiKey = process.env.GEMINI_API_KEY
 if (!url || !serviceKey) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-if (!googleApiKey) throw new Error('Missing GOOGLE_API_KEY')
+if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY')
 
 const EMBED_DIMENSIONS = 1536
 
 const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } })
-const gemini = new GoogleGenAI({ apiKey: googleApiKey })
+const gemini = new GoogleGenAI({ apiKey: geminiApiKey })
 
 const { data: approver, error: approverError } = await admin.from('profiles').select('id').eq('email', 'mike.aguilar@gmail.com').single()
 if (approverError || !approver) throw approverError ?? new Error('Approver profile not found')

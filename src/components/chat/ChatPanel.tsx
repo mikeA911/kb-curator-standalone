@@ -113,6 +113,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
   // of the normal send() -> performTurn() path.
   const [resumedPendingConversationId, setResumedPendingConversationId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const messageListRef = useRef<HTMLDivElement>(null)
   const historyDetailsRef = useRef<HTMLDetailsElement>(null)
   const artifactsDetailsRef = useRef<HTMLDetailsElement>(null)
   // Synchronous re-entry guard for send()/retry() -- isPending (state) isn't
@@ -258,6 +259,18 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
     }
   }, [open, historyLoaded, projectId])
 
+  // Auto-scroll to the latest message whenever the panel opens or the
+  // message list changes (new turn, switched conversation, resumed
+  // history) -- otherwise a long-running conversation opens scrolled to
+  // its oldest message, reading as an intimidating wall of text the user
+  // has to scroll through just to see what Ember said last.
+  useEffect(() => {
+    if (!open) return
+    const el = messageListRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [open, messages])
+
   useEffect(() => {
     if (!open) return
     function onEscape(e: KeyboardEvent) {
@@ -337,7 +350,11 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       // normal result rather than a thrown error -- see runAssistantTurn's
       // generateChat catch -- so it needs the same red-text-plus-Retry
       // treatment as the catch block below, not a normal assistant bubble.
-      if (result.isProviderError) {
+      // An Information Sensitivity Classification policy block (the
+      // selected model isn't eligible for what was retrieved -- see
+      // src/lib/ai/sensitivity.ts) is also a normal result, same reason and
+      // same treatment as isProviderError above.
+      if (result.isProviderError || result.isSensitivityBlock) {
         setError(result.reply)
         setLastFailedMessage(message)
         setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))
@@ -745,7 +762,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
               </button>
             )}
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+          <div ref={messageListRef} className="flex-1 space-y-2 overflow-y-auto p-3">
             {showFeedbackChooser && (
               <div className="flex flex-col gap-3">
                 <p className="text-sm text-zinc-600">

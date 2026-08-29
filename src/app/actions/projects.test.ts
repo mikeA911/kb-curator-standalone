@@ -35,6 +35,7 @@ const {
 beforeEach(() => {
   requireUserMock.mockReset()
   requireRoleMock.mockReset()
+  adminSupabase = createFakeSupabase({})
 })
 
 describe('createProjectAction', () => {
@@ -202,7 +203,7 @@ describe('approveProjectAction', () => {
   it('allows a platform admin with no project membership at all', async () => {
     const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'admin' }, supabase })
-    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    adminSupabase = createFakeSupabase({ projects: [{ data: { status: 'active' }, error: null }, { data: null, error: null }] })
 
     await approveProjectAction('project-1')
 
@@ -213,7 +214,7 @@ describe('approveProjectAction', () => {
   it('allows a platform curator with no project membership at all', async () => {
     const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'curator' }, supabase })
-    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    adminSupabase = createFakeSupabase({ projects: [{ data: { status: 'active' }, error: null }, { data: null, error: null }] })
 
     await approveProjectAction('project-1')
 
@@ -223,7 +224,7 @@ describe('approveProjectAction', () => {
   it('allows a project owner whose platform role is merely consultant', async () => {
     const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
-    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    adminSupabase = createFakeSupabase({ projects: [{ data: { status: 'active' }, error: null }, { data: null, error: null }] })
 
     await approveProjectAction('project-1')
 
@@ -233,7 +234,7 @@ describe('approveProjectAction', () => {
   it('allows a project curator whose platform role is merely consultant', async () => {
     const supabase = createFakeSupabase({ project_members: [{ data: { role: 'curator' }, error: null }] })
     requireUserMock.mockResolvedValue({ user: { id: 'user-1' }, profile: { role: 'consultant' }, supabase })
-    adminSupabase = createFakeSupabase({ projects: [{ data: null, error: null }] })
+    adminSupabase = createFakeSupabase({ projects: [{ data: { status: 'active' }, error: null }, { data: null, error: null }] })
 
     await approveProjectAction('project-1')
 
