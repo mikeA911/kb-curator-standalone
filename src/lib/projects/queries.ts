@@ -36,6 +36,32 @@ export async function listProjectsForLinking(supabase: SupabaseClient<Database>)
   return data ?? []
 }
 
+// Backs the Ember-first home's Project selector (docs/dev-request-role-
+// aware-project-views-and-ember-first-workspace.md, View 3) -- deliberately
+// narrower than /projects/page.tsx's own member-scoped query (that page
+// needs status/visibility/objective for cards; a <select> needs only id and
+// name). Two genuinely different call sites, not one over-fit abstraction.
+export interface MemberProjectOption {
+  id: string
+  name: string
+}
+
+export async function listMemberProjectOptions(supabase: SupabaseClient<Database>, userId: string): Promise<MemberProjectOption[]> {
+  const { data: memberships, error: membershipError } = await supabase
+    .from('project_members')
+    .select('project_id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+  if (membershipError) throw membershipError
+
+  const projectIds = (memberships ?? []).map((m) => m.project_id)
+  if (projectIds.length === 0) return []
+
+  const { data, error } = await supabase.from('projects').select('id, name').in('id', projectIds).order('name')
+  if (error) throw error
+  return data ?? []
+}
+
 export interface LinkedKnowledgeBase {
   id: string
   name: string
