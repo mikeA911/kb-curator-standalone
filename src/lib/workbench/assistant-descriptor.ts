@@ -201,6 +201,16 @@ const TOOL_METADATA: Record<string, Pick<AssistantToolDescriptor, 'requiredPermi
     enforcement: 'kb_sandbox_enforced',
     enforcedBy: 'project_notes row-level security',
   },
+  search_projects: {
+    requiredPermission: 'Any signed-in user; results are scoped to projects they can already access.',
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'projects row-level security',
+  },
+  classify_project: {
+    requiredPermission: "Project owner, or platform admin -- fails via RLS for any other caller.",
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'projects_update_managers row-level security (can_manage_project)',
+  },
   create_project: {
     requiredPermission: 'Any signed-in (non-anonymous) account.',
     enforcement: 'kb_sandbox_enforced',

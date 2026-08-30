@@ -3,13 +3,14 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { listProjectNotes } from '@/lib/projects/notes'
+import { setProjectInformationSensitivity } from '@/lib/projects/evidence-access'
 import * as workbenchProjects from '@/lib/workbench/projects'
 import * as workbenchWorkstreams from '@/lib/workbench/workstreams'
 import { createManualDraftArticle, WikiValidationError } from '@/lib/wiki/articles'
 import { linkRelatedArticle } from '@/lib/wiki/relations'
 import { getActiveEmbeddingProvider } from '@/lib/ai'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
-import type { Database } from '@/types/database'
+import type { Database, InformationSensitivity } from '@/types/database'
 
 // M5F Phase D: the internal MCP tool contract. Each tool wraps an existing,
 // already-permission-checked service function -- this module never adds a
@@ -263,6 +264,41 @@ const tools: Record<string, ToolDefinition<any, any>> = {
           createdAt: n.created_at,
         })),
       }
+    },
+  },
+
+  search_projects: {
+    description:
+      'Search existing projects by name (e.g. a company, client, or workspace name) -- use this BEFORE proposing to create a new project, so you reuse or reference existing work instead of creating a duplicate. Returns id, name, project type, status, and objective for each match; does not return project content, membership, or evidence.',
+    inputSchema: z.object({ query: z.string(), limit: z.number().int().min(1).max(20).default(10) }),
+    outputSchema: z.object({
+      projects: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          projectType: z.string(),
+          status: z.string(),
+          objective: z.string().nullable(),
+        })
+      ),
+    }),
+    handler: async (ctx, input: { query: string; limit: number }) => {
+      const results = await workbenchProjects.searchProjects(ctx, input.query, input.limit)
+      return { projects: results }
+    },
+  },
+
+  classify_project: {
+    description:
+      'Set the AI-processing information-sensitivity tier for a project (public/internal/confidential/restricted) -- controls which AI provider ceilings may process this project\'s evidence and its own name/goal. This is a SEPARATE axis from human access: it does not restrict membership and does not invite or remove anyone. Only usable by the project\'s owner or a platform admin -- fails otherwise. Only call this after the user has explicitly asked for a project to be treated as sensitive, never speculatively -- and never describe a project as "restricted", "secured", or "isolated" in your reply unless this call just succeeded this same turn.',
+    inputSchema: z.object({
+      projectId: z.string(),
+      sensitivity: z.enum(['public', 'internal', 'confidential', 'restricted']),
+    }),
+    outputSchema: z.object({ classified: z.literal(true), sensitivity: z.string() }),
+    handler: async (ctx, input: { projectId: string; sensitivity: InformationSensitivity }) => {
+      await setProjectInformationSensitivity(ctx, input.projectId, input.sensitivity)
+      return { classified: true as const, sensitivity: input.sensitivity }
     },
   },
 

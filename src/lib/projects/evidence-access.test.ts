@@ -7,7 +7,8 @@ vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: (...args: unknown[]) => createAdminClientMock(...args),
 }))
 
-const { classifyResource, EvidenceAccessValidationError, grantGroupMembership, revokeGroupMembership } = await import('./evidence-access')
+const { classifyResource, EvidenceAccessValidationError, grantGroupMembership, revokeGroupMembership, setProjectInformationSensitivity } =
+  await import('./evidence-access')
 
 beforeEach(() => {
   createAdminClientMock.mockReset()
@@ -136,5 +137,26 @@ describe('grantGroupMembership / revokeGroupMembership', () => {
     expect(updateCall?.args).toMatchObject({ status: 'revoked', revocation_reason: 'no longer on the account' })
     const auditCall = admin._calls.find((c) => c.table === 'resource_access_audit_log' && c.method === 'insert')
     expect(auditCall?.args).toMatchObject({ event_type: 'group_member_revoked' })
+  })
+})
+
+// docs/dev-request-ember-onboarding-capability-gaps.md, item 2 -- the
+// select().single() addition closes a false-success gap the Ember
+// classify_project tool would otherwise be exposed to (no page-level "can
+// you even see this control" gate the way the human UI has).
+describe('setProjectInformationSensitivity', () => {
+  it('updates the project row when the caller is its manager', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: { id: 'proj-1' }, error: null }] })
+
+    await setProjectInformationSensitivity(fakeCtx(supabase), 'proj-1', 'restricted')
+
+    const updateCall = supabase._calls.find((c) => c.table === 'projects' && c.method === 'update')
+    expect(updateCall?.args).toEqual({ information_sensitivity: 'restricted' })
+  })
+
+  it('throws rather than silently no-oping when RLS blocks the update (caller is not this project\'s manager)', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: null, error: new Error('no rows matched') }] })
+
+    await expect(setProjectInformationSensitivity(fakeCtx(supabase), 'proj-1', 'restricted')).rejects.toThrow('no rows matched')
   })
 })

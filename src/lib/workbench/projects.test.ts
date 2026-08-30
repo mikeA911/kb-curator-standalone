@@ -17,7 +17,7 @@ vi.mock('@/lib/supabase/admin', () => ({
   }),
 }))
 
-const { createProject, detachKnowledgeBase } = await import('./projects')
+const { createProject, detachKnowledgeBase, searchProjects } = await import('./projects')
 
 function ctxWith(supabase: unknown) {
   return { user: { id: 'user-1', email: 'owner@example.com' }, profile: { role: 'consultant' }, supabase } as never
@@ -89,6 +89,33 @@ describe('createProject -- Governance & Approvals staging (Stage 1)', () => {
 
     const assignmentInsert = supabase._calls.find((c) => c.table === 'project_authority_assignments' && c.method === 'insert')
     expect((assignmentInsert?.args as { user_id: string }[])[0].user_id).toBe('user-2')
+  })
+})
+
+// docs/dev-request-ember-onboarding-capability-gaps.md, item 1 -- backs the
+// Ember search_projects tool.
+describe('searchProjects', () => {
+  it('returns an empty array without querying for a too-short query', async () => {
+    const supabase = createFakeSupabase({ projects: [{ data: [{ id: 'x', name: 'Should not be reached' }], error: null }] })
+    const result = await searchProjects(ctxWith(supabase), 'a')
+    expect(result).toEqual([])
+  })
+
+  it('maps matching rows to the tool-facing shape, using the caller\'s own RLS-scoped client', async () => {
+    const supabase = createFakeSupabase({
+      projects: [
+        {
+          data: [{ id: 'proj-1', name: 'Sandz–Zadara Pilot', project_type: 'consulting', status: 'draft', objective: 'Pilot proposals' }],
+          error: null,
+        },
+      ],
+    })
+
+    const result = await searchProjects(ctxWith(supabase), 'Sandz')
+
+    expect(result).toEqual([
+      { id: 'proj-1', name: 'Sandz–Zadara Pilot', projectType: 'consulting', status: 'draft', objective: 'Pilot proposals' },
+    ])
   })
 })
 

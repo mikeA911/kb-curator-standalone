@@ -165,7 +165,20 @@ export async function setProjectInformationSensitivity(
   informationSensitivity: InformationSensitivity | null
 ): Promise<void> {
   requireManager(ctx)
-  const { error } = await ctx.supabase.from('projects').update({ information_sensitivity: informationSensitivity }).eq('id', projectId)
+  // .select().single() rather than a bare update -- an update matching zero
+  // rows (RLS silently filtered a caller who isn't this project's manager,
+  // or a bad id) returns error:null from a plain update, which would let
+  // this resolve as a false success. That specific failure mode is exactly
+  // what the Ember classify_project tool (src/lib/mcp/tools.ts) must not
+  // hit silently -- it has no page-level "can I even see this control" gate
+  // the way the human UI does, so it needs a real thrown error here to
+  // avoid telling the user something was classified when it wasn't.
+  const { error } = await ctx.supabase
+    .from('projects')
+    .update({ information_sensitivity: informationSensitivity })
+    .eq('id', projectId)
+    .select('id')
+    .single()
   if (error) throw error
 }
 

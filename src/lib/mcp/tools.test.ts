@@ -4,6 +4,8 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 const listProjectNotesMock = vi.fn()
 const createProjectMock = vi.fn()
 const approveProjectMock = vi.fn()
+const searchProjectsMock = vi.fn()
+const setProjectInformationSensitivityMock = vi.fn()
 const createWorkstreamMock = vi.fn()
 const attachArtifactMock = vi.fn()
 const createManualDraftArticleMock = vi.fn()
@@ -17,9 +19,13 @@ const wikiArticlesMaybeSingleMock = vi.fn()
 class FakeWikiValidationError extends Error {}
 
 vi.mock('@/lib/projects/notes', () => ({ listProjectNotes: (...args: unknown[]) => listProjectNotesMock(...args) }))
+vi.mock('@/lib/projects/evidence-access', () => ({
+  setProjectInformationSensitivity: (...args: unknown[]) => setProjectInformationSensitivityMock(...args),
+}))
 vi.mock('@/lib/workbench/projects', () => ({
   createProject: (...args: unknown[]) => createProjectMock(...args),
   approveProject: (...args: unknown[]) => approveProjectMock(...args),
+  searchProjects: (...args: unknown[]) => searchProjectsMock(...args),
 }))
 vi.mock('@/lib/workbench/workstreams', () => ({
   createWorkstream: (...args: unknown[]) => createWorkstreamMock(...args),
@@ -52,6 +58,8 @@ beforeEach(() => {
   listProjectNotesMock.mockReset()
   createProjectMock.mockReset()
   approveProjectMock.mockReset()
+  searchProjectsMock.mockReset()
+  setProjectInformationSensitivityMock.mockReset()
   createWorkstreamMock.mockReset()
   attachArtifactMock.mockReset()
   createManualDraftArticleMock.mockReset()
@@ -204,6 +212,36 @@ describe('callTool', () => {
     })
   })
 
+  it('search_projects passes query/limit through and reshapes the result', async () => {
+    searchProjectsMock.mockResolvedValue([
+      { id: 'proj-1', name: 'Sandz–Zadara Pilot', projectType: 'consulting', status: 'draft', objective: 'Pilot proposals' },
+    ])
+
+    const result = await callTool(ctx, 'search_projects', { query: 'Sandz', limit: 10 })
+
+    expect(searchProjectsMock).toHaveBeenCalledWith(ctx, 'Sandz', 10)
+    expect(result).toEqual({
+      projects: [{ id: 'proj-1', name: 'Sandz–Zadara Pilot', projectType: 'consulting', status: 'draft', objective: 'Pilot proposals' }],
+    })
+  })
+
+  it('classify_project delegates to setProjectInformationSensitivity and reports the tier back', async () => {
+    setProjectInformationSensitivityMock.mockResolvedValue(undefined)
+
+    const result = await callTool(ctx, 'classify_project', { projectId: 'proj-1', sensitivity: 'restricted' })
+
+    expect(setProjectInformationSensitivityMock).toHaveBeenCalledWith(ctx, 'proj-1', 'restricted')
+    expect(result).toEqual({ classified: true, sensitivity: 'restricted' })
+  })
+
+  it('classify_project propagates a thrown error (e.g. RLS-blocked non-manager caller) rather than reporting false success', async () => {
+    setProjectInformationSensitivityMock.mockRejectedValue(new Error('not found or not permitted'))
+
+    await expect(callTool(ctx, 'classify_project', { projectId: 'proj-1', sensitivity: 'restricted' })).rejects.toThrow(
+      'not found or not permitted'
+    )
+  })
+
   it('create_project supplies null/empty defaults for fields not exposed on the tool', async () => {
     createProjectMock.mockResolvedValue({ projectId: 'proj-1' })
 
@@ -269,13 +307,15 @@ describe('callTool', () => {
 })
 
 describe('listTools', () => {
-  it('lists all eight registered tools with descriptions', () => {
+  it('lists all ten registered tools with descriptions', () => {
     const names = listTools().map((t) => t.name)
     expect(names).toEqual([
       'get_navigation_guide',
       'create_wiki_draft',
       'search_wiki',
       'list_project_notes',
+      'search_projects',
+      'classify_project',
       'create_project',
       'approve_project',
       'create_workstream',
