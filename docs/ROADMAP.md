@@ -341,6 +341,24 @@ Status terms used below:
 
 ---
 
+## Product North Star — Ember as the Workbench Interface
+
+**This is a north star, not a scheduled feature or milestone.** It does not map to a single M-number and is not committed for implementation on any timeline; it is a direction the M1–M10 milestones above should keep moving toward when a design choice could go either way.
+
+KB Sandbox should ultimately support two interfaces to the same Enterprise AI Workbench:
+
+**Workbench** — the current structured interface, providing direct access to Organizations, Projects, Knowledge, Workstreams, Methods, Evaluations, Artifacts, and Administration. This remains the transparent, inspectable interface for administrators, curators, and power users.
+
+**Ember** — a conversational interface where a user can begin with their objective rather than needing to understand KB Sandbox's information architecture. For example: *"Ember, help me onboard our company knowledge."* Ember should eventually be capable of: understand intent → identify appropriate Method → gather requirements → use Workbench tools → guide navigation where necessary → request human decisions/approval → validate the result → produce artifacts.
+
+Users should be able to move between Ember and the full Workbench at any time. The long-term UX may allow users to select Ember as their default interface, potentially presenting only Ember over a simple background or user-selected image.
+
+**Guiding principle:** *The better KB Sandbox becomes, the less ordinary users should need to understand KB Sandbox itself.*
+
+Do not implement a simplified Ember-only UI on the strength of this entry alone — it names a direction, not a request.
+
+---
+
 ## Near-term cross-milestone priorities
 
 These priorities span the roadmap but should remain attached to the public milestone outcomes above:
