@@ -223,6 +223,18 @@ Ember must apply both access layers before retrieving or citing evidence. If a u
 
 This role-aware, Ember-first experience is the near-term product direction. The current application already supports access-scoped Project listings and project-bound Ember conversations, but the dedicated staff portfolio and simplified Ember-first member home remain product work rather than completed behavior.
 
+### Organization Explorer
+
+A read-only organization Explorer on a Project page may visualize the same structure as:
+
+> **Current Project -> shared knowledge bases -> connected accessible Projects -> additional knowledge bases -> accessible sources**
+
+The Project the user opened is the visual root. For example, opening the **Sandz** Project can reveal the user's other accessible Projects connected through `sandz-shared-kb`, followed by their additional attached knowledge bases and accessible sources.
+
+This is a navigation view over existing many-to-many knowledge relationships, not an additional hierarchy. The Sandz Project remains an ordinary Project rather than a native Organization record or technical parent. It does not require a `parent_project_id` or organization setting. Repeated or circular relationships are collapsed for display.
+
+Project names help people recognize related work, but names do not create inheritance or determine access. The Explorer must show only branches the current user is permitted to discover and must not reveal restricted branches through names, counts or locked placeholders. Its nodes link to authorized pages; the Explorer does not move, attach, detach, rename or delete anything.
+
 ## Access control operates at two levels
 
 KB Sandbox applies access controls at both the Project and resource levels.
