@@ -96,15 +96,28 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 ### Review current activity and navigate to work
 
 - **Intent:** Understand what exists, what needs attention, and where to continue.
-- **Users and authority:** Signed-in users. Some widgets are role-specific.
-- **Prerequisites:** Signed-in session.
+- **Users and authority:** Admin and curator. A signed-in `consultant` (an ordinary Project member) instead lands on the Ember-first home described in the next entry -- this summary view is no longer what that role sees at `/dashboard`.
+- **Prerequisites:** Signed-in admin or curator session.
 - **Start:** `/dashboard`
 - **Navigation:** Use the summary cards for Projects, Knowledge, Evaluations, Agents, or Trending; use **Sources & Curation** to open `/upload`.
 - **Outcome:** A role-aware summary of accessible work and direct links to the corresponding areas.
 - **Ember guidance:** Ember may explain the cards and provide stable links. It should mention that counts and attention items depend on access and role.
 - **Boundaries:** Wiki review queues and governance attention items are limited to curator/admin users. Shared links and personal notes are shown only to eligible signed-in users. Dashboard totals do not authorize access to an underlying item.
 - **Exposure:** Ember-readable; candidate for external MCP read access as a caller-scoped summary.
-- **Verification:** `src/app/(app)/dashboard/page.tsx`; code verified 2026-08-28.
+- **Verification:** `src/app/(app)/dashboard/page.tsx`; code verified 2026-08-30 (role branch added).
+
+### Ember-first home (ordinary members)
+
+- **Intent:** Give an ordinary Project member (platform role `consultant`) a working surface centered on Ember rather than platform-wide statistics.
+- **Users and authority:** Platform role `consultant` only. Admin and curator continue to see the standard Workbench summary described above.
+- **Prerequisites:** Signed-in session.
+- **Start:** `/dashboard`
+- **Navigation:** Choose a Project from the selector (only the user's own active memberships appear, plus "General platform guidance") → **Ask Ember**. The choice is reflected in the page URL (`?ember=<projectId>`) so it survives a reload, and shows as a persistent "Using: <Project>" chip.
+- **Outcome:** An embedded, Project-bound (or general) Ember conversation opens inline, alongside the user's recent conversations and a secondary **Explore workspace →** link to `/projects` for anyone who wants the full Workbench.
+- **Ember guidance:** Same rules as any other project-bound or general conversation -- see "Work inside a project" below.
+- **Boundaries:** Switching the Project selector always starts a fresh embedded conversation instance -- no retrieved evidence, citations, or chat history carry over from whatever Project was previously selected. The selector only ever lists the viewer's own active memberships.
+- **Exposure:** UI surface only, not a distinct MCP concept -- the underlying Ember conversation follows the same project-binding rules as everywhere else.
+- **Verification:** `src/app/(app)/dashboard/page.tsx`, `src/components/dashboard/EmberHome.tsx`; code verified 2026-08-30. Live-verified as a `consultant`-role account: selector persists via the URL, scope chip updates, the embedded panel remounts cleanly (no leaked state) on every Project switch; `admin`/`curator` accounts confirmed unaffected.
 
 ### Add a shared link
 
@@ -127,12 +140,25 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Users and authority:** Signed-in users may see projects permitted by policy and create a project. Subsequent management depends on project relationship and authority.
 - **Prerequisites:** Signed-in session.
 - **Start:** `/projects`
-- **Navigation:** Open **Projects** → select an accessible project, or choose **New project** → `/projects/new`.
+- **Navigation:** Open **Projects** ("My Projects" -- genuinely scoped to the user's own active memberships for every platform role, including admin) → select an accessible project, or choose **New project** → `/projects/new`. Admin/curator additionally see a **View Organization Portfolio →** link to `/projects/portfolio` (next entry).
 - **Outcome:** An existing project workspace opens, or the user begins the project-creation workflow.
 - **Ember guidance:** Ember may list accessible projects, explain project types, navigate to `/projects` or a project derived from the authorized current context, and help create a project only through supported bounded tools.
-- **Boundaries:** A platform role alone must not be represented as customer-project authorization. Ember should identify membership or authority gaps before proposing restricted actions.
+- **Boundaries:** A platform role alone must not be represented as customer-project authorization. Ember should identify membership or authority gaps before proposing restricted actions. As of 2026-08-30, platform admin no longer sees every Project on `/projects` merely by role -- that previously relied on an RLS bypass and has been fixed; org-wide visibility for admin/curator now lives only in the safe-metadata Organization Portfolio below.
 - **Exposure:** Ember-readable and partly Ember-actionable; strong candidate for caller-scoped MCP read access. Creation or change requires identity, validation, and confirmation.
-- **Verification:** `/projects`, `/projects/new`, project membership and governance routes; code verified 2026-08-28.
+- **Verification:** `/projects`, `/projects/new`, project membership and governance routes; code verified 2026-08-30.
+
+### View the organization portfolio (admin/curator)
+
+- **Intent:** Give platform admin/curator a safe, organization-wide view of every Project without granting content access merely by platform role.
+- **Users and authority:** Admin and curator only; any other role is redirected to `/projects`.
+- **Prerequisites:** Signed-in admin or curator session.
+- **Start:** `/projects/portfolio` (linked from `/projects` for eligible roles)
+- **Navigation:** Projects → **View Organization Portfolio →**.
+- **Outcome:** A table of every Project's safe metadata -- name, type, status, owner, active member count, attached-knowledge-base count, authority-gap and unpublished-draft indicators, last updated. A row for a Project the viewer is an active member of links to its full workspace ("Open workspace"); every other row shows "Membership required" with no link.
+- **Ember guidance:** Ember has no dedicated tool for this view; if asked for an organization-wide summary, it should point an eligible user here rather than attempting to enumerate Projects itself.
+- **Boundaries:** This view never exposes source titles, snippets, chat history, or artifacts -- only counts and dates computed from a narrow, explicitly safe query (never a service-role content query with UI-side hiding). It is not a bypass into any Project's private content, and a non-member's row never links into the workspace.
+- **Exposure:** Not Ember-actionable; a candidate for a future caller-scoped MCP summary limited to the same safe fields.
+- **Verification:** `src/app/(app)/projects/portfolio/page.tsx`, `src/lib/projects/portfolio.ts`; code verified 2026-08-30. Live-verified with `admin`/`curator` test accounts against real seed data: correct counts, correct authority-gap/unpublished-draft badges, and "Membership required" rows carry no link.
 
 ### Work inside a project
 
@@ -142,10 +168,49 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Start:** `/projects/[id]`
 - **Navigation:** Projects → select project → choose the relevant workstream, assessment, notes, members, access, governance, publication, or Ember action.
 - **Outcome:** Work remains bound to the selected project and its approved evidence.
-- **Ember guidance:** When entered through **Ask Assistant about this project**, Ember should preserve the project binding, search only authorized project knowledge plus approved platform guidance, and label citations accordingly.
+- **Ember guidance:** When entered through **Ask Assistant about this project**, Ember should preserve the project binding, search only authorized project knowledge plus approved platform guidance, and label citations accordingly. It also gains `list_project_members` and `send_project_note` in this bound state -- see the dedicated entry below.
 - **Boundaries:** General unbound chat must not retrieve project-private evidence merely because the user happens to be a project member. Consequential decisions remain human- or authority-approved. As of 2026-08-29, a project or resource classified above the selected model's approved AI-processing sensitivity blocks the turn before any content reaches that model -- Ember explains the block and names the sensitivity tier rather than silently refusing or answering without the restricted evidence.
 - **Exposure:** Ember-readable/actionable within the project binding; MCP access must preserve caller identity, project membership, and approval rules.
 - **Verification:** Project routes and previously live-verified project-bound retrieval behavior; reviewed 2026-08-29.
+
+### Explore how this Project connects to others (read-only)
+
+- **Intent:** See which other Projects share a knowledge base with the current one, purely through existing attachments -- not a new hierarchy or Organization entity.
+- **Users and authority:** Any active member of the current Project; a connected Project only appears if the viewer can also see it.
+- **Prerequisites:** Active membership in the Project being viewed.
+- **Start:** `/projects/[id]` (Organization Explorer section)
+- **Navigation:** Project page → Organization Explorer → each attached knowledge base lists its sources and any other Project also attached to it, one level deep.
+- **Outcome:** A read-only, navigation-only tree. Selecting a connected Project opens its own full, independent workspace -- it does not inherit the current Project's members, roles, or access grants (confirmed live: a member's role and business function differ between the root and a connected Project).
+- **Ember guidance:** Ember has no dedicated tool for this; it is a page-level visualization only.
+- **Boundaries:** No move/attach/detach/rename/delete action exists here. Restricted branches are omitted, never shown as locked placeholders. Never presented as a technical parent/child or Organization concept. Cycles (a Project reachable through two shared knowledge bases) collapse into one expanded node and a reference, never recursive rendering.
+- **Exposure:** Not Ember-actionable; page-level only.
+- **Verification:** `src/lib/projects/explorer.ts`, `src/components/projects/OrganizationExplorer.tsx`; code verified 2026-08-30.
+
+### See a Project's member directory and send a note
+
+- **Intent:** See who is actively working on a Project and send one of them an addressed note, without needing owner/admin management access.
+- **Users and authority:** Any active member of the Project. Distinct from the owner/admin-only Members management page (`/projects/[id]/members`), which adds/removes members and changes roles.
+- **Prerequisites:** Active membership in the Project.
+- **Start:** `/projects/[id]` (Members section)
+- **Navigation:** Project page → Members section lists every active member with role and business function → **Send note** on any member other than yourself → prefilled note form at `/projects/[id]/notes`.
+- **Outcome:** A compact, read-only roster, plus an addressed Project Note (reusing the existing Project Notes feature -- not a new messaging channel) once sent.
+- **Ember guidance:** Ember can answer the same "who's on this project" questions conversationally -- see the next entry.
+- **Boundaries:** Only active members appear; a removed member disappears immediately and cannot be addressed. The directory never lists members of a different Project. Not shown to a non-member viewing a published/public Project.
+- **Exposure:** UI-only; the equivalent Ember-actionable path is `list_project_members`/`send_project_note` below.
+- **Verification:** `src/components/projects/MemberDirectory.tsx`, `src/app/(app)/projects/[id]/notes/page.tsx`; code verified 2026-08-30.
+
+### Ask Ember who's on a Project, or have Ember send a note
+
+- **Intent:** Answer "who's working on this?", "who owns it?", "who handles a specific approval?", or "can I send someone a note?" conversationally, inside a Project-bound Ember conversation.
+- **Users and authority:** Any active member, within a conversation already bound to that Project.
+- **Prerequisites:** The conversation must have a server-resolved Project binding (opened via **Ask Ember about this Project**, or a Project chosen on the Ember-first home). A general, unbound conversation has neither tool available and cannot enumerate any Project's roster.
+- **Start:** Any project-bound Ember conversation.
+- **Navigation:** Ask Ember directly -- no page navigation involved.
+- **Outcome:** Ember calls `list_project_members` (no Project ID accepted from the model; it is always the conversation's own server-resolved binding) and answers with each active member's role, business function, and any approval responsibility already visible to the caller -- never platform-wide roles, other Projects' memberships, or evidence-access grants. If asked to send a note, Ember first calls `list_project_members` to find the exact recipient, states the exact recipient/subject/body, and waits for the user's explicit confirmation before calling `send_project_note`.
+- **Ember guidance:** Fetch fresh every time -- never guess from earlier in the conversation or persist the roster into a saved summary. Project role, business function, and approval responsibility are three separate things and must not be conflated; none of them implies what evidence someone can access.
+- **Boundaries:** `send_project_note` re-checks that the recipient is still an active member at call time and reuses the exact same Project Notes storage/RLS as the human Send Note form -- it cannot address a non-member or a member of a different Project. Confirmation before sending is enforced by prompt guidance, not a code-level gate -- the same trust boundary already accepted for every other Ember tool that creates a record (e.g. `create_project`).
+- **Exposure:** Ember-actionable, Project-bound only; never offered in general chat.
+- **Verification:** `src/lib/chat/project-members-tool.ts`, `src/lib/chat/project-note-tool.ts`; code verified 2026-08-30. Live-verified: asked "who is working on this project, and who handles commercial approval?" against a real Project and got the correct roster and approval responsibilities; separately asked Ember to send a note, confirmed it drafted content and waited for explicit confirmation before calling `send_project_note`, and the resulting note appeared correctly addressed on the Project's Notes page with a working structured link in the Artifacts panel. Also confirmed a general (unbound) conversation never offers or uses `list_project_members`.
 
 ### Manage access and AI-processing sensitivity
 
