@@ -12,6 +12,8 @@ import { listArticlesForProject } from '@/lib/wiki/project-links'
 import { KnowledgeBaseAttachManager, KnowledgeBaseDetachButton } from '@/components/projects/KnowledgeBaseAttachManager'
 import { listRecentConversations } from '@/lib/chat/conversations'
 import { ProjectAssistantSection } from '@/components/projects/ProjectAssistantSection'
+import { getOrganizationExplorer } from '@/lib/projects/explorer'
+import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -45,6 +47,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     linkedArticles,
     projectConversations,
     { data: statusHistory },
+    explorer,
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -63,6 +66,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     // curator+ viewers -- an ungated fetch just returns empty for anyone
     // else, same as the rest of this page's queries.
     supabase.from('project_status_history').select('*').eq('project_id', id).order('created_at', { ascending: false }),
+    getOrganizationExplorer(supabase, id),
   ])
   const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
   const { data: statusHistoryActors } =
@@ -172,6 +176,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </ul>
         )}
       </section>
+
+      <OrganizationExplorer explorer={explorer} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Evals</h2>
