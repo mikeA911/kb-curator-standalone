@@ -3,7 +3,7 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { resolveNavigationTarget } from './navigation-resolver'
 import { resolveDocumentArtifact } from './document-resolver'
 
-export type CreatedRecordKind = 'project' | 'workstream' | 'workstream_artifact'
+export type CreatedRecordKind = 'project' | 'workstream' | 'workstream_artifact' | 'project_note'
 
 export interface CreatedRecordRef {
   kind: CreatedRecordKind
@@ -42,6 +42,7 @@ export function extractCreatedRecordRef(toolName: string, content: string): Crea
     if (toolName === 'attach_workstream_artifact' && obj.attached === true && typeof obj.artifactId === 'string') {
       return { kind: 'workstream_artifact', id: obj.artifactId }
     }
+    if (toolName === 'send_project_note' && typeof obj.noteId === 'string') return { kind: 'project_note', id: obj.noteId }
   } catch {
     // Malformed/error JSON (e.g. a tool refusal or error result) -- not a
     // created record.

@@ -27,6 +27,8 @@ import {
   type ProjectKnowledgeHit,
 } from './project-knowledge-tool'
 import { SUBMIT_FEEDBACK_REPORT_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL_NAME, runSubmitFeedbackReport } from './feedback-tool'
+import { LIST_PROJECT_MEMBERS_TOOL, LIST_PROJECT_MEMBERS_TOOL_NAME, runListProjectMembers } from './project-members-tool'
+import { SEND_PROJECT_NOTE_TOOL, SEND_PROJECT_NOTE_TOOL_NAME, runSendProjectNote } from './project-note-tool'
 import type { FeedbackType } from '@/types/database'
 
 // Version string stamped onto anything the Assistant creates
@@ -82,7 +84,11 @@ function buildProjectPromptAddendum(context: { name: string; goal: string | null
 
 You have an additional tool, search_project_knowledge, that searches this project's own attached knowledge first. Call it before search_wiki when you need evidence -- its results are tagged layer:'project' (this project's own approved evidence -- prefer this, it wins over general platform guidance when the two conflict) or layer:'platform' (general shared knowledge, used only to fill a genuine gap). If project evidence and platform guidance materially conflict, say so explicitly rather than silently merging them. If the project has no relevant attached knowledge for this question, say that plainly instead of presenting platform guidance as if it were project-specific evidence.
 
-Some evidence in this project may be access-restricted to specific people (e.g. customer pricing visible only to Sales/Finance) -- your tools only ever return what you're personally authorized to see, the same as any other user. If the user seems to expect something you can't retrieve, don't guess why or speculate about what might exist. Say plainly that the information isn't available in your current project access scope and suggest they ask the project owner or access steward to review their access -- never name or describe a restricted resource you can't actually see.`
+Some evidence in this project may be access-restricted to specific people (e.g. customer pricing visible only to Sales/Finance) -- your tools only ever return what you're personally authorized to see, the same as any other user. If the user seems to expect something you can't retrieve, don't guess why or speculate about what might exist. Say plainly that the information isn't available in your current project access scope and suggest they ask the project owner or access steward to review their access -- never name or describe a restricted resource you can't actually see.
+
+You also have list_project_members (no Project ID needed) for questions like who's working on this project, who owns it, or who handles a specific approval responsibility. Always call it fresh -- never guess from earlier in this conversation, and never copy its results into a saved summary. Project role, business function, and approval responsibility are three separate things: don't conflate them, and knowing someone is a member never tells you what evidence they're personally authorized to see.
+
+If the user asks you to send someone a Project Note (e.g. "send Maria a note about X"), first call list_project_members to find the exact person. Then state the exact recipient, subject and body you're about to send in your reply and wait for the user's explicit confirmation in their next message -- only call send_project_note once they've clearly agreed to that exact content, never in the same turn you proposed it.`
 }
 
 const FEEDBACK_CATEGORY_LABELS: Record<FeedbackType, string> = {
@@ -284,7 +290,7 @@ export async function runAssistantTurn(
   const tools = feedbackContext
     ? [PRESENT_RESPONSE_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL]
     : projectContext
-      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, PRESENT_RESPONSE_TOOL]
+      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, LIST_PROJECT_MEMBERS_TOOL, SEND_PROJECT_NOTE_TOOL, PRESENT_RESPONSE_TOOL]
       : [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
   const toolsUsed = new Set<string>()
   try {
@@ -524,6 +530,36 @@ export async function runAssistantTurn(
               else retrievedKnowledgeSourceIds.set(hit.sourceId, info)
               newlyRetrieved.push({ resourceType: hit.sourceType, resourceId: hit.sourceId })
             }
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+          }
+        }
+      } else if (toolCall.name === LIST_PROJECT_MEMBERS_TOOL_NAME) {
+        // Not in src/lib/mcp/tools.ts's general registry -- same
+        // interception pattern as search_project_knowledge, because this
+        // tool's behavior depends on resolvedProjectId (never model-supplied).
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'list_project_members is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runListProjectMembers(ctx, resolvedProjectId, toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+          }
+        }
+      } else if (toolCall.name === SEND_PROJECT_NOTE_TOOL_NAME) {
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'send_project_note is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runSendProjectNote(ctx, resolvedProjectId, toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+            // Same "auto-tracked, not dependent on the model remembering to
+            // add a links entry" convention as create_project/create_workstream
+            // below -- the Artifacts panel's "Created records" group is how
+            // the structured link back to the note actually surfaces.
+            createdRecordRefs.push({ kind: 'project_note', id: output.noteId })
           } catch (err) {
             toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
           }

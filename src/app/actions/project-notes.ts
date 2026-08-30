@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, AuthError } from '@/lib/auth'
 import { ProjectValidationError } from '@/lib/projects/errors'
+import { createProjectNote } from '@/lib/projects/notes'
 import type { ProjectNoteRecipientType } from '@/types/database'
 
 export async function createProjectNoteAction(input: {
@@ -15,31 +16,10 @@ export async function createProjectNoteAction(input: {
   contextId?: string | null
 }) {
   const { profile, supabase } = await requireUser()
-  if (profile.role === 'anonymous') throw new AuthError('Create an account to send a note')
-  if (!input.subject.trim()) throw new ProjectValidationError('Subject is required')
-  if (!input.body.trim()) throw new ProjectValidationError('Note body is required')
-  if (input.recipientType === 'user' && !input.recipientUserId) {
-    throw new ProjectValidationError('Choose who this note is addressed to')
-  }
-
-  const { data, error } = await supabase
-    .from('project_notes')
-    .insert({
-      project_id: input.projectId,
-      author_id: profile.id,
-      recipient_type: input.recipientType,
-      recipient_user_id: input.recipientType === 'user' ? input.recipientUserId : null,
-      subject: input.subject.trim(),
-      body: input.body.trim(),
-      context_type: input.contextType || null,
-      context_id: input.contextId || null,
-    })
-    .select('id')
-    .single()
-  if (error || !data) throw error ?? new ProjectValidationError('Failed to send note')
+  const { noteId } = await createProjectNote(supabase, profile, input)
 
   revalidatePath(`/projects/${input.projectId}/notes`)
-  return { noteId: data.id }
+  return { noteId }
 }
 
 export async function replyToProjectNoteAction(noteId: string, body: string) {

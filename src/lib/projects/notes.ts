@@ -1,10 +1,59 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, ProjectNote, ProjectNoteStatus } from '@/types/database'
+import { AuthError } from '@/lib/auth'
+import { ProjectValidationError } from './errors'
+import type { Database, ProjectNote, ProjectNoteStatus, ProjectNoteRecipientType, UserRole } from '@/types/database'
 
 export interface ProjectNoteWithAuthor extends ProjectNote {
   author: { id: string; email: string | null } | null
   recipientUser: { id: string; email: string | null } | null
+}
+
+export interface CreateProjectNoteInput {
+  projectId: string
+  recipientType: ProjectNoteRecipientType
+  recipientUserId?: string | null
+  subject: string
+  body: string
+  contextType?: string | null
+  contextId?: string | null
+}
+
+// Shared by createProjectNoteAction (src/app/actions/project-notes.ts, the
+// human UI form) and Ember's send_project_note tool
+// (src/lib/chat/project-note-tool.ts) -- one validation/insert path, not two
+// independently-maintained copies. Plain supabase + explicit author, same
+// shape as the rest of this file (never a WorkbenchCallerContext) -- the
+// caller resolves identity however it does today (requireUser() for the
+// Server Action, the already-resolved ctx for the tool) and passes it in.
+export async function createProjectNote(
+  supabase: SupabaseClient<Database>,
+  author: { id: string; role: UserRole },
+  input: CreateProjectNoteInput
+): Promise<{ noteId: string }> {
+  if (author.role === 'anonymous') throw new AuthError('Create an account to send a note')
+  if (!input.subject.trim()) throw new ProjectValidationError('Subject is required')
+  if (!input.body.trim()) throw new ProjectValidationError('Note body is required')
+  if (input.recipientType === 'user' && !input.recipientUserId) {
+    throw new ProjectValidationError('Choose who this note is addressed to')
+  }
+
+  const { data, error } = await supabase
+    .from('project_notes')
+    .insert({
+      project_id: input.projectId,
+      author_id: author.id,
+      recipient_type: input.recipientType,
+      recipient_user_id: input.recipientType === 'user' ? input.recipientUserId : null,
+      subject: input.subject.trim(),
+      body: input.body.trim(),
+      context_type: input.contextType || null,
+      context_id: input.contextId || null,
+    })
+    .select('id')
+    .single()
+  if (error || !data) throw error ?? new ProjectValidationError('Failed to send note')
+  return { noteId: data.id }
 }
 
 // Two plain queries rather than an embedded select -- same reasoning as

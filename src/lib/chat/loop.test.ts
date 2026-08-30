@@ -532,6 +532,47 @@ describe('runAssistantTurn -- structured responses', () => {
   })
 })
 
+// Role-Aware Project Views and Ember-First Member Workspace, Stage 3/4
+// (docs/dev-request-role-aware-project-views-and-ember-first-workspace.md).
+// Acceptance criterion 30: general (unbound) Ember chat must have no
+// member-lookup tool and cannot enumerate a Project roster -- this is the
+// direct test for that, at the same level (the `tools` array actually
+// handed to generateChat) as every other tool-availability guarantee in
+// this file.
+describe('runAssistantTurn -- project-bound member tools', () => {
+  it('offers list_project_members/send_project_note only in a project-bound conversation, never in general chat', async () => {
+    generateChatMock.mockResolvedValue({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    await runAssistantTurn(fakeCtx(), null, 'hi')
+    const generalTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(generalTools).not.toContain('list_project_members')
+    expect(generalTools).not.toContain('send_project_note')
+
+    generateChatMock.mockClear()
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { id: 'proj-1', name: 'Test Project', goal: null, information_sensitivity: null }, error: null }) }),
+          }),
+        }
+      }
+      if (table === 'project_knowledge_bases' || table === 'project_wiki_articles') {
+        return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+    createConversationMock.mockResolvedValueOnce({ id: 'conv-1', project_id: 'proj-1' })
+
+    await runAssistantTurn(ctx, null, 'hi', undefined, 'proj-1')
+    const projectTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(projectTools).toContain('list_project_members')
+    expect(projectTools).toContain('send_project_note')
+  })
+})
+
 // Regression guard for src/lib/workbench/assistant-descriptor.ts, which
 // imports these instead of restating them -- a change here should be a
 // deliberate choice, not a silent drift the descriptor never notices.
