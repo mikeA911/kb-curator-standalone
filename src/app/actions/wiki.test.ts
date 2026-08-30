@@ -44,7 +44,7 @@ const adminSupabase = createFakeSupabase({
 })
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
 
-const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction, attachProjectAndSetVisibilityAction } =
+const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction, createManualArticleAction, attachProjectAndSetVisibilityAction } =
   await import('./wiki')
 
 beforeEach(() => {
@@ -102,6 +102,58 @@ describe('approveArticleAction', () => {
   })
 })
 
+// Caught live as "Minified React error #441" on a real `next build && next
+// start` -- see createAIAssistedDraftAction's own comment below for the full
+// diagnosis. createManualArticleAction never throws for an expected failure
+// (slug collision); it always resolves to CreateWikiDraftResult.
+describe('createManualArticleAction', () => {
+  it('creates the article and its first version on success', async () => {
+    const supabase = createFakeSupabase({
+      wiki_articles: [
+        { data: null, error: null }, // slug-availability check: none existing
+        { data: { id: 'article-1', slug: 'new-article' }, error: null }, // insert
+      ],
+      wiki_versions: [{ data: { id: 'version-1' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+
+    const result = await createManualArticleAction({
+      title: 'New Article',
+      slug: 'new-article',
+      category: 'platform_handbook',
+      shortDescription: '',
+      quickHelp: 'Help text',
+      content: 'Body',
+      implementationNotes: '',
+      limitations: '',
+      knowledgeBaseId: null,
+    })
+
+    expect(result).toEqual({ ok: true, articleId: 'article-1', slug: 'new-article' })
+  })
+
+  it('reports a slug collision as ok:false instead of throwing across the Server Action boundary', async () => {
+    const supabase = createFakeSupabase({
+      wiki_articles: [{ data: { id: 'existing-article' }, error: null }], // slug-availability check: found
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+
+    const result = await createManualArticleAction({
+      title: 'Duplicate Slug Article',
+      slug: 'existing-slug',
+      category: 'platform_handbook',
+      shortDescription: '',
+      quickHelp: 'Help text',
+      content: 'Body',
+      implementationNotes: '',
+      limitations: '',
+      knowledgeBaseId: null,
+    })
+
+    expect(result).toEqual({ ok: false, error: 'Slug "existing-slug" is already in use' })
+  })
+})
+
 describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)', () => {
   const draftFields = {
     title: 'How KB Sandbox Is Organized',
@@ -132,7 +184,7 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
       workstreamArtifactId: 'artifact-1',
     })
 
-    expect(result).toEqual({ articleId: 'article-1', slug: 'how-kb-sandbox-is-organized' })
+    expect(result).toEqual({ ok: true, articleId: 'article-1', slug: 'how-kb-sandbox-is-organized' })
     expect(generateStructured).toHaveBeenCalled()
     const sourceInsert = supabase._calls.find((c) => c.table === 'wiki_sources' && c.method === 'insert')
     expect(sourceInsert?.args).toMatchObject({
@@ -142,19 +194,27 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
     })
   })
 
-  it('rejects a link-only artifact (no content to synthesize from)', async () => {
+  // Caught live as "Minified React error #441", reproduced against a real
+  // `next build && next start` (not just this suite): Next.js redacts the
+  // message of ANY error thrown out of a Server Action in production,
+  // regardless of how clean it is -- confirmed by comparing the server's own
+  // log (full message + digest) against what the client actually receives
+  // (digest only). The fix is the action never throwing for an expected
+  // failure at all, not a cleaner thrown message -- so every case below
+  // asserts a resolved ok:false result, never a rejection.
+  it('reports a link-only artifact (no content to synthesize from) as ok:false, not a throw', async () => {
     const supabase = createFakeSupabase({
       workstream_artifacts: [{ data: { id: 'artifact-2', title: 'External PR link', content: null }, error: null }],
     })
     requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
 
-    await expect(
-      createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-2' })
-    ).rejects.toThrow('link-only artifact')
+    const result = await createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-2' })
+
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('link-only artifact') })
     expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
   })
 
-  it('caught live as React error #441: a raw provider failure is coerced to a clean, recoverable message instead of crossing the Server Action boundary as-is', async () => {
+  it('coerces a raw provider failure to a clean, recoverable ok:false message instead of crossing the Server Action boundary as a throw', async () => {
     const supabase = createFakeSupabase({
       workstream_artifacts: [{ data: { id: 'artifact-3', title: 'Big artifact', content: 'evidence text' }, error: null }],
     })
@@ -168,9 +228,10 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
     const generateStructured = vi.fn().mockRejectedValue(rawProviderError)
     getActiveStructuredOutputProviderMock.mockResolvedValue({ name: 'test-provider', generateStructured })
 
-    await expect(
-      createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-3' })
-    ).rejects.toThrow(/AI-assisted draft generation failed \(groq: /)
+    const result = await createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-3' })
+
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toMatch(/AI-assisted draft generation failed \(groq: /)
   })
 })
 

@@ -113,9 +113,17 @@ function ManualForm({ categories }: { categories: WikiCategory[] }) {
         applicableVersion: applicableVersion.trim() || null,
         knowledgeBaseId: null,
       })
+      if (!result.ok) {
+        setError(result.error)
+        setSubmitting(false)
+        return
+      }
       router.push(`/wiki/${result.slug}`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create article')
+    } catch {
+      // The action itself never throws for an expected failure (see its own
+      // ok:false path) -- reaching here means a genuine network/transport
+      // failure, not something with a specific message to show.
+      setError('Failed to create article -- check your connection and try again.')
       setSubmitting(false)
     }
   }
@@ -219,9 +227,14 @@ function AIAssistedForm({
         sourceMode === 'chunks'
           ? await createAIAssistedDraftAction({ topic, category, chunkIds: [...selected] })
           : await createAIAssistedDraftAction({ topic, category, workstreamArtifactId: artifactId })
+      if (!result.ok) {
+        setError(result.error)
+        setSubmitting(false)
+        return
+      }
       router.push(`/wiki/${result.slug}`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate draft')
+    } catch {
+      setError('Failed to generate draft -- check your connection and try again.')
       setSubmitting(false)
     }
   }
