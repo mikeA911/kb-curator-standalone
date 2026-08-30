@@ -29,17 +29,21 @@ export async function getQuickHelpAction(slug: string) {
   return getQuickHelpBySlug(supabase, slug)
 }
 
-// Caught live: React error #441 -- a provider failure (or truncated/
-// malformed structured-output response, more likely with a large evidence
-// set) throws a raw AIProviderError whose message embeds the full raw model
-// output and whose .cause is the underlying SDK error object, non-plain and
-// not guaranteed serializable across the Server Action boundary. Neither
-// call site had a try/catch, so that raw error crossed straight to the
-// client instead of the WikiValidationError-style message this file already
-// uses elsewhere for a recoverable failure (see chunkIds.length === 0
-// above). synthesis.ts's own MAX_CHUNK_CHARS cap is the actual root-cause
-// fix (bounds the prompt so this failure mode is rare); this is the
-// backstop for whatever that doesn't prevent.
+// Caught live twice now, two different underlying causes -- a provider
+// failure/truncated structured-output response here, and (see
+// createManualArticleAction/createAIAssistedDraftAction below) a plain
+// WikiValidationError from a simple slug collision. Reproduced directly
+// against a real `next build && next start`: the server log shows the
+// exact, clean thrown message every time (confirmed via digest-bearing log
+// lines), but the client only ever receives an opaque digest-only stub --
+// this is Next.js's default production behavior for ANY error thrown out of
+// a Server Action, not something specific to a messy/non-serializable error
+// object. A cleaner thrown message (this function's original fix) does not
+// fix that; only never throwing across the boundary does. synthesis.ts's
+// own MAX_CHUNK_CHARS cap still matters (bounds the prompt so a genuinely
+// broken response is rare) -- this wrapper is now just the last translation
+// step before the two exported actions below turn any failure into a normal
+// return value instead of a throw.
 async function synthesizeWikiDraftSafely(
   provider: AIProvider,
   input: { topic: string; category: string; chunks: SourceChunkInput[] }
@@ -60,6 +64,18 @@ function slugify(title: string) {
     .replace(/(^-|-$)/g, '')
 }
 
+// Return shape for both createManualArticleAction and
+// createAIAssistedDraftAction below -- see synthesizeWikiDraftSafely's
+// comment for why. A validation failure (bad slug, missing prerequisite,
+// provider error, ...) is an ordinary, expected outcome of calling these,
+// not a crash -- so it's reported as data (ok:false), never thrown. Mirrors
+// src/lib/chat/loop.ts's isProviderError/isSensitivityBlock convention.
+export type CreateWikiDraftResult = { ok: true; articleId: string; slug: string } | { ok: false; error: string }
+
+function wikiErrorMessage(err: unknown): string {
+  return err instanceof WikiValidationError || err instanceof Error ? err.message : 'Something went wrong creating this article -- try again.'
+}
+
 export async function createManualArticleAction(input: {
   title: string
   slug?: string
@@ -73,34 +89,55 @@ export async function createManualArticleAction(input: {
   applicableRoles?: string[]
   relatedRoutes?: string[]
   applicableVersion?: string | null
-}) {
+}): Promise<CreateWikiDraftResult> {
   const { user, supabase } = await requireRole('curator')
 
-  const { article } = await createManualDraftArticle(supabase, {
-    slug: input.slug || slugify(input.title),
-    title: input.title,
-    category: input.category,
-    shortDescription: input.shortDescription || null,
-    quickHelp: input.quickHelp,
-    content: input.content,
-    implementationNotes: input.implementationNotes || null,
-    limitations: input.limitations || null,
-    applicableRoles: input.applicableRoles?.length ? input.applicableRoles : null,
-    relatedRoutes: input.relatedRoutes?.length ? input.relatedRoutes : null,
-    applicableVersion: input.applicableVersion || null,
-    knowledgeBaseId: input.knowledgeBaseId,
-    createdBy: user.id,
-  })
-
-  revalidatePath('/wiki')
-  return { articleId: article.id, slug: article.slug }
+  try {
+    const { article } = await createManualDraftArticle(supabase, {
+      slug: input.slug || slugify(input.title),
+      title: input.title,
+      category: input.category,
+      shortDescription: input.shortDescription || null,
+      quickHelp: input.quickHelp,
+      content: input.content,
+      implementationNotes: input.implementationNotes || null,
+      limitations: input.limitations || null,
+      applicableRoles: input.applicableRoles?.length ? input.applicableRoles : null,
+      relatedRoutes: input.relatedRoutes?.length ? input.relatedRoutes : null,
+      applicableVersion: input.applicableVersion || null,
+      knowledgeBaseId: input.knowledgeBaseId,
+      createdBy: user.id,
+    })
+    revalidatePath('/wiki')
+    return { ok: true, articleId: article.id, slug: article.slug }
+  } catch (err) {
+    return { ok: false, error: wikiErrorMessage(err) }
+  }
 }
 
+// Exported entry point: a single try/catch around the whole inner
+// implementation below (which still throws internally -- e.g. WikiValidationError
+// for a missing prerequisite, or whatever synthesizeWikiDraftSafely/
+// createAIAssistedArticle raise) converts any failure into CreateWikiDraftResult,
+// same reasoning as createManualArticleAction above.
 export async function createAIAssistedDraftAction(
   input:
     | { topic: string; category: WikiCategoryId; chunkIds: string[]; workstreamArtifactId?: undefined }
     | { topic: string; category: WikiCategoryId; workstreamArtifactId: string; chunkIds?: undefined }
-) {
+): Promise<CreateWikiDraftResult> {
+  try {
+    const { articleId, slug } = await createAIAssistedDraftInner(input)
+    return { ok: true, articleId, slug }
+  } catch (err) {
+    return { ok: false, error: wikiErrorMessage(err) }
+  }
+}
+
+async function createAIAssistedDraftInner(
+  input:
+    | { topic: string; category: WikiCategoryId; chunkIds: string[]; workstreamArtifactId?: undefined }
+    | { topic: string; category: WikiCategoryId; workstreamArtifactId: string; chunkIds?: undefined }
+): Promise<{ articleId: string; slug: string }> {
   const { user, supabase } = await requireRole('curator')
 
   if (input.workstreamArtifactId) {
