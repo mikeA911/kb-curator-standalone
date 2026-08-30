@@ -56,6 +56,14 @@ export async function resolveNavigationTarget(
         if (!source) return null
         return { label: source.title, route: `/sources/${source.id}` }
       }
+      case 'project_note': {
+        // RLS (project_notes_select_visible/project_notes_select_own) is the
+        // actual access check -- send_project_note's own author and
+        // recipient can always see the note it just created.
+        const { data: note } = await ctx.supabase.from('project_notes').select('id, project_id, subject').eq('id', target.id).maybeSingle()
+        if (!note) return null
+        return { label: note.subject, route: `/projects/${note.project_id}/notes/${note.id}` }
+      }
     }
   } catch {
     // A query error (malformed id, transient failure) is treated the same

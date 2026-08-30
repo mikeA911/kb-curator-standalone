@@ -10,7 +10,10 @@ import type { ToolSpec } from '@/lib/ai'
 // Knowledge and Assistant Context, Stage 2 -- resolves via
 // /sources/[id] (src/app/(app)/sources/[id]/page.tsx), RLS-gated the same
 // way as the underlying knowledge_sources row itself.
-export const NavigationTargetKindSchema = z.enum(['wiki_article', 'project', 'workstream', 'assessment', 'knowledge_source'])
+// project_note added in Role-Aware Project Views Stage 4 -- resolves via
+// /projects/[id]/notes/[noteId], RLS-gated the same way as the underlying
+// project_notes row itself (see navigation-resolver.ts).
+export const NavigationTargetKindSchema = z.enum(['wiki_article', 'project', 'workstream', 'assessment', 'knowledge_source', 'project_note'])
 export type NavigationTargetKind = z.infer<typeof NavigationTargetKindSchema>
 
 // citations[].sourceType was pinned to 'wiki_article' while search_wiki was
