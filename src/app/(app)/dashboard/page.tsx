@@ -12,8 +12,12 @@ import { getTrendingStats, listRecentSharedLinks } from '@/lib/trending/queries'
 import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
 import { hasRequiredRole } from '@/lib/auth'
+import { listMemberProjectOptions } from '@/lib/projects/queries'
+import { listRecentConversations } from '@/lib/chat/conversations'
+import { EmberHome, type RecentConversationRow } from '@/components/dashboard/EmberHome'
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ ember?: string }> }) {
+  const { ember: initialProjectId } = await searchParams
   const supabase = await createClient()
 
   const {
@@ -28,6 +32,10 @@ export default async function DashboardPage() {
   // above, per the doc's own acceptance criterion #1.
   const canSeeSharedLinks = !!user && profile?.role !== 'anonymous'
   const isAdmin = profile?.role === 'admin'
+  // Ember-first home (docs/dev-request-role-aware-project-views-and-ember-
+  // first-workspace.md, View 3) -- ordinary members only. Admin/curator keep
+  // today's Workbench dashboard unchanged.
+  const isEmberFirst = profile?.role === 'consultant'
 
   const [
     unpublishedWikiArticles,
@@ -39,6 +47,8 @@ export default async function DashboardPage() {
     needsAttention,
     notesForUser,
     sharedLinks,
+    emberProjects,
+    emberRecentConversations,
   ] = await Promise.all([
     canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
     getProjectStats(supabase),
@@ -49,6 +59,8 @@ export default async function DashboardPage() {
     canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
     canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
     canSeeSharedLinks ? listRecentSharedLinks(supabase) : Promise.resolve([]),
+    isEmberFirst ? listMemberProjectOptions(supabase, user!.id) : Promise.resolve([]),
+    isEmberFirst ? listRecentConversations(supabase, user!.id, { limit: 5 }) : Promise.resolve([]),
   ])
 
   // Same "projects this user actually belongs to" query as trending/new/page.tsx
@@ -67,6 +79,18 @@ export default async function DashboardPage() {
   const { data: noteProjects } =
     projectIds.length > 0 ? await supabase.from('projects').select('id, name').in('id', projectIds) : { data: [] }
   const projectNameById = new Map((noteProjects ?? []).map((p) => [p.id, p.name]))
+
+  // Same "resolve project names for a list of conversations" pattern as
+  // notesForYou just above -- emberProjects already covers every currently
+  // active membership, so a conversation bound to a Project the viewer has
+  // since lost is simply labeled with whatever emberProjects doesn't have.
+  const emberProjectNameById = new Map(emberProjects.map((p) => [p.id, p.name]))
+  const emberRecentConversationRows: RecentConversationRow[] = emberRecentConversations.map((c) => ({
+    id: c.id,
+    title: c.title,
+    projectId: c.project_id,
+    projectName: c.project_id ? (emberProjectNameById.get(c.project_id) ?? null) : null,
+  }))
   const notesForYou: NoteForYouRow[] = notesForUser.map((n) => ({
     id: n.id,
     projectId: n.project_id,
@@ -90,22 +114,28 @@ export default async function DashboardPage() {
     <div className="flex flex-col gap-8">
       <SectionHero image="/images/sections/kb-sandbox.png" height="compact" priority />
 
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Workbench</h1>
-        <Link href="/upload" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
-          Sources &amp; Curation
-        </Link>
-      </div>
+      {isEmberFirst ? (
+        <EmberHome projects={emberProjects} recentConversations={emberRecentConversationRows} initialProjectId={initialProjectId} />
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-semibold">Workbench</h1>
+            <Link href="/upload" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
+              Sources &amp; Curation
+            </Link>
+          </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-        {summaryCards.map((card) => (
-          <Link key={card.label} href={card.href} className="rounded border border-zinc-200 bg-white p-4 hover:border-zinc-400">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">{card.label}</div>
-            <div className="mt-1 text-3xl font-semibold">{card.value}</div>
-            <div className="mt-1 text-sm text-zinc-600">{card.subtitle}</div>
-          </Link>
-        ))}
-      </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+            {summaryCards.map((card) => (
+              <Link key={card.label} href={card.href} className="rounded border border-zinc-200 bg-white p-4 hover:border-zinc-400">
+                <div className="text-xs uppercase tracking-wide text-zinc-500">{card.label}</div>
+                <div className="mt-1 text-3xl font-semibold">{card.value}</div>
+                <div className="mt-1 text-sm text-zinc-600">{card.subtitle}</div>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
 
       {canSeeWikiQueue && (
         <div className="rounded border border-zinc-200 bg-white p-4">
