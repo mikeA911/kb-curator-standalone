@@ -15,15 +15,24 @@ export function ProjectNoteForm({
   members,
   prefillContextType,
   prefillContextId,
+  prefillRecipientUserId,
 }: {
   projectId: string
   members: ProjectMemberOption[]
   prefillContextType?: string
   prefillContextId?: string
+  // Member Directory's "Send note" link (docs/dev-request-role-aware-
+  // project-views-and-ember-first-workspace.md, View 2) -- pre-addresses
+  // this form to one member rather than requiring the sender to find them
+  // again in the dropdown. Only honored when it's actually in `members`
+  // (an active member of this project), otherwise falls back to the
+  // ordinary default.
+  prefillRecipientUserId?: string
 }) {
   const router = useRouter()
-  const [recipientType, setRecipientType] = useState<ProjectNoteRecipientType>('project_team')
-  const [recipientUserId, setRecipientUserId] = useState(members[0]?.userId ?? '')
+  const prefillIsValidMember = !!prefillRecipientUserId && members.some((m) => m.userId === prefillRecipientUserId)
+  const [recipientType, setRecipientType] = useState<ProjectNoteRecipientType>(prefillIsValidMember ? 'user' : 'project_team')
+  const [recipientUserId, setRecipientUserId] = useState(prefillIsValidMember ? prefillRecipientUserId! : (members[0]?.userId ?? ''))
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [error, setError] = useState<string | null>(null)
