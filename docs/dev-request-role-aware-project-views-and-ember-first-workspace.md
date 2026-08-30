@@ -71,6 +71,48 @@ For non-staff users:
 
 Revoking or suspending membership must remove the Project from the user's view and prevent further project-bound retrieval immediately.
 
+### Member directory and addressed notes
+
+The main Project page should show its active members as a compact directory. Each visible member entry should include only the profile information already authorized for display, such as display name or email and Project role/business function where available.
+
+Selecting a member should offer **Send note**. Reuse the existing Project Notes capability with:
+
+- `recipient_type = user`;
+- the selected member as `recipient_user_id`;
+- the current Project as `project_id`; and
+- an optional Project/member context reference where useful.
+
+This is an addressed Project note, not a new direct-message system and not an Ember conversation. The note remains inside the Project's governed Notes area, may receive replies, and follows the existing open/resolved lifecycle.
+
+Rules:
+
+- only an active member of the Project may send a member note;
+- the selected recipient must also be an active member of that same Project at send time;
+- the author and addressed recipient may read the note under the existing Project Notes policy;
+- broader curator/admin visibility must follow the existing notes policy and must not grant access to unrelated restricted evidence linked from the note;
+- removing a member must prevent new notes being addressed to them while preserving authorized historical records;
+- the member directory must not expose users from other Projects; and
+- clicking the member name must not open an unrestricted platform-wide profile.
+
+The first release needs no presence indicator, external email/SMS delivery, file attachment, group chat or real-time messaging. A small modal or inline form for subject and message body is sufficient.
+
+### Every connected Project remains a full workspace
+
+Every Project displayed beneath the Main/Sandz visual root must link to its own normal Project workspace. It is not a lightweight folder or inherited subproject.
+
+Each connected Project must retain:
+
+- its own main Project page;
+- its own active-member directory;
+- its existing Members management page for authorized owners/admins;
+- its own Project roles and approval authorities;
+- its own attached-knowledge-base section;
+- the ability for authorized users to attach an existing knowledge base or create/use a Project-specific knowledge base through the existing governed flows;
+- its own accessible sources, Wiki guidance, Workstreams, notes and artifacts; and
+- its own project-bound Ember entry point and conversation scope.
+
+The shared knowledge base connecting it to Main/Sandz is simply one of that Project's attachments. It does not cause the connected Project to inherit Main/Sandz members, authorities, private sources or permissions. Any additional knowledge bases and memberships remain explicitly configured on that Project.
+
 ## Read-only organization Explorer
 
 Add a small read-only Explorer that helps users visualize the organization through relationships that already exist in KB Sandbox. It is a navigation aid, not a file manager and not a new hierarchy model.
@@ -173,6 +215,8 @@ Ember must use the same server-side authorization path as direct page access. Hi
 - Add clear `Member`, `Owner`, `Curator`, `Authority gap` and `Membership required` indicators where appropriate.
 - Ensure non-member staff cannot navigate from portfolio metadata into protected content.
 - Add the read-only organization Explorer using existing Project-to-knowledge-base-to-source relationships.
+- Show the active member directory on the main Project page and connect **Send note** to the existing addressed Project Notes flow.
+- Confirm that every connected Project link opens the complete Project workspace, including its member directory/Members page and attached knowledge bases.
 
 ### Stage 2 — Ember-first member home
 
@@ -208,6 +252,14 @@ Ember must use the same server-side authorization path as direct page access. Hi
 17. Opening the Sandz Project displays Sandz as the Explorer root and discovers accessible connected Projects through `sandz-shared-kb` attachments.
 18. The Explorer works from the selected Project and creates no Organization entity, Project hierarchy, tenancy boundary or access entitlement.
 19. Cycles caused by many-to-many knowledge-base attachments are collapsed into one visible node or reference and never cause recursive rendering.
+20. The main Project page lists all active members the current viewer is authorized to see.
+21. Selecting a member opens a small addressed-note form and creates an existing Project Note for that user.
+22. A user cannot address a note to a non-member, inactive member or member of another Project.
+23. The recipient can open and reply to the note through the existing Project Notes pages.
+24. No new private-message table, unrestricted user directory or cross-Project messaging channel is introduced.
+25. Every connected Project has its own main page, member directory, authorized Members management page and attached-knowledge-base section.
+26. Opening a connected Project binds Ember to that Project rather than the Main/Sandz root.
+27. Sharing the Main/Sandz knowledge base does not inherit members, roles, authorities or access grants between Projects.
 
 ## Required live regression personas
 

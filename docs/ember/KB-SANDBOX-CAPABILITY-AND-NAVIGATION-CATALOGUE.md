@@ -3,7 +3,7 @@
 **Purpose:** Living product-navigation knowledge for Ember, release documentation, future application discovery, and a possible KB Sandbox MCP interface  
 **Status:** Initial baseline — expand as workflows are verified  
 **Application version:** 0.1.0  
-**Last code verification:** 2026-08-29  
+**Last code verification:** 2026-08-30  
 
 ## How this document is used
 
@@ -151,14 +151,14 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 
 - **Intent:** Restrict a source, article, artifact, or the project itself to specific people/groups (human access) and separately control which AI providers may process it (AI-processing sensitivity).
 - **Users and authority:** Project owner, or platform admin via the same manage boundary.
-- **Prerequisites:** Access to the selected project; owner or admin authority.
+- **Prerequisites:** Access to the selected project; owner or admin authority. **Every person or group granted here must already be an active Project member** -- this page cannot add a new person to the project. Add them at the project's **Members** page first if they aren't one yet, then come here to grant them access to a specific restricted resource or the project's own sensitivity tier.
 - **Start:** `/projects/[id]/access`
-- **Navigation:** Project → **Access & Evidence** → classify a listed resource, or set the project's own sensitivity in the **This project** section → save.
-- **Outcome:** A resource or the project gains (or changes) a human-access classification, an AI-processing sensitivity tier, or both -- independently. Restricting human access requires granting at least one group or named member in the same action. An unclassified resource or project defaults to Internal for AI-processing purposes, never Public.
-- **Ember guidance:** Ember does not perform classification itself; it may explain that a blocked response is due to this policy and direct an eligible user to this page. Ember must not name or describe a resource the current user cannot see.
-- **Boundaries:** Human access and AI-processing sensitivity are separate axes -- changing one never implies the other. All classification and grant changes are recorded in an audit log.
+- **Navigation:** Project → **Access & Evidence** → classify a listed resource, or set the project's own sensitivity in the **This project** section → select from existing members/groups → save.
+- **Outcome:** A resource or the project gains (or changes) a human-access classification, an AI-processing sensitivity tier, or both -- independently. Restricting human access requires granting at least one *existing* group or named member in the same action -- it does not invite anyone. An unclassified resource or project defaults to Internal for AI-processing purposes, never Public.
+- **Ember guidance:** Ember does not perform classification itself; it may explain that a blocked response is due to this policy and direct an eligible user to this page. If the user's goal is actually to add a new person to the project (not grant an existing member access to something restricted), direct them to **Members** instead -- this page only grants access among people already on the project. Ember must not name or describe a resource the current user cannot see.
+- **Boundaries:** Human access and AI-processing sensitivity are separate axes -- changing one never implies the other. Project membership and resource-level access grants are separate axes too -- this page is the second one, never the first. All classification and grant changes are recorded in an audit log.
 - **Exposure:** Not an Ember-actionable tool; administrative page only, reached via navigation guidance.
-- **Verification:** `/projects/[id]/access`, `AccessEvidenceManager.tsx`; code verified 2026-08-29.
+- **Verification:** `/projects/[id]/access`, `AccessEvidenceManager.tsx`; code verified 2026-08-29. Confirmed as a real, live Ember mistake in the Sandz onboarding experiment's Run 2 (`docs/test-reports/2026-08-30-ember-sandz-onboarding-experiment.md`) -- she read this entry correctly and still told the user to "invite" someone here, because the entry didn't say membership was a prerequisite until this fix.
 
 ## 4. Wiki
 
