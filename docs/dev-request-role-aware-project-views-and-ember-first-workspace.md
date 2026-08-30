@@ -181,6 +181,48 @@ When the user changes Project:
 3. do not carry retrieved evidence, citations or hidden summaries from the previous Project into the new scope; and
 4. record the Project binding durably for recovery and audit.
 
+## View 4 — Ember awareness of Project members
+
+When Ember is opened from a Project page, users should be able to ask:
+
+- “Who is working on this Project?”
+- “Who owns this Project?”
+- “Who handles commercial approval?”
+- “Can I send Maria a Project note?”
+
+Do **not** copy the full Project roster into every system prompt. Membership changes, may contain personal information and is unnecessary for most turns. The prompt addendum may tell Ember that member lookup is available, but records should be fetched only when required.
+
+Add a Project-bound tool such as `list_project_members`. It must:
+
+- be offered only when the conversation has a server-resolved Project binding;
+- accept no model-supplied `projectId`;
+- query through the caller's RLS-scoped session or an equivalently narrow permission-checked function;
+- default to active members;
+- support an optional bounded search by name, email fragment, Project role or business function; and
+- return only the minimum authorized fields needed for collaboration.
+
+Suggested result fields are a stable recipient/member identifier, authorized display label, Project role, business function where available, owner status and approval responsibilities already visible to the caller.
+
+Do not return unrelated profile data, global platform roles, private activity, conversations, journals, resource-access grants or membership in other Projects. Ember must fetch current results rather than guess from chat history and must not persist the roster into summaries or long-term memory merely because it was retrieved.
+
+General, unbound Ember chat must not offer this tool or enumerate any Project roster. It should ask the user to open or select an authorized Project first.
+
+### Optional note sending through Ember
+
+The member directory's **Send note** action uses the existing Project Notes flow directly and does not depend on Ember. As a later increment, Ember may gain a separate `send_project_note` tool.
+
+That tool must:
+
+- be available only in a Project-bound conversation;
+- accept a recipient returned from the bound member lookup rather than an arbitrary user;
+- re-check that sender and recipient are active members of the same Project;
+- reuse the existing `project_notes` record with `recipient_type = user`;
+- preserve current note RLS, reply and resolution behavior;
+- show the recipient, subject and body to the user; and
+- obtain explicit confirmation immediately before sending.
+
+Return a structured link to the resulting note. Email, SMS, attachments, group chat and external delivery remain out of scope.
+
 ## Permission model
 
 Authorization must be capability- and relationship-based rather than inferred from UI labels alone.
@@ -195,6 +237,23 @@ The effective decision remains the intersection of:
 6. authority or human approval where a consequential action requires it.
 
 Ember must use the same server-side authorization path as direct page access. Hiding a link is useful UX but is not an access control.
+
+### Project evidence retrieval remains permission-scoped
+
+The existing evidence design is the security foundation and must be preserved:
+
+1. The conversation's Project binding is resolved server-side.
+2. Project-specific prompt guidance and tools are offered only when that binding resolves.
+3. `search_project_knowledge` accepts no model-controlled Project ID.
+4. Knowledge scope comes from existing Project-to-knowledge-base and Project-to-Wiki attachments.
+5. Retrieval runs using the current user's RLS-scoped Supabase client.
+6. Strict Project membership policies constrain visible attachments.
+7. `has_evidence_access` independently filters restricted sources, documents, Wiki content and artifacts without an administrator, curator or owner content bypass.
+8. Information sensitivity separately decides whether the selected AI provider may process the authorized material.
+
+Member awareness and evidence authorization are separate. Seeing that someone belongs to a Project does not reveal that person's restricted sources. Ember must not infer evidence access from Project role, business function or approval responsibility, and member results must never become an alternate retrieval authorization list.
+
+Prompt instructions explain the behavior but do not enforce it. Database/RPC policies and server-side tool scoping remain the authorization boundary.
 
 ## Current behavior to preserve
 
@@ -225,7 +284,22 @@ Ember must use the same server-side authorization path as direct page access. Hi
 - Add recent authorized Projects/conversations and role-aware prompt suggestions.
 - Keep the full Workbench reachable through a secondary “Explore workspace” action.
 
-### Stage 3 — refinement and measurement
+### Stage 3 — Project-bound Ember member awareness
+
+- Add the bound `list_project_members` tool with no Project ID input.
+- Add narrow prompt guidance for participant, ownership, responsibility and recipient questions.
+- Return structured, minimal member results.
+- Verify that general Ember chat cannot enumerate members.
+- Re-run evidence-access regression tests to prove member visibility does not weaken retrieval controls.
+
+### Stage 4 — optional addressed notes through Ember
+
+- Add `send_project_note` only if conversational note sending is wanted for this release.
+- Require explicit confirmation of recipient and message.
+- Reuse existing Project Notes storage, access rules and pages.
+- Return a working structured note link.
+
+### Stage 5 — refinement and measurement
 
 - Add accessible empty states and onboarding guidance.
 - Measure successful task completion, navigation usage, denied-access events and fallback to manual pages without recording private message text in product analytics.
@@ -260,6 +334,17 @@ Ember must use the same server-side authorization path as direct page access. Hi
 25. Every connected Project has its own main page, member directory, authorized Members management page and attached-knowledge-base section.
 26. Opening a connected Project binds Ember to that Project rather than the Main/Sandz root.
 27. Sharing the Main/Sandz knowledge base does not inherit members, roles, authorities or access grants between Projects.
+28. A bound Project member can ask Ember who belongs to the Project and receive only current authorized member information.
+29. `list_project_members` accepts no Project ID from Ember.
+30. General Ember chat has no member-lookup tool and cannot enumerate a Project roster.
+31. Removed or inactive members disappear from default Ember results without a prompt or deployment update.
+32. Project role, business function and approval authority are not conflated.
+33. Member lookup reveals no restricted evidence or resource-level grants.
+34. `search_project_knowledge` continues to return only evidence authorized by Project membership and resource grants.
+35. A non-member platform administrator or curator cannot retrieve restricted Project evidence through Ember.
+36. A member without access to restricted pricing cannot retrieve, cite, summarize or infer it through Ember; a separately granted member can.
+37. Switching Project conversations changes both member and evidence scope without carrying results across the boundary.
+38. If Ember note sending is implemented, she cannot address a non-member or inactive member and must obtain explicit confirmation before sending.
 
 ## Required live regression personas
 
@@ -270,8 +355,9 @@ Test with at least:
 - a Project owner;
 - a Project curator;
 - a consultant/member with access to general Project evidence but not a restricted pricing source;
-- a member explicitly granted access to that pricing source; and
-- an authenticated non-member.
+- a member explicitly granted access to that pricing source;
+- an authenticated non-member; and
+- a removed or inactive former member.
 
 For each persona, test the Projects list, direct Project URL, direct source URL, Ember retrieval, citations, Project switching and membership revocation.
 
@@ -279,6 +365,6 @@ For each persona, test the Projects list, direct Project URL, direct source URL,
 
 After implementation and live verification:
 
-- update the governing Wiki's “Current implementation boundary”;
+- do not change the organization Wiki while Claude's current Wiki test is active; update it only after the owner explicitly reopens it;
 - update `docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-CATALOGUE.md` with the exact routes, intents, role visibility and Ember navigation actions; and
 - add a release note that distinguishes the staff portfolio from the Ember-first member workspace.
