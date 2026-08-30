@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
+import { MemberDirectory } from '@/components/projects/MemberDirectory'
 import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
 import { ProjectStatusSection } from '@/components/projects/ProjectStatusSection'
 import { listWorkstreams } from '@/lib/projects/workstreams'
@@ -48,6 +50,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     projectConversations,
     { data: statusHistory },
     explorer,
+    { data: activeMembers },
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -67,6 +70,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     // else, same as the rest of this page's queries.
     supabase.from('project_status_history').select('*').eq('project_id', id).order('created_at', { ascending: false }),
     getOrganizationExplorer(supabase, id),
+    // Member Directory (docs/dev-request-role-aware-project-views-and-ember-
+    // first-workspace.md, View 2) -- RLS (project_members_select_member)
+    // already scopes this to the caller's own accessible project, same
+    // is_project_member gate as everything else on this page.
+    user
+      ? supabase.from('project_members').select('id, user_id, role, business_function').eq('project_id', id).eq('status', 'active').order('created_at')
+      : Promise.resolve({ data: null }),
   ])
   const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
   const { data: statusHistoryActors } =
@@ -74,6 +84,22 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       ? await supabase.from('profiles').select('id, email').in('id', statusHistoryActorIds)
       : { data: [] }
   const statusHistoryActorEmail = new Map((statusHistoryActors ?? []).map((p) => [p.id, p.email]))
+
+  // Emails are for display only, same narrow admin-client pattern as
+  // members/page.tsx and notes/page.tsx -- project_members itself (fetched
+  // above under RLS) is the real authorization boundary.
+  const memberUserIds = (activeMembers ?? []).map((m) => m.user_id)
+  const { data: memberProfiles } =
+    memberUserIds.length > 0 ? await createAdminClient().from('profiles').select('id, email').in('id', memberUserIds) : { data: [] }
+  const memberEmailById = new Map((memberProfiles ?? []).map((p) => [p.id, p.email]))
+  const directoryMembers = (activeMembers ?? []).map((m) => ({
+    membershipId: m.id,
+    userId: m.user_id,
+    email: memberEmailById.get(m.user_id) ?? null,
+    role: m.role,
+    businessFunction: m.business_function,
+  }))
+
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
@@ -101,6 +127,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold">{project.name}</h1>
+            {viewerMembership?.role && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium capitalize text-zinc-600">{viewerMembership.role}</span>
+            )}
             {project.visibility === 'public' && project.published_at && (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Published</span>
             )}
@@ -139,6 +168,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </dl>
         )}
       </div>
+
+      {user && viewerMembership && <MemberDirectory projectId={project.id} members={directoryMembers} viewerUserId={user.id} />}
 
       <ProjectGoalForm projectId={project.id} goal={project.goal} canEdit={canManage} />
 

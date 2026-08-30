@@ -24,10 +24,10 @@ export default async function ProjectNotesPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ status?: ProjectNoteStatus; contextType?: string; contextId?: string }>
+  searchParams: Promise<{ status?: ProjectNoteStatus; contextType?: string; contextId?: string; to?: string }>
 }) {
   const { id } = await params
-  const { status = 'open', contextType, contextId } = await searchParams
+  const { status = 'open', contextType, contextId, to } = await searchParams
   const supabase = await createClient()
 
   const {
@@ -38,7 +38,11 @@ export default async function ProjectNotesPage({
   const { data: project } = await supabase.from('projects').select('id, name').eq('id', id).single()
   if (!project) notFound()
 
-  const { data: memberRows } = await supabase.from('project_members').select('user_id').eq('project_id', id)
+  // Only active members are valid note recipients (project_notes_insert_member's
+  // RLS already enforces this at insert time via is_project_member) -- excluding
+  // inactive members here keeps the picker from offering a choice that would
+  // just fail on submit.
+  const { data: memberRows } = await supabase.from('project_members').select('user_id').eq('project_id', id).eq('status', 'active')
   const admin = createAdminClient()
   const { data: profiles } = await admin
     .from('profiles')
@@ -59,7 +63,7 @@ export default async function ProjectNotesPage({
         <h1 className="mt-2 text-xl font-semibold">Notes</h1>
       </div>
 
-      <ProjectNoteForm projectId={id} members={members} prefillContextType={contextType} prefillContextId={contextId} />
+      <ProjectNoteForm projectId={id} members={members} prefillContextType={contextType} prefillContextId={contextId} prefillRecipientUserId={to} />
 
       <div className="flex gap-2 text-sm">
         <Link
