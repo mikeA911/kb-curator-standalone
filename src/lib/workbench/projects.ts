@@ -282,6 +282,32 @@ export async function updateProjectGoal(ctx: WorkbenchCallerContext, projectId: 
   if (error) throw error
 }
 
+// Backs the Ember search_projects tool (docs/dev-request-ember-onboarding-
+// capability-gaps.md, item 1) -- lets Ember discover an existing project
+// before proposing to create a new one, closing the gap where she had no
+// way to find the existing Sandz-Zadara pilots even after being told about
+// them. Uses the caller's own RLS-scoped client throughout, like every
+// other read in this file (unlike searchProfilesByEmail below, which
+// deliberately needs the admin client) -- results are automatically
+// limited to whatever projects this caller can already see.
+export async function searchProjects(
+  ctx: WorkbenchCallerContext,
+  query: string,
+  limit = 10
+): Promise<{ id: string; name: string; projectType: ProjectType; status: ProjectStatus; objective: string | null }[]> {
+  const trimmed = query.trim()
+  if (trimmed.length < 2) return []
+
+  const { data, error } = await ctx.supabase
+    .from('projects')
+    .select('id, name, project_type, status, objective')
+    .ilike('name', `%${trimmed}%`)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return (data ?? []).map((p) => ({ id: p.id, name: p.name, projectType: p.project_type, status: p.status, objective: p.objective }))
+}
+
 // Minimal cross-user lookup backing the "add existing user" controls (the
 // wizard's Team step and the Members page) -- returns only id+email, never
 // role/is_active/anything else. See resolveUserIdsByEmail's comment for why

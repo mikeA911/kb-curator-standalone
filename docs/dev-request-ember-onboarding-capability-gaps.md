@@ -65,15 +65,44 @@ Re-running the HR-restriction portion of Run 1: Ember either (a) actually invoke
 
 Across the whole run, Ember never asked about or surfaced a naming convention, and invented her own ("Sandz HR Workspace" instead of "Sandz-HR"). This is expected, not a defect: nothing in the Handbook/Wiki currently documents an organization/naming convention for her to have found via `search_wiki` even if she'd looked.
 
-### Status: waiting on Mike, not a build item here
+### Status: Wiki source ready; publication and retrieval verification remain
 
-Mike is authoring a Wiki article covering how to represent an "organization" (a client/deployment, per the ADR-0001 single-tenant model) using the Project + naming-convention pattern. Once written:
+The Wiki source is now available at:
 
-1. Approve it into the Wiki as `platform_handbook` category, same review gate as every other Handbook article.
-2. Confirm `search_wiki` actually retrieves it for a query like "Sandz organization structure" or "naming convention" before the next test run (a quick manual check, same pattern used to verify the Vocabulary article's retrievability earlier this week).
-3. Re-run the onboarding conversation and confirm Ember surfaces and follows the convention without being told it directly.
+`docs/workbench-handbook-how-kb-sandbox-is-organized.md`
 
-No code change is implied by this item -- it's purely a content gap, and the fix is Mike's Wiki article plus the retrieval check above.
+Use the article's declared publication metadata:
+
+- **Title:** How KB Sandbox Is Organized: Organization, Projects and Knowledge
+- **Slug:** `how-kb-sandbox-is-organized-projects-workstreams-and-knowledge`
+- **Category:** `platform_handbook`
+- **Visibility:** public platform guidance
+
+The article documents:
+
+- one client organization per dedicated KB Sandbox instance;
+- Projects as flexible workspaces for departments, capabilities, engagements, recurring processes or other durable objectives;
+- the `<Organization>-<Purpose>` naming convention, with a common prefix for related pilot Projects;
+- Project-owned or specialized knowledge alongside reusable knowledge bases attached to several explicitly authorized Projects;
+- the difference between source documents, knowledge bases and Wiki guidance;
+- Project membership as the first access layer and resource/document/source controls as the second;
+- AI-processing information sensitivity as a separate policy axis; and
+- current non-capabilities such as automatic parent/child, membership or knowledge inheritance.
+
+Before Run 2:
+
+1. Create or update the Wiki draft from the source file without rewriting its current-capability boundaries.
+2. Submit it through the normal human review gate and approve it as `platform_handbook` guidance.
+3. Confirm that `search_wiki` retrieves it for at least:
+   - `Sandz organization structure`;
+   - `organization project naming convention`;
+   - `department projects and shared knowledge bases`;
+   - `attach another project's knowledge base`; and
+   - `project and document access control`.
+4. Confirm the existing Vocabulary Wiki link resolves to this article's exact slug.
+5. Re-run the onboarding conversation and confirm Ember explains and follows the model without being given the convention directly.
+
+No application-code change is implied by this item. The remaining work is Wiki publication, approval, indexing/retrieval verification and Run 2 behavior testing.
 
 ## 4. KBS Capability Gap — no way to delete a Project
 
