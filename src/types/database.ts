@@ -1684,6 +1684,34 @@ export interface BuilderIntegrationProjectAvailability {
   created_at: string
 }
 
+// Agent Gateway, Milestone 1 -- audit trail AND pending-confirmation state
+// machine for one attempted call to a registered integration's tool. A
+// read-only call goes straight to 'executed'; a gated (reversible_write+)
+// call sits at 'proposed' until a human confirms via
+// confirmGatewayInvocationAction. See supabase/migrations/
+// 20260831110001_builder_integration_invocations.sql.
+export type BuilderIntegrationInvocationStatus = 'proposed' | 'confirmed' | 'executed' | 'failed' | 'cancelled'
+
+export interface BuilderIntegrationInvocation {
+  id: string
+  builder_integration_id: string
+  builder_integration_version_id: string
+  project_id: string
+  conversation_id: string | null
+  actor_id: string | null
+  tool_name: string
+  risk_classification: BuilderIntegrationRiskClassification
+  input: Record<string, unknown>
+  output: Record<string, unknown> | null
+  status: BuilderIntegrationInvocationStatus
+  error: string | null
+  correlated_amount: number | null
+  created_at: string
+  confirmed_at: string | null
+  confirmed_by: string | null
+  executed_at: string | null
+}
+
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
 export type ProfileUpdate = Partial<Omit<Profile, 'id' | 'created_at'>>
 
@@ -1973,6 +2001,13 @@ export type BuilderIntegrationVersionUpdate = Pick<BuilderIntegrationVersion, 'c
 
 export type BuilderIntegrationProjectAvailabilityInsert = Omit<BuilderIntegrationProjectAvailability, 'id' | 'created_at'>
 
+export type BuilderIntegrationInvocationInsert = Omit<
+  BuilderIntegrationInvocation,
+  'id' | 'created_at' | 'confirmed_at' | 'confirmed_by' | 'executed_at' | 'status' | 'output' | 'error' | 'correlated_amount'
+> &
+  Partial<Pick<BuilderIntegrationInvocation, 'status' | 'output' | 'error' | 'correlated_amount'>>
+export type BuilderIntegrationInvocationUpdate = Partial<Omit<BuilderIntegrationInvocation, 'id' | 'created_at'>>
+
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
 // doesn't error, it silently collapses every Row/Insert/Update type to
@@ -2122,6 +2157,12 @@ export interface Database {
         Row: BuilderIntegrationProjectAvailability
         Insert: BuilderIntegrationProjectAvailabilityInsert
         Update: never
+        Relationships: []
+      }
+      builder_integration_invocations: {
+        Row: BuilderIntegrationInvocation
+        Insert: BuilderIntegrationInvocationInsert
+        Update: BuilderIntegrationInvocationUpdate
         Relationships: []
       }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }

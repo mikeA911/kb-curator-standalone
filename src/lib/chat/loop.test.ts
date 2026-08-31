@@ -165,6 +165,7 @@ describe('runAssistantTurn', () => {
       toolsUsed: [],
       structured: null,
       createdRecords: [],
+      pendingGatewayInvocations: [],
       ...CHAT_PROVIDER_INFO,
     })
     expect(generateChatMock).toHaveBeenCalledTimes(1)

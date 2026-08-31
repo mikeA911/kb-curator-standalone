@@ -23,6 +23,7 @@ import type { Conversation, FeedbackType } from '@/types/database'
 import { Markdown } from '@/components/shared/Markdown'
 import { deriveArtifacts, artifactsCount } from '@/lib/chat/artifacts'
 import { QuickSummary, RequirementsList, NextStepsList, LinksList, DocumentsList, CitationsList, SuggestedPrompts } from './StructuredResponse'
+import { GatewayInvocationCard } from './GatewayInvocationCard'
 
 // Owner Roadmap and Ember Feedback Board, Phase 1. Only the three initial
 // Ember-facing choices -- 'usability'/'documentation' exist as later
@@ -371,6 +372,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
           embeddingModelDisplayName: result.embeddingModelDisplayName,
           structured: result.structured ?? undefined,
           createdRecords: result.createdRecords.length > 0 ? result.createdRecords : undefined,
+          pendingGatewayInvocations: result.pendingGatewayInvocations.length > 0 ? result.pendingGatewayInvocations : undefined,
         },
       ])
       // The model that actually served this turn is now known -- if the
@@ -839,6 +841,7 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
                     <NextStepsList nextSteps={m.structured?.nextSteps} />
                     <SuggestedPrompts prompts={m.structured?.suggestedPrompts} onSelect={setInput} />
                   </div>
+                  {m.pendingGatewayInvocations?.map((inv) => <GatewayInvocationCard key={inv.invocationId} invocation={inv} />)}
                   {m.providerDisplayName && (
                   <div className="mt-0.5">
                     <button

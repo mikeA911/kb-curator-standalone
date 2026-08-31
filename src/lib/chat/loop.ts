@@ -29,6 +29,8 @@ import {
 import { SUBMIT_FEEDBACK_REPORT_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL_NAME, runSubmitFeedbackReport } from './feedback-tool'
 import { LIST_PROJECT_MEMBERS_TOOL, LIST_PROJECT_MEMBERS_TOOL_NAME, runListProjectMembers } from './project-members-tool'
 import { SEND_PROJECT_NOTE_TOOL, SEND_PROJECT_NOTE_TOOL_NAME, runSendProjectNote } from './project-note-tool'
+import { listAvailableTools, GATEWAY_TOOL_PREFIX } from '@/lib/mcp-gateway/discovery'
+import { runGatewayToolCall, type PendingGatewayInvocation } from '@/lib/mcp-gateway/execute'
 import type { FeedbackType } from '@/types/database'
 
 // Version string stamped onto anything the Assistant creates
@@ -175,6 +177,11 @@ export interface AssistantTurnResult {
   embeddingModelDisplayName?: string
   structured: VerifiedAssistantEnvelope | null
   createdRecords: ResolvedCreatedRecord[]
+  // Gated (write-risk) Agent Gateway tool calls proposed this turn but not
+  // yet confirmed -- rendered as an interactive confirm/cancel card, not a
+  // simple navigational chip, so kept separate from createdRecords. See
+  // src/lib/mcp-gateway/execute.ts.
+  pendingGatewayInvocations: PendingGatewayInvocation[]
   // Set when `reply` is a friendly stand-in for a failed provider call
   // (rate limit, capacity, auth, ...) rather than a real assistant answer --
   // see the generateChat catch below. A normal AssistantTurnResult (not a
@@ -282,6 +289,11 @@ export async function runAssistantTurn(
   const chatProviderId = chatProviderRow.id
 
   const projectContext = resolvedProjectId ? await getProjectContext(ctx, resolvedProjectId) : null
+  // Gateway tools are always Project-scoped (builder_integration_project_
+  // availability has no concept of a non-Project-bound grant) -- discovered
+  // once per turn here, alongside the fixed tool list, not re-discovered
+  // per tool call inside the iteration loop below.
+  const gatewayDiscovery = resolvedProjectId ? await listAvailableTools(ctx.supabase, resolvedProjectId) : { toolSpecs: [], contextByToolName: new Map() }
   const systemPrompt = feedbackContext
     ? buildFeedbackSystemPrompt(feedbackContext)
     : projectContext
@@ -290,7 +302,7 @@ export async function runAssistantTurn(
   const tools = feedbackContext
     ? [PRESENT_RESPONSE_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL]
     : projectContext
-      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, LIST_PROJECT_MEMBERS_TOOL, SEND_PROJECT_NOTE_TOOL, PRESENT_RESPONSE_TOOL]
+      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, LIST_PROJECT_MEMBERS_TOOL, SEND_PROJECT_NOTE_TOOL, ...gatewayDiscovery.toolSpecs, PRESENT_RESPONSE_TOOL]
       : [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
   const toolsUsed = new Set<string>()
   try {
@@ -319,6 +331,7 @@ export async function runAssistantTurn(
   const retrievedWikiArticleSlugs = new Map<string, RetrievedHitInfo>()
   const retrievedKnowledgeSourceIds = new Map<string, RetrievedHitInfo>()
   const createdRecordRefs: CreatedRecordRef[] = []
+  const pendingGatewayInvocations: PendingGatewayInvocation[] = []
 
   // Shared tail for every terminal path below: resolves the embedding model
   // display name, refreshes the conversation summary, and shapes the
@@ -342,6 +355,7 @@ export async function runAssistantTurn(
       embeddingModelDisplayName,
       structured,
       createdRecords: resolvedCreatedRecords,
+      pendingGatewayInvocations,
     }
   }
 
@@ -432,6 +446,7 @@ export async function runAssistantTurn(
           toolsUsed: [...toolsUsed],
           structured: null,
           createdRecords: [],
+          pendingGatewayInvocations: [],
           isSensitivityBlock: true,
         }
       }
@@ -452,6 +467,7 @@ export async function runAssistantTurn(
         toolsUsed: [...toolsUsed],
         structured: null,
         createdRecords: [],
+        pendingGatewayInvocations: [],
         isProviderError: true,
       }
     }
@@ -564,6 +580,31 @@ export async function runAssistantTurn(
             toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
           }
         }
+      } else if (toolCall.name.startsWith(GATEWAY_TOOL_PREFIX)) {
+        // Agent Gateway, Milestone 1 -- a registered Builder Integration's
+        // MCP tool, discovered once above (gatewayDiscovery) and dispatched
+        // here rather than through the generic callTool(ctx, name, input)
+        // registry, since it needs resolvedProjectId/conversation.id that
+        // callTool's signature can't carry (same reason every other branch
+        // in this switch is intercepted here instead of living in
+        // src/lib/mcp/tools.ts).
+        const gwContext = resolvedProjectId ? gatewayDiscovery.contextByToolName.get(toolCall.name) : undefined
+        if (!gwContext) {
+          toolResultText = JSON.stringify({ error: 'This integration is not available in this conversation.' })
+        } else {
+          try {
+            const outcome = await runGatewayToolCall(ctx, {
+              projectId: resolvedProjectId as string,
+              conversationId: conversation.id,
+              toolContext: gwContext,
+              input: toolCall.arguments,
+            })
+            toolResultText = JSON.stringify(outcome.resultForModel)
+            if (outcome.pending) pendingGatewayInvocations.push(outcome.pending)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+          }
+        }
       } else if (toolCall.name === SUBMIT_FEEDBACK_REPORT_TOOL_NAME) {
         // Not in src/lib/mcp/tools.ts's general registry -- same
         // interception pattern as search_project_knowledge, because its
@@ -639,6 +680,7 @@ export async function runAssistantTurn(
     toolsUsed: [...toolsUsed],
     structured: null,
     createdRecords: [],
+    pendingGatewayInvocations: [],
   }
   } finally {
     await ctx.supabase.from('conversations').update({ pending_turn_started_at: null }).eq('id', conversation.id)

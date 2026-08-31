@@ -555,6 +555,12 @@ This concept implies a future capability set. It does not claim they all exist t
 - add idempotency, replay and reconciliation controls; and
 - pilot reversible writes before consequential actions.
 
+### Phase C/D implementation note (2026-08-31, OR-027)
+
+Phases C and D shipped together as one pass ("Agent Gateway, Milestone 1"), not sequentially as originally proposed above. Reason: the concrete dogfooding exercise driving this work (order lunch through a registered MCP server) is meaningless without a write step — a read-only Gateway that can look up a menu but never place the order doesn't exercise anything Ember couldn't already do by other means. Confirmation gates, spending limits and an audit trail (Phase D's own list) were therefore built alongside read-tool discovery rather than deferred to a separate pass. Webhook receivers and event adapters remain genuinely unbuilt — no consumer for them exists yet, same reasoning as Phase A's exclusion of webhook receivers.
+
+Also unbuilt from this list: "propagate user identity where possible" (every Gateway call today uses the integration's own configured `auth_method`, never the calling KBS user's own identity delegated through) and "produce structured citations" (a Gateway tool result is returned to the model like any other tool result, not yet folded into the citation/provenance machinery `search_wiki`/`search_project_knowledge` results get). Both are real gaps for a future pass, not silently assumed solved.
+
 ### Phase E — specialized external agents
 
 - register agent specifications and graphs;
