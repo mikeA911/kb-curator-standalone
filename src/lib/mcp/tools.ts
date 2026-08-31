@@ -339,7 +339,8 @@ const tools: Record<string, ToolDefinition<any, any>> = {
   },
 
   create_workstream: {
-    description: 'Create a new workstream on a project.',
+    description:
+      "Create a new workstream on a project. Only usable by that project's owner or curator, or a platform admin -- fails otherwise for an ordinary project member (e.g. a consultant). If you don't know the caller's project role, ask or check with list_project_members before presenting this as a ready action -- don't offer to create a workstream and let the user discover the permission failure themselves.",
     inputSchema: z.object({
       projectId: z.string(),
       name: z.string(),

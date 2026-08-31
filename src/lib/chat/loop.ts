@@ -52,7 +52,7 @@ Reply directly, reasoning from what you found: name the method that fits, and no
 
 Before proposing to create a new project, call search_projects with a likely keyword (a company/client name, for example) -- reuse or reference an existing project instead of creating a duplicate when one already covers the same work. Only create a new project once you've checked and found nothing suitable, or the user explicitly asks for a new one.
 
-When you need to tell the user which KB Sandbox page to go to for something you can't do yourself (inviting a project member, for example), call get_navigation_guide first and base your answer on what it returns -- don't name a specific page from memory. Getting the wrong page sends the user somewhere unhelpful.
+When you need to tell the user which KB Sandbox page to go to for something you can't do yourself (inviting a project member, for example), call get_navigation_guide first and base your answer on what it returns -- don't name a specific page from memory. Getting the wrong page sends the user somewhere unhelpful. This applies just as much when you're recovering from a failed tool call as when you're proactively suggesting where to go -- if a tool call fails for a permissions reason and you need to tell the user where to go instead, call get_navigation_guide before naming a page or button, rather than guessing from memory what the control might be called.
 
 Never describe a project, resource, or workstream as "restricted," "secured," or "isolated" unless you have just called classify_project (or another access/policy tool) successfully this same turn. If access still needs to be configured, say so plainly and name the exact next step and who should do it -- never imply protection has been applied when it hasn't.
 
@@ -197,6 +197,14 @@ export interface AssistantTurnResult {
   // the selected model isn't eligible to process what was retrieved this
   // turn. ChatPanel routes this exactly like isProviderError.
   isSensitivityBlock?: boolean
+  // Same non-throwing shape again, for anything else that throws inside the
+  // turn (a DB write failure, an unexpected exception from a tool handler
+  // not already caught per-call, ...) -- found live during the OrderLunch
+  // builder-journey test (OL-008): a long corrective response triggered an
+  // uncaught exception that reached the client as an opaque "Minified React
+  // error #441" with no way to tell whether the turn's side effects had
+  // completed. The outer catch below turns any such throw into this instead.
+  isInternalError?: boolean
 }
 
 // Short, safe, user-facing text per failure category -- never the raw SDK
@@ -682,6 +690,31 @@ export async function runAssistantTurn(
     createdRecords: [],
     pendingGatewayInvocations: [],
   }
+  } catch (err) {
+    // Catches anything not already handled above -- most notably an
+    // unguarded appendMessage() failing (OL-008: a large corrective
+    // response's persisted row hit some DB-level failure; nothing wrapped
+    // that specific call). Never let a throw here cross the
+    // sendChatMessageAction Server Action boundary uncaught -- production
+    // Next.js redacts that to an opaque "Minified React error #441" with no
+    // way for the user to tell whether the turn's side effects (e.g. an
+    // artifact attach earlier in the same turn) completed. This can't
+    // itself guarantee that answer -- it only guarantees the user gets a
+    // readable message and a Retry instead of a dead end.
+    console.error('runAssistantTurn: uncaught error', err)
+    return {
+      conversationId: conversation.id,
+      reply: "Something went wrong while finishing that response. It's possible part of it (e.g. an attached artifact) was saved before the failure -- check the conversation before retrying to avoid a duplicate.",
+      providerName: chatProvider.providerName,
+      providerDisplayName: chatProvider.providerDisplayName,
+      modelId: chatProvider.modelId,
+      modelDisplayName: chatProvider.modelDisplayName,
+      toolsUsed: [...toolsUsed],
+      structured: null,
+      createdRecords: [],
+      pendingGatewayInvocations: [],
+      isInternalError: true,
+    }
   } finally {
     await ctx.supabase.from('conversations').update({ pending_turn_started_at: null }).eq('id', conversation.id)
   }
