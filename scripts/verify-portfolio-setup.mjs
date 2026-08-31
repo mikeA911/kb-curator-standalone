@@ -3,12 +3,21 @@
 // workspace.md, Stage 1). Not a permanent fixture -- run
 // verify-portfolio-cleanup.mjs afterward to remove everything this creates.
 import { createClient } from '@supabase/supabase-js'
+import crypto from 'node:crypto'
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 if (!url || !serviceKey) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
 
 const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } })
+
+// Random per run, never hardcoded/committed -- same convention as
+// seed-test-users.mjs. A prior version of this script had a literal
+// password here; GitGuardian correctly flagged it even though the account
+// it belonged to was deleted the same session (see verify-portfolio-cleanup.mjs).
+function randomPassword() {
+  return crypto.randomBytes(12).toString('base64url') + 'aA1!'
+}
 
 async function findUserByEmail(email) {
   let page = 1
@@ -30,7 +39,7 @@ if (!consultant) throw new Error('Run `npm run db:seed-users` first')
 const secondEmail = 'test-consultant2@kbsandbox.local'
 let second = await findUserByEmail(secondEmail)
 if (!second) {
-  const { data: created, error } = await admin.auth.admin.createUser({ email: secondEmail, password: 'QAverify-2026!aA1', email_confirm: true })
+  const { data: created, error } = await admin.auth.admin.createUser({ email: secondEmail, password: randomPassword(), email_confirm: true })
   if (error) throw error
   second = created.user
 }
