@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listPublicProjects } from '@/lib/projects/public'
+import { ShowcaseJourney } from '@/components/public/ShowcaseJourney'
 import type { ProjectType } from '@/types/database'
 
 const TYPE_LABELS: Record<string, string> = {
@@ -21,6 +22,13 @@ export default async function ExamplesPage({ searchParams }: { searchParams: Pro
       <div>
         <h1 className="text-xl font-semibold">Examples</h1>
         <p className="mt-1 text-sm text-zinc-600">Deliberately published projects &mdash; the problem, the approach, and the results.</p>
+      </div>
+
+      <ShowcaseJourney variant="compact" />
+
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Published Examples catalogue</h2>
+        <p className="mt-1 text-xs text-zinc-500">The complete, database-backed list of published Example Projects.</p>
       </div>
 
       <div className="flex flex-wrap gap-2 text-sm">

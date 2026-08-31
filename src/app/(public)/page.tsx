@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { listPublicProjects } from '@/lib/projects/public'
 import { SectionHero } from '@/components/SectionHero'
+import { ShowcaseJourney } from '@/components/public/ShowcaseJourney'
 
 export default async function Home() {
   const supabase = await createClient()
@@ -12,15 +12,14 @@ export default async function Home() {
 
   if (user) redirect('/dashboard')
 
-  const featured = (await listPublicProjects(supabase)).slice(0, 3)
-
   return (
     <div className="flex flex-col gap-10">
       <SectionHero image="/images/sections/kb-sandbox.png" title="KB Sandbox" height="large" priority />
 
       <div className="flex flex-col gap-4 text-center">
         <p className="mx-auto max-w-xl text-zinc-600">
-          Build, evaluate, govern and improve AI systems through evidence.
+          The governed enterprise AI Workbench: organize trusted knowledge, apply it to real business work, connect safely to
+          live systems, and let regional builders extend it with evidence-backed tools and agents.
         </p>
         <div className="mx-auto flex gap-3">
           <Link href="/examples" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
@@ -35,32 +34,19 @@ export default async function Home() {
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-center gap-2 text-sm text-zinc-500">
-        {['Knowledge', 'Intelligence', 'Engineering', 'Governance', 'Learning'].map((step, i) => (
-          <span key={step} className="flex items-center gap-2">
-            {i > 0 && <span className="text-zinc-300">&rarr;</span>}
-            <span className="rounded-full bg-zinc-100 px-3 py-1">{step}</span>
-          </span>
-        ))}
-      </div>
+      <ShowcaseJourney />
 
-      {featured.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Featured examples</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {featured.map((p) => (
-              <Link
-                key={p.id}
-                href={`/examples/${p.public_slug}`}
-                className="rounded border border-zinc-200 bg-white p-4 hover:border-zinc-400"
-              >
-                <h3 className="font-medium">{p.public_profile?.title || p.name}</h3>
-                {p.public_profile?.summary && <p className="mt-1 text-sm text-zinc-600">{p.public_profile.summary}</p>}
-              </Link>
-            ))}
-          </div>
+      <div className="flex flex-col items-center gap-3 rounded-3xl border border-zinc-200 bg-white p-6 text-center sm:p-10">
+        <p className="text-sm text-zinc-600">Ready to see the complete published catalogue, or how KB Sandbox actually works?</p>
+        <div className="flex gap-3">
+          <Link href="/examples" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
+            Browse all Examples
+          </Link>
+          <Link href="/about" className="rounded border border-zinc-300 px-4 py-2 text-sm font-medium">
+            About KB Sandbox
+          </Link>
         </div>
-      )}
+      </div>
     </div>
   )
 }
