@@ -5,6 +5,8 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { PersistedAssistantEnvelopeSchema, type PersistedAssistantEnvelope, type VerifiedAssistantEnvelope } from './response-envelope'
 import { resolveEnvelopeForDisplay } from './envelope-resolution'
 import { extractCreatedRecordRef, resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
+import { GATEWAY_TOOL_PREFIX } from '@/lib/mcp-gateway/discovery'
+import { resolvePendingInvocation, type PendingGatewayInvocation } from '@/lib/mcp-gateway/execute'
 
 // projectId binds this conversation to a project at creation time. Only ever
 // set once -- see the immutability trigger in
@@ -62,6 +64,7 @@ export interface DisplayMessage {
   toolsUsed?: string[]
   structured?: VerifiedAssistantEnvelope
   createdRecords?: ResolvedCreatedRecord[]
+  pendingGatewayInvocations?: PendingGatewayInvocation[]
 }
 
 // Turns persisted rows back into the same shape ChatPanel renders live.
@@ -81,6 +84,7 @@ export async function toDisplayMessages(
   const out: DisplayMessage[] = []
   let pendingTools = new Set<string>()
   let pendingCreatedRefs: CreatedRecordRef[] = []
+  let pendingInvocationIds: string[] = []
 
   for (const row of rows) {
     if (row.role === 'user') {
@@ -92,6 +96,14 @@ export async function toDisplayMessages(
       if (row.tool_name && row.content) {
         const ref = extractCreatedRecordRef(row.tool_name, row.content)
         if (ref) pendingCreatedRefs.push(ref)
+        if (row.tool_name.startsWith(GATEWAY_TOOL_PREFIX)) {
+          try {
+            const parsed = JSON.parse(row.content) as { status?: string; invocationId?: string }
+            if (parsed.status === 'awaiting_human_confirmation' && parsed.invocationId) pendingInvocationIds.push(parsed.invocationId)
+          } catch {
+            // Not JSON, or not this shape -- not a pending Gateway action.
+          }
+        }
       }
       continue
     }
@@ -120,6 +132,9 @@ export async function toDisplayMessages(
     const resolvedCreatedRecords = (await Promise.all(pendingCreatedRefs.map((ref) => resolveCreatedRecord(ctx, ref)))).filter(
       (r): r is ResolvedCreatedRecord => r !== null
     )
+    const resolvedPendingInvocations = (await Promise.all(pendingInvocationIds.map((id) => resolvePendingInvocation(ctx, id)))).filter(
+      (r): r is PendingGatewayInvocation => r !== null
+    )
 
     out.push({
       role: 'assistant',
@@ -129,9 +144,11 @@ export async function toDisplayMessages(
       toolsUsed: pendingTools.size > 0 ? [...pendingTools] : undefined,
       structured,
       createdRecords: resolvedCreatedRecords.length > 0 ? resolvedCreatedRecords : undefined,
+      pendingGatewayInvocations: resolvedPendingInvocations.length > 0 ? resolvedPendingInvocations : undefined,
     })
     pendingTools = new Set()
     pendingCreatedRefs = []
+    pendingInvocationIds = []
   }
 
   return out
