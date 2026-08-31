@@ -3,7 +3,7 @@
 **Purpose:** Living product-navigation knowledge for Ember, release documentation, future application discovery, and a possible KB Sandbox MCP interface  
 **Status:** Initial baseline — expand as workflows are verified  
 **Application version:** 0.1.0  
-**Last code verification:** 2026-08-30  
+**Last code verification:** 2026-08-31  
 
 ## How this document is used
 
@@ -172,6 +172,19 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Boundaries:** General unbound chat must not retrieve project-private evidence merely because the user happens to be a project member. Consequential decisions remain human- or authority-approved. As of 2026-08-29, a project or resource classified above the selected model's approved AI-processing sensitivity blocks the turn before any content reaches that model -- Ember explains the block and names the sensitivity tier rather than silently refusing or answering without the restricted evidence.
 - **Exposure:** Ember-readable/actionable within the project binding; MCP access must preserve caller identity, project membership, and approval rules.
 - **Verification:** Project routes and previously live-verified project-bound retrieval behavior; reviewed 2026-08-29.
+
+### Create a workstream on a project
+
+- **Intent:** Start a new structured body of work (a Workstream) inside an existing Project.
+- **Users and authority:** Project owner or curator, or a platform admin -- a plain Project member (e.g. `consultant` Project role) cannot do this, even if their *platform* role is `curator` or `admin` (Project role and platform role are independent; the check is on the Project-scoped role, not the platform one).
+- **Prerequisites:** Active membership in the Project with `owner` or `curator` Project role, or platform `admin`.
+- **Start:** `/projects/[id]`
+- **Navigation:** Project page → the **New Workstream** link (only rendered for an authorized viewer -- it does not appear at all for a plain member) → `/projects/[id]/workstreams/new`.
+- **Outcome:** A new draft Workstream on the Project.
+- **Ember guidance:** `create_workstream` fails for a caller whose Project role is `consultant` or `viewer`. If you don't know the caller's Project role, check with `list_project_members` before offering this as a ready action. If it fails or isn't available, tell the user their *Project* role (not platform role) needs to be `owner` or `curator`, and that only the Project's owner can change that on the Members page (`/projects/[id]/members`) -- do not say "click New Workstream" to someone who can't see that link.
+- **Boundaries:** Never conflate platform role (`profiles.role`: consultant/curator/admin) with Project role (`project_members.role`: owner/curator/consultant/viewer) -- a platform curator/admin is not automatically a Project curator on any given Project unless separately made a member with that Project role.
+- **Exposure:** Ember-actionable (`create_workstream`) and UI (`New Workstream` link), both gated identically.
+- **Verification:** `src/app/(app)/projects/[id]/page.tsx` (`canCurateWorkstreams`), `src/lib/workbench/workstreams.ts`, `supabase/migrations/20260810120001_project_members.sql` (`can_curate_project`); code verified 2026-08-31. Added after a live test (`docs/test-reports/2026-08-31-orderlunch-builder-journey.md`, OL-002/OL-003) found Ember offering this action to an unauthorized caller and then, after the resulting failure, giving recovery guidance that named a control the caller couldn't actually see.
 
 ### Explore how this Project connects to others (read-only)
 

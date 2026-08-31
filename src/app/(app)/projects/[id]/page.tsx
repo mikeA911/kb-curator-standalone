@@ -29,12 +29,38 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { id } = await params
   const supabase = await createClient()
 
-  const { data: project } = await supabase.from('projects').select('*').eq('id', id).single()
-  if (!project) notFound()
-
   const {
     data: { user },
   } = await supabase.auth.getUser()
+
+  const { data: project, error: projectError } = await supabase.from('projects').select('*').eq('id', id).single()
+  if (!project) {
+    // Every reason this could come back empty (RLS filtered it, .single()
+    // errored on a genuinely missing row, a transient query failure) was
+    // previously treated identically as "doesn't exist" -- undiagnosable
+    // when it happens to a viewer who should have access. A platform admin
+    // should never be blocked here at all (projects_select_members' RLS
+    // policy has an unconditional is_admin() bypass) -- if one still hits
+    // this, that's a real discrepancy worth a loud log, not a silent 404.
+    // Found live: docs/test-reports/2026-08-31-orderlunch-builder-journey.md
+    // (OL-001) -- an admin reported being unable to view a project that
+    // genuinely exists.
+    if (projectError) console.error(`ProjectPage: failed to load project ${id}`, projectError)
+    if (user) {
+      const { data: viewerProfile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+      if (viewerProfile?.role === 'admin') {
+        const { data: adminProject, error: adminError } = await createAdminClient().from('projects').select('id, name').eq('id', id).maybeSingle()
+        if (adminProject) {
+          console.error(
+            `ProjectPage: project ${id} ("${adminProject.name}") exists and the viewer (${user.id}) is a platform admin, but the RLS-scoped query still returned nothing. This should be impossible under projects_select_members -- investigate is_admin()/session state, don't assume the project is missing.`
+          )
+        } else if (adminError) {
+          console.error(`ProjectPage: admin-client re-check for project ${id} also failed`, adminError)
+        }
+      }
+    }
+    notFound()
+  }
 
   const [
     knowledgeBases,

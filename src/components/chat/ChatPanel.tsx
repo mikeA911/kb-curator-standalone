@@ -354,8 +354,9 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       // An Information Sensitivity Classification policy block (the
       // selected model isn't eligible for what was retrieved -- see
       // src/lib/ai/sensitivity.ts) is also a normal result, same reason and
-      // same treatment as isProviderError above.
-      if (result.isProviderError || result.isSensitivityBlock) {
+      // same treatment as isProviderError above. isInternalError is the same
+      // shape again for any other uncaught error inside the turn (OL-008).
+      if (result.isProviderError || result.isSensitivityBlock || result.isInternalError) {
         setError(result.reply)
         setLastFailedMessage(message)
         setConversations((prev) => (prev.some((c) => c.id === result.conversationId) ? prev : [{ id: result.conversationId } as Conversation, ...prev]))
