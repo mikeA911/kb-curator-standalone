@@ -146,22 +146,33 @@ unrestricted authority. This term specifically means a KBS-native agent (see `ag
 
 **External Agent** -- an agent that runs outside KB Sandbox entirely (on a builder's own
 infrastructure, or Sandz-hosted regional infrastructure), which KBS registers and governs without
-hosting its code or runtime. Recorded in the **Agent Registry**: name, purpose, owner, a versioned
-specification (skills, credential references -- never the secrets themselves -- spending limits,
-approval policy), and a **Certification Status**. The Lunch Agent (Food Outlet AI-Readiness
-Showcase) is the first example. KBS reaches a registered External Agent's endpoint through a
-standard boundary, generally MCP.
+hosting its code or runtime. Recorded in the **Builder Registry**: name, purpose, owner, kind, a
+versioned specification (skills, credential references -- never the secrets themselves -- spending
+limits, approval policy), and a **Certification Status**. The Lunch Agent (Food Outlet
+AI-Readiness Showcase) is the first example. KBS reaches a registered External Agent's endpoint
+through a standard boundary, generally MCP.
 
-**Certification Status** -- the review state of one version of a registered External Agent:
-**Experimental -> Sandbox Tested -> Security Reviewed -> Outlet Accepted -> Production Approved**,
-with **Deprecated** and **Suspended** as terminal/withdrawn states outside that ladder.
-Certification applies to a specific version, not the agent as a whole -- a new version always
-starts back at Experimental, since a material code, API, or permission change requires
-reassessment.
+**Builder Registry** -- the single registration record type through which a Builder submits
+*either* an External Agent *or* a builder-hosted MCP Server for KBS to govern (distinguished by a
+`kind` field on the record; both share the same versioning, Project-availability, and
+Certification Status shape). This is deliberately one registry, not two -- both kinds answer the
+same governance questions (who owns it, what does it do, is it read-only or does it write, which
+Projects may use it, what state has it reached), and a builder implementing an MCP server today may
+reasonably wrap it in an External Agent tomorrow without needing a new registration model. The
+Builder Registry only covers the **inward** direction -- see MCP Gateway below for the inward/
+outward distinction. It has no relationship to Ember's own built-in **Tools**, which are KBS-native
+capabilities, not builder-registered ones.
+
+**Certification Status** -- the review state of one version of a registered External Agent or MCP
+Server in the Builder Registry: **Experimental -> Sandbox Tested -> Security Reviewed -> Outlet
+Accepted -> Production Approved**, with **Deprecated** and **Suspended** as terminal/withdrawn
+states outside that ladder. Certification applies to a specific version, not the registration as a
+whole -- a new version always starts back at Experimental, since a material code, API, or
+permission change requires reassessment.
 
 **Builder** -- a student, solo founder, or local software development company using KBS's governed
-Methods, knowledge, and evaluation to build something -- typically an External Agent -- faster than
-they could from scratch. The Builders Programme defines three levels: **Explorer** (students/
+Methods, knowledge, and evaluation to build something -- typically an External Agent or MCP Server,
+submitted to the Builder Registry -- faster than they could from scratch. The Builders Programme defines three levels: **Explorer** (students/
 first-time AI builders; Foundation knowledge, public Methods, sandbox exercises), **Builder** (solo
 founders/small teams; private projects, structured evaluations, Sandz development-hosting offers),
 and **Delivery Partner** (established software houses; customer workspaces, advanced governance,
@@ -184,10 +195,75 @@ guide users toward relevant Wizards.
 search Wiki, create a Project, create a Workstream, retrieve an Artifact, run an evaluation). Tools
 expose specific governed operations rather than unrestricted system access.
 
-**MCP Server** -- exposes selected tools and context through the Model Context Protocol so AI
-clients or Agents can interact with KBS capabilities (or an External Agent's capabilities) in a
-standardized way: Workbench capabilities -> APIs/services -> MCP tools -> AI/Agent. MCP is an
-integration mechanism, not a product identity.
+**Connector** -- an adapter that connects one system to another using the source system's supported
+interface, such as a REST API, webhook, SDK, file export, or database integration. In KBS, the word
+must be qualified by purpose. A **Knowledge Connector** synchronizes approved content, metadata,
+versions, deletions, and source access-control information into governed knowledge. An
+**Action Connector** supports live reads or business operations without necessarily copying the
+underlying data into KBS. A Connector may sit underneath an MCP Server, but a Connector and an MCP
+Server are not synonyms.
+
+**REST API** -- a conventional HTTP interface through which software explicitly requests data or
+performs an operation using a known endpoint and payload. REST APIs commonly remain the
+authoritative interface to an existing business application. A builder may use OpenAPI to describe
+the interface and build a governed MCP layer over selected business capabilities; MCP does not
+replace the upstream REST API or its business rules.
+
+**Webhook / Event Source** -- an authenticated notification sent when something changes in an
+external system, such as an order being accepted, a document being revised, or an invoice failing
+validation. Webhooks support event-driven synchronization and workflows. Their payloads must be
+validated, deduplicated, and recorded as structured events rather than inserted directly into an
+AI prompt.
+
+**MCP (Model Context Protocol)** -- a standardized way for an AI application to discover and call
+tools, and where applicable access other declared context capabilities, exposed by another service.
+MCP is an integration protocol rather than a product, Agent, authorization model, or replacement
+for REST APIs and webhooks.
+
+**MCP Server** -- a service that exposes a deliberately selected catalogue of MCP tools and related
+capabilities. A builder-hosted MCP Server might expose `check_delivery_status` or
+`create_support_ticket` while calling an existing REST API underneath -- this is the kind a Builder
+registers in the **Builder Registry** alongside External Agents, since KBS needs to govern it the
+same way (identity, version, authentication, tools, permissions, deployment, tests, and approval
+state) before Ember can safely call it. KBS may *also* eventually act as an MCP Server itself, by
+exposing approved search, knowledge, evaluation, or other Workbench capabilities to external AI
+hosts -- that is a separate, outward-facing role (see MCP Gateway below) and has nothing to do with
+the Builder Registry. An MCP Server does not become trusted merely because it can be connected.
+
+**MCP Host** -- the AI-facing application that owns the user interaction and model/tool loop,
+discovers tools through one or more MCP clients, and decides when a permitted tool should be called.
+Claude Desktop, an IDE assistant, or a future MCP-enabled Ember experience can act as an MCP Host.
+The Host remains responsible for presenting confirmations and respecting the user's current
+context; the MCP Server remains responsible for enforcing its own authorization and tool contract.
+
+**MCP Gateway** -- a governance and routing layer between an MCP Host and one or more MCP Servers.
+“Gateway” is an architecture term, not a separate core MCP protocol role. In KBS, a future MCP
+Gateway would authenticate connections, discover registered server versions, filter which tools
+are available for the current user and Project, enforce model/sensitivity and approval policy,
+route permitted calls, and record safe audit information. It must not become a privileged bypass
+around the external system's permissions.
+
+KBS can therefore participate on both sides of MCP:
+
+- **KBS outward:** KBS acts as an MCP Server so an approved external AI Host can use selected
+  Workbench knowledge or tools. Not yet built; unrelated to the Builder Registry.
+- **KBS inward:** Ember acts as the AI Host, through the KBS MCP Gateway, and calls selected tools
+  on registered external MCP Servers and External Agents -- the ones Builders have submitted to the
+  **Builder Registry**. This is what Phase A of the Advanced Builder work (registration) and the
+  Agent Gateway (future invocation) are building toward.
+
+These are architectural roles, not a claim that every transport and execution path is already
+implemented. Registration, connectivity verification, certification, Project availability, and
+live invocation must remain visibly distinct states.
+
+| Mechanism | Primary purpose in the KBS architecture | Typical example |
+|---|---|---|
+| Knowledge Connector | Synchronize content, versions, metadata, and source permissions into governed knowledge | Import approved helpdesk articles from an external platform |
+| REST API | Provide an explicit software interface to read or change an existing system | Retrieve an order or create a support ticket |
+| Webhook / Event Source | Report an external change as it happens | Notify that an invoice failed or a delivery was dispatched |
+| MCP Server | Expose selected business capabilities as discoverable AI tools | `check_invoice_status` or `create_support_ticket` |
+| MCP Gateway | Govern and route permitted calls from Ember to registered MCP Servers | Offer only the tools approved for the current user and Project |
+| External Agent | Own specialized reasoning, state, or multi-step orchestration when bounded tools are insufficient | Proposal, investigation, or invoice-exception agent |
 
 ## Governance concepts
 
@@ -247,7 +323,8 @@ WORKBENCH-WIDE
 +-- Methods
 |    +-- Wizards
 +-- AI Providers / Models
-+-- Agents / External Agents (Agent Registry)
++-- Agents (KBS-native)
++-- Builder Registry (External Agents, MCP Servers)
 +-- Tools / MCP
 +-- Governance
 ```

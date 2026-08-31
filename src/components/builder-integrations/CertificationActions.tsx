@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ExternalAgentCertificationStatus } from '@/types/database'
-import { updateCertificationStatusAction } from '@/app/actions/external-agents'
+import { updateCertificationStatusAction } from '@/app/actions/builder-integrations'
 
 const LADDER: { value: ExternalAgentCertificationStatus; label: string }[] = [
   { value: 'experimental', label: 'Experimental' },
@@ -14,11 +14,11 @@ const LADDER: { value: ExternalAgentCertificationStatus; label: string }[] = [
 ]
 
 export function CertificationActions({
-  agentId,
+  integrationId,
   versionId,
   currentStatus,
 }: {
-  agentId: string
+  integrationId: string
   versionId: string
   currentStatus: ExternalAgentCertificationStatus
 }) {
@@ -30,7 +30,7 @@ export function CertificationActions({
     setError(null)
     startTransition(async () => {
       try {
-        await updateCertificationStatusAction(agentId, versionId, newStatus)
+        await updateCertificationStatusAction(integrationId, versionId, newStatus)
         router.refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Action failed')

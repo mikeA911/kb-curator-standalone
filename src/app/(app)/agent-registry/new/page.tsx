@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { RegisterAgentForm } from '@/components/external-agents/RegisterAgentForm'
+import { RegisterAgentForm } from '@/components/builder-integrations/RegisterAgentForm'
 
 export default async function NewAgentPage() {
   const supabase = await createClient()
@@ -17,10 +17,11 @@ export default async function NewAgentPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold">Register an agent</h1>
+        <h1 className="text-xl font-semibold">Register</h1>
         <p className="mt-1 text-sm text-zinc-600">
-          Any signed-in builder can self-register an agent as a draft. Certification (Experimental → Sandbox Tested →
-          Security Reviewed → Outlet Accepted → Production Approved) is reviewed and advanced by KB Sandbox staff.
+          Any signed-in builder can self-register an external agent or MCP server as a draft. Certification (Experimental →
+          Sandbox Tested → Security Reviewed → Outlet Accepted → Production Approved) is reviewed and advanced by KB
+          Sandbox staff; deciding which Projects may use it is yours to manage once registered.
         </p>
       </div>
       <RegisterAgentForm projects={(projects ?? []).map((p) => ({ id: p.id, label: p.name }))} />

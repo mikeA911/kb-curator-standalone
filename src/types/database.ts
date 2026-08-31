@@ -1617,16 +1617,30 @@ export type ExternalAgentCertificationStatus =
   | 'production_approved'
   | 'deprecated'
   | 'suspended'
+// What's being registered -- Advanced Builder Integrations Phase A
+// (docs/design-notes/concept-paper-advanced-builder-integrations.md).
+// Deliberately narrower than the concept paper's five concepts: knowledge
+// connectors and webhook receivers have a different lifecycle shape (batch
+// sync correctness / nothing exists yet to receive into) and stay out of
+// this table for now; REST APIs are never independently registered.
+export type BuilderIntegrationKind = 'external_agent' | 'mcp_server'
+// Version-level, not integration-level -- risk can change between versions.
+// Operationalizes "treat read and write differently"; this is what Phase C
+// (Ember actually calling one) will gate tool exposure on.
+export type BuilderIntegrationRiskClassification = 'read_only' | 'reversible_write' | 'consequential_write' | 'administrative'
 
-// Registers agents that run OUTSIDE KB Sandbox (a builder's agent on Sandz or
-// customer infrastructure) so KB Sandbox can govern them -- distinct from
-// Agent/AgentVersion above, which are KBS-native graph-based agents Ember
-// runs itself. See supabase/migrations/20260827150001_external_agent_registry.sql.
-export interface ExternalAgent {
+// Registers agents and MCP servers that run OUTSIDE KB Sandbox (a builder's
+// capability on Sandz or customer infrastructure) so KB Sandbox can govern
+// them -- distinct from Agent/AgentVersion above, which are KBS-native
+// graph-based agents Ember runs itself. Formerly `external_agents`, renamed
+// here since MCP-server rows no longer make that name accurate. See
+// supabase/migrations/20260831100001_builder_integrations_registry.sql.
+export interface BuilderIntegration {
   id: string
   name: string
   slug: string
   purpose: string
+  kind: BuilderIntegrationKind
   protocol: ExternalAgentProtocol
   endpoint_url: string | null
   project_id: string | null
@@ -1640,21 +1654,34 @@ export interface ExternalAgent {
 // Immutable except for certification_status/approved_by/approved_at (staff-
 // only, see the migration's dedicated update policy). "Approval applies to a
 // specific version" -- a new version always starts back at 'experimental'.
-export interface ExternalAgentVersion {
+export interface BuilderIntegrationVersion {
   id: string
-  external_agent_id: string
+  builder_integration_id: string
   version_number: number
   skills: { name: string; description: string; provider?: string }[]
   credentials_policy: Record<string, unknown>
   spending_limits: { perOrderMax?: number; dailyMax?: number; currency?: string }
   approval_policy: { requiresHumanConfirmation?: boolean; confirmationFields?: string[] }
   permitted_scope: { projectIds?: string[]; userIds?: string[] }
+  risk_classification: BuilderIntegrationRiskClassification
+  auth_method: string | null
   certification_status: ExternalAgentCertificationStatus
   notes: string | null
   created_by: string | null
   created_at: string
   approved_by: string | null
   approved_at: string | null
+}
+
+// Real Project-scoping mechanism -- replaces permitted_scope.projectIds
+// (inert JSON nothing ever read). Phase C's "Ember discovers only tools
+// permitted for the current Project" needs a real join to query.
+export interface BuilderIntegrationProjectAvailability {
+  id: string
+  builder_integration_id: string
+  project_id: string
+  granted_by: string | null
+  created_at: string
 }
 
 export type ProfileInsert = Omit<Profile, 'created_at' | 'updated_at'>
@@ -1930,19 +1957,21 @@ export type AgentUpdate = Partial<Omit<Agent, 'id' | 'created_at'>>
 // as graph_versions/wiki_versions).
 export type AgentVersionInsert = Omit<AgentVersion, 'id' | 'created_at'>
 
-export type ExternalAgentInsert = Omit<ExternalAgent, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
-  Partial<Pick<ExternalAgent, 'active_version_id'>>
-export type ExternalAgentUpdate = Partial<Omit<ExternalAgent, 'id' | 'created_at'>>
+export type BuilderIntegrationInsert = Omit<BuilderIntegration, 'id' | 'created_at' | 'updated_at' | 'active_version_id'> &
+  Partial<Pick<BuilderIntegration, 'active_version_id'>>
+export type BuilderIntegrationUpdate = Partial<Omit<BuilderIntegration, 'id' | 'created_at'>>
 
-export type ExternalAgentVersionInsert = Omit<
-  ExternalAgentVersion,
-  'id' | 'created_at' | 'certification_status' | 'approved_by' | 'approved_at'
+export type BuilderIntegrationVersionInsert = Omit<
+  BuilderIntegrationVersion,
+  'id' | 'created_at' | 'certification_status' | 'approved_by' | 'approved_at' | 'risk_classification' | 'auth_method'
 > &
-  Partial<Pick<ExternalAgentVersion, 'certification_status'>>
+  Partial<Pick<BuilderIntegrationVersion, 'certification_status' | 'risk_classification' | 'auth_method'>>
 // Only certification changes go through UPDATE -- every other field is
 // immutable once created (a material change means a new version).
-export type ExternalAgentVersionUpdate = Pick<ExternalAgentVersion, 'certification_status'> &
-  Partial<Pick<ExternalAgentVersion, 'approved_by' | 'approved_at'>>
+export type BuilderIntegrationVersionUpdate = Pick<BuilderIntegrationVersion, 'certification_status'> &
+  Partial<Pick<BuilderIntegrationVersion, 'approved_by' | 'approved_at'>>
+
+export type BuilderIntegrationProjectAvailabilityInsert = Omit<BuilderIntegrationProjectAvailability, 'id' | 'created_at'>
 
 // @supabase/postgrest-js requires every table to carry a `Relationships`
 // array and the schema to declare `Views`, even when empty -- omitting them
@@ -2082,11 +2111,17 @@ export interface Database {
       agent_templates: { Row: AgentTemplate; Insert: AgentTemplateInsert; Update: AgentTemplateUpdate; Relationships: [] }
       agents: { Row: Agent; Insert: AgentInsert; Update: AgentUpdate; Relationships: [] }
       agent_versions: { Row: AgentVersion; Insert: AgentVersionInsert; Update: never; Relationships: [] }
-      external_agents: { Row: ExternalAgent; Insert: ExternalAgentInsert; Update: ExternalAgentUpdate; Relationships: [] }
-      external_agent_versions: {
-        Row: ExternalAgentVersion
-        Insert: ExternalAgentVersionInsert
-        Update: ExternalAgentVersionUpdate
+      builder_integrations: { Row: BuilderIntegration; Insert: BuilderIntegrationInsert; Update: BuilderIntegrationUpdate; Relationships: [] }
+      builder_integration_versions: {
+        Row: BuilderIntegrationVersion
+        Insert: BuilderIntegrationVersionInsert
+        Update: BuilderIntegrationVersionUpdate
+        Relationships: []
+      }
+      builder_integration_project_availability: {
+        Row: BuilderIntegrationProjectAvailability
+        Insert: BuilderIntegrationProjectAvailabilityInsert
+        Update: never
         Relationships: []
       }
       graph_steps: { Row: GraphStep; Insert: GraphStepInsert; Update: GraphStepUpdate; Relationships: [] }

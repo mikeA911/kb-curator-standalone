@@ -2,24 +2,35 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ExternalAgentProtocol } from '@/types/database'
-import { registerExternalAgentAction } from '@/app/actions/external-agents'
+import type { BuilderIntegrationKind, BuilderIntegrationRiskClassification, ExternalAgentProtocol } from '@/types/database'
+import { registerBuilderIntegrationAction } from '@/app/actions/builder-integrations'
+import { KIND_LABELS, RISK_LABELS } from './certification'
 
 interface Option {
   id: string
   label: string
 }
 
+const AUTH_METHOD_OPTIONS = [
+  { value: '', label: 'Unspecified' },
+  { value: 'delegated_user_identity', label: 'Delegated user identity' },
+  { value: 'service_identity', label: 'Service identity' },
+  { value: 'none', label: 'None' },
+]
+
 // Plain labeled textareas for skills/credentials/limits/approval-policy,
 // not a deep structured form -- this is demonstration scaffolding for the
-// Agent Registry pattern, not a production authoring tool. Each textarea
-// maps to one jsonb column on external_agent_versions; a blank textarea
-// stores an empty object/array, never a fabricated default.
+// Builder Registry pattern, not a production authoring tool. Each textarea
+// maps to one jsonb column on builder_integration_versions; a blank
+// textarea stores an empty object/array, never a fabricated default.
 export function RegisterAgentForm({ projects }: { projects: Option[] }) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
+  const [kind, setKind] = useState<BuilderIntegrationKind>('external_agent')
   const [protocol, setProtocol] = useState<ExternalAgentProtocol>('mcp')
+  const [riskClassification, setRiskClassification] = useState<BuilderIntegrationRiskClassification>('read_only')
+  const [authMethod, setAuthMethod] = useState('')
   const [endpointUrl, setEndpointUrl] = useState('')
   const [projectId, setProjectId] = useState('')
   const [skillsText, setSkillsText] = useState('')
@@ -52,10 +63,13 @@ export function RegisterAgentForm({ projects }: { projects: Option[] }) {
       const spendingLimits = parseJsonField<Record<string, unknown>>(spendingText, {}, 'Spending limits')
       const approvalPolicy = parseJsonField<Record<string, unknown>>(approvalText, {}, 'Approval policy')
 
-      const result = await registerExternalAgentAction({
+      const result = await registerBuilderIntegrationAction({
         name,
         purpose,
+        kind,
         protocol,
+        riskClassification,
+        authMethod: authMethod || null,
         endpointUrl: endpointUrl.trim() || null,
         projectId: projectId || null,
         skills,
@@ -63,9 +77,9 @@ export function RegisterAgentForm({ projects }: { projects: Option[] }) {
         spendingLimits,
         approvalPolicy,
       })
-      router.push(`/agent-registry/${result.agentId}`)
+      router.push(`/agent-registry/${result.integrationId}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to register agent')
+      setError(err instanceof Error ? err.message : 'Failed to register integration')
     } finally {
       setSubmitting(false)
     }
@@ -91,6 +105,21 @@ export function RegisterAgentForm({ projects }: { projects: Option[] }) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Kind</span>
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as BuilderIntegrationKind)}
+            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+          >
+            {(Object.keys(KIND_LABELS) as BuilderIntegrationKind[]).map((k) => (
+              <option key={k} value={k}>
+                {KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
           <span className="text-sm font-medium">Protocol</span>
           <select
             value={protocol}
@@ -101,19 +130,47 @@ export function RegisterAgentForm({ projects }: { projects: Option[] }) {
             <option value="https">HTTPS</option>
           </select>
         </label>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Risk classification</span>
+          <select
+            value={riskClassification}
+            onChange={(e) => setRiskClassification(e.target.value as BuilderIntegrationRiskClassification)}
+            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+          >
+            {Object.entries(RISK_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Governing project (optional)</span>
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
-            <option value="">None</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
+          <span className="text-sm font-medium">Auth method (optional)</span>
+          <select value={authMethod} onChange={(e) => setAuthMethod(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
+            {AUTH_METHOD_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>
         </label>
       </div>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Governing project (optional)</span>
+        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
+          <option value="">None</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Endpoint URL (optional -- leave blank until actually deployed)</span>
@@ -178,7 +235,7 @@ export function RegisterAgentForm({ projects }: { projects: Option[] }) {
         disabled={submitting}
         className="self-start rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
       >
-        {submitting ? 'Registering…' : 'Register agent'}
+        {submitting ? 'Registering…' : 'Register'}
       </button>
     </form>
   )

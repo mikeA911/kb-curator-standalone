@@ -1,53 +1,72 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { CertificationActions } from '@/components/external-agents/CertificationActions'
-
-const CERTIFICATION_LABELS: Record<string, string> = {
-  experimental: 'Experimental',
-  sandbox_tested: 'Sandbox Tested',
-  security_reviewed: 'Security Reviewed',
-  outlet_accepted: 'Outlet Accepted',
-  production_approved: 'Production Approved',
-  deprecated: 'Deprecated',
-  suspended: 'Suspended',
-}
+import { CertificationActions } from '@/components/builder-integrations/CertificationActions'
+import { ProjectAvailability } from '@/components/builder-integrations/ProjectAvailability'
+import { CERTIFICATION_LABELS, KIND_LABELS, RISK_LABELS } from '@/components/builder-integrations/certification'
+import { listProjectAvailability } from '@/lib/builder-integrations/registry'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
 export default async function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
 
-  const { data: agent } = await supabase.from('external_agents').select('*').eq('id', id).single()
-  if (!agent) notFound()
+  const { data: integration } = await supabase.from('builder_integrations').select('*').eq('id', id).single()
+  if (!integration) notFound()
 
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  let canManage = false
+  // Two separate authorization boundaries, not one: certification is
+  // staff-only (unchanged from before this generalization -- a builder
+  // self-registers a draft but cannot self-certify it), while Project
+  // availability may be managed by the registering builder too (concept
+  // paper: "Availability should be deliberate," not staff-gatekept for
+  // every builder's own integration).
+  let isStaff = false
+  let canManageAvailability = false
+  let profile: { id: string; role: string } | null = null
   if (user) {
-    const { data: viewerProfile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    canManage = viewerProfile?.role === 'curator' || viewerProfile?.role === 'admin'
+    const { data: viewerProfile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+    if (viewerProfile) {
+      profile = viewerProfile
+      isStaff = viewerProfile.role === 'curator' || viewerProfile.role === 'admin'
+      canManageAvailability = isStaff || integration.created_by === user.id
+    }
   }
 
   const { data: versions } = await supabase
-    .from('external_agent_versions')
+    .from('builder_integration_versions')
     .select('*')
-    .eq('external_agent_id', id)
+    .eq('builder_integration_id', id)
     .order('version_number', { ascending: false })
 
-  const activeVersion = versions?.find((v) => v.id === agent.active_version_id) ?? versions?.[0]
+  const activeVersion = versions?.find((v) => v.id === integration.active_version_id) ?? versions?.[0]
+
+  const availability =
+    canManageAvailability && user && profile ? await listProjectAvailability({ user, profile, supabase } as WorkbenchCallerContext, id) : []
+  const { data: allProjects } = canManageAvailability ? await supabase.from('projects').select('id, name').order('name') : { data: [] }
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold">{agent.name}</h1>
-        <p className="mt-1 text-sm text-zinc-600">{agent.purpose}</p>
+        <h1 className="text-xl font-semibold">{integration.name}</h1>
+        <p className="mt-1 text-sm text-zinc-600">{integration.purpose}</p>
         <p className="mt-1 text-xs text-zinc-500">
-          {agent.protocol.toUpperCase()} · {agent.endpoint_url ?? 'no endpoint yet'} · status: {agent.status}
+          {KIND_LABELS[integration.kind]} · {integration.protocol.toUpperCase()} · {integration.endpoint_url ?? 'no endpoint yet'} · status:{' '}
+          {integration.status}
         </p>
       </div>
 
-      {activeVersion && canManage && (
-        <CertificationActions agentId={agent.id} versionId={activeVersion.id} currentStatus={activeVersion.certification_status} />
+      {activeVersion && isStaff && (
+        <CertificationActions integrationId={integration.id} versionId={activeVersion.id} currentStatus={activeVersion.certification_status} />
+      )}
+
+      {canManageAvailability && (
+        <ProjectAvailability
+          integrationId={integration.id}
+          granted={availability}
+          availableProjects={(allProjects ?? []).map((p) => ({ id: p.id, name: p.name }))}
+        />
       )}
 
       <div>
@@ -58,14 +77,18 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
                   v{v.version_number}
-                  {v.id === agent.active_version_id && <span className="ml-2 text-xs text-zinc-500">(active)</span>}
+                  {v.id === integration.active_version_id && <span className="ml-2 text-xs text-zinc-500">(active)</span>}
                 </p>
                 <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
                   {CERTIFICATION_LABELS[v.certification_status]}
                 </span>
               </div>
+              <p className="mt-2 text-xs text-zinc-600">
+                Risk: {RISK_LABELS[v.risk_classification] ?? v.risk_classification}
+                {v.auth_method ? ` · Auth: ${v.auth_method}` : ''}
+              </p>
               {v.skills.length > 0 && (
-                <p className="mt-2 text-xs text-zinc-600">
+                <p className="mt-1 text-xs text-zinc-600">
                   Skills: {v.skills.map((s: { name: string }) => s.name).join(', ')}
                 </p>
               )}
