@@ -95,7 +95,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     // curator+ viewers -- an ungated fetch just returns empty for anyone
     // else, same as the rest of this page's queries.
     supabase.from('project_status_history').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-    getOrganizationExplorer(supabase, id),
+    getOrganizationExplorer(supabase, id, user?.id ?? null),
     // Member Directory (docs/dev-request-role-aware-project-views-and-ember-
     // first-workspace.md, View 2) -- RLS (project_members_select_member)
     // already scopes this to the caller's own accessible project, same

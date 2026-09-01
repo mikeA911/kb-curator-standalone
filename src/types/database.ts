@@ -867,6 +867,29 @@ export interface ResourceAccessAuditLogEntry {
   created_at: string
 }
 
+export type ResourceAccessRequestStatus = 'pending' | 'approved' | 'denied'
+
+// A member locked out of a restricted resource by has_evidence_access can
+// ask for it instead of never learning it exists -- the request/approve/
+// reject counterpart to ResourceAccessGrant above. note_id is the
+// notification sent to whoever decides (access_steward_user_id, else the
+// Project owner, else any curator); outcome_note_id is the reply sent back
+// to the requester once decided. See src/lib/projects/access-requests.ts.
+export interface ResourceAccessRequest {
+  id: string
+  project_id: string
+  resource_type: EvidenceResourceType
+  resource_id: string
+  requester_id: string
+  status: ResourceAccessRequestStatus
+  note_id: string | null
+  outcome_note_id: string | null
+  decided_by: string | null
+  decision_reason: string | null
+  decided_at: string | null
+  created_at: string
+}
+
 // M5D (simplified) -- a Workstream is a scope document (repository scope,
 // goal, a named guardrail, a deliverables checklist) that tells a
 // consultant what to do with an external tool (e.g. Claude Code against a
@@ -1854,6 +1877,15 @@ export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
 export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
 
 export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
+
+export type ResourceAccessRequestInsert = Omit<
+  ResourceAccessRequest,
+  'id' | 'created_at' | 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'
+> &
+  Partial<Pick<ResourceAccessRequest, 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'>>
+export type ResourceAccessRequestUpdate = Partial<
+  Omit<ResourceAccessRequest, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'requester_id' | 'created_at'>
+>
 export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
@@ -2136,6 +2168,12 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      resource_access_requests: {
+        Row: ResourceAccessRequest
+        Insert: ResourceAccessRequestInsert
+        Update: ResourceAccessRequestUpdate
+        Relationships: []
+      }
       ai_provider_sensitivity_eligibility: {
         Row: AiProviderSensitivityEligibility
         Insert: AiProviderSensitivityEligibilityInsert

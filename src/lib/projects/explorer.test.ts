@@ -1,13 +1,25 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
-import { getOrganizationExplorer } from './explorer'
+
+const createAdminClientMock = vi.fn()
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: (...args: unknown[]) => createAdminClientMock(...args),
+}))
+
+const { getOrganizationExplorer } = await import('./explorer')
+
+beforeEach(() => {
+  createAdminClientMock.mockReset()
+})
 
 // getOrganizationExplorer relies entirely on the caller's own RLS-scoped
 // client for visibility -- these tests exercise the traversal/shaping logic
 // (depth, dedup, source truncation), not authorization, which is covered by
 // the RLS policies themselves (project_knowledge_bases_select_member,
 // has_evidence_access) -- see the function's own comment for why no manual
-// filtering exists here to test.
+// filtering exists here to test. All pass viewerId: null, exercising the
+// plain getSourcesForKb path (no admin client, no lock detection) -- the
+// locked-source path (getSourcesForRootKb) has its own tests below.
 
 describe('getOrganizationExplorer', () => {
   it('returns an empty explorer when the root project has no attached knowledge bases', async () => {
@@ -15,7 +27,7 @@ describe('getOrganizationExplorer', () => {
       project_knowledge_bases: [{ data: [], error: null }], // root's own KB links: none
     })
 
-    const result = await getOrganizationExplorer(supabase as never, 'root-1')
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', null)
 
     expect(result).toEqual({ rootProjectId: 'root-1', knowledgeBases: [] })
   })
@@ -38,7 +50,7 @@ describe('getOrganizationExplorer', () => {
       projects: [{ data: [{ id: 'connected-1', name: 'Connected Project' }], error: null }],
     })
 
-    const result = await getOrganizationExplorer(supabase as never, 'root-1')
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', null)
 
     expect(result).toEqual({
       rootProjectId: 'root-1',
@@ -46,14 +58,19 @@ describe('getOrganizationExplorer', () => {
         {
           id: 'kb-1',
           name: 'KB One',
-          sources: [{ id: 'src-1', title: 'Source One' }],
+          sources: [{ id: 'src-1', title: 'Source One', locked: false, alreadyRequested: false }],
           sourcesTruncated: false,
           connectedProjects: [
             {
               id: 'connected-1',
               name: 'Connected Project',
               additionalKnowledgeBases: [
-                { id: 'kb-2', name: 'KB Two', sources: [{ id: 'src-2', title: 'Source Two' }], sourcesTruncated: false },
+                {
+                  id: 'kb-2',
+                  name: 'KB Two',
+                  sources: [{ id: 'src-2', title: 'Source Two', locked: false, alreadyRequested: false }],
+                  sourcesTruncated: false,
+                },
               ],
             },
           ],
@@ -85,7 +102,7 @@ describe('getOrganizationExplorer', () => {
       ],
     })
 
-    const result = await getOrganizationExplorer(supabase as never, 'root-1')
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', null)
 
     const kb1 = result.knowledgeBases.find((k) => k.id === 'kb-1')!
     const kb3 = result.knowledgeBases.find((k) => k.id === 'kb-3')!
@@ -110,9 +127,64 @@ describe('getOrganizationExplorer', () => {
       knowledge_sources: [{ data: manySources, error: null }], // 9 rows returned (limit was 8+1=9)
     })
 
-    const result = await getOrganizationExplorer(supabase as never, 'root-1')
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', null)
 
     expect(result.knowledgeBases[0].sources).toHaveLength(8)
     expect(result.knowledgeBases[0].sourcesTruncated).toBe(true)
+  })
+})
+
+// Locked-source detection (getSourcesForRootKb) only runs when a real
+// viewerId is passed -- diffs an admin-client "every source" query against
+// the viewer's own RLS-scoped query, so a restricted source is shown
+// (locked) instead of silently omitted, per the request/approve/reject flow
+// in src/lib/projects/access-requests.ts.
+describe('getOrganizationExplorer with a signed-in viewer (locked sources)', () => {
+  it('marks a source the viewer cannot read as locked, with alreadyRequested set from a pending request', async () => {
+    const supabase = createFakeSupabase({
+      project_knowledge_bases: [
+        { data: [{ knowledge_base_id: 'kb-1' }], error: null }, // root's own KB links
+        { data: [], error: null }, // no connected projects
+      ],
+      knowledge_bases: [{ data: [{ id: 'kb-1', name: 'KB One' }], error: null }],
+      knowledge_sources: [{ data: [{ id: 'src-1' }], error: null }], // viewer's own RLS-scoped query -- only src-1 accessible
+      resource_access_requests: [{ data: [{ resource_id: 'src-2' }], error: null }], // viewer already has a pending request for src-2
+    })
+    const admin = createFakeSupabase({
+      knowledge_sources: [
+        {
+          data: [
+            { id: 'src-1', title: 'Open Source' },
+            { id: 'src-2', title: 'Locked Source' },
+          ],
+          error: null,
+        },
+      ],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', 'viewer-1')
+
+    expect(result.knowledgeBases[0].sources).toEqual([
+      { id: 'src-1', title: 'Open Source', locked: false, alreadyRequested: false },
+      { id: 'src-2', title: 'Locked Source', locked: true, alreadyRequested: true },
+    ])
+  })
+
+  it('does not query resource_access_requests at all when nothing is locked', async () => {
+    const supabase = createFakeSupabase({
+      project_knowledge_bases: [{ data: [{ knowledge_base_id: 'kb-1' }], error: null }, { data: [], error: null }],
+      knowledge_bases: [{ data: [{ id: 'kb-1', name: 'KB One' }], error: null }],
+      knowledge_sources: [{ data: [{ id: 'src-1' }], error: null }], // viewer sees the same one source as admin
+    })
+    const admin = createFakeSupabase({
+      knowledge_sources: [{ data: [{ id: 'src-1', title: 'Open Source' }], error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+
+    const result = await getOrganizationExplorer(supabase as never, 'root-1', 'viewer-1')
+
+    expect(result.knowledgeBases[0].sources).toEqual([{ id: 'src-1', title: 'Open Source', locked: false, alreadyRequested: false }])
+    expect(supabase._calls.find((c) => c.table === 'resource_access_requests')).toBeUndefined()
   })
 })

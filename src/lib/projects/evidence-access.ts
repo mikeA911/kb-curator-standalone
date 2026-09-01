@@ -25,7 +25,10 @@ function requireManager(ctx: WorkbenchCallerContext) {
   if (ctx.profile.role === 'anonymous') throw new AuthError('Create an account to manage project evidence access')
 }
 
-async function writeAuditEntry(entry: {
+// Exported for src/lib/projects/access-requests.ts's decideResourceAccessRequest
+// -- an Approve decision needs the exact same audit-log shape as a manual
+// grant made from the Access & Evidence page, without duplicating it.
+export async function writeAuditEntry(entry: {
   projectId: string
   eventType: EvidenceAuditEventType
   actorId: string
@@ -271,6 +274,40 @@ export class EvidenceAccessValidationError extends Error {
   }
 }
 
+// Shared by classifyResource's memberIds loop below and by
+// decideResourceAccessRequest (src/lib/projects/access-requests.ts) approving
+// a request -- the exact same grant-insert-plus-audit shape either way. Uses
+// the caller's own RLS-scoped client, so the caller must already satisfy
+// resource_access_grants_manage_owner (can_manage_project) -- both call
+// sites already require that (requireManager here is a weaker anonymous-only
+// check; decideResourceAccessRequest enforces can_manage_project itself
+// before calling this).
+export async function grantResourceAccessToMember(
+  ctx: WorkbenchCallerContext,
+  input: { projectId: string; resourceAccessPolicyId: string; projectMemberId: string; resourceType: EvidenceResourceType; resourceId: string }
+): Promise<void> {
+  const { error: grantError } = await ctx.supabase.from('resource_access_grants').insert({
+    resource_access_policy_id: input.resourceAccessPolicyId,
+    project_access_group_id: null,
+    project_member_id: input.projectMemberId,
+    status: 'active',
+    granted_by: ctx.user.id,
+    granted_at: new Date().toISOString(),
+    revoked_by: null,
+    revoked_at: null,
+    revocation_reason: null,
+  })
+  if (grantError) throw grantError
+  await writeAuditEntry({
+    projectId: input.projectId,
+    eventType: 'resource_grant_granted',
+    actorId: ctx.user.id,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    targetMemberId: input.projectMemberId,
+  })
+}
+
 export async function classifyResource(ctx: WorkbenchCallerContext, projectId: string, input: ClassifyResourceInput): Promise<void> {
   requireManager(ctx)
 
@@ -333,25 +370,12 @@ export async function classifyResource(ctx: WorkbenchCallerContext, projectId: s
   }
 
   for (const memberId of memberIds) {
-    const { error: grantError } = await ctx.supabase.from('resource_access_grants').insert({
-      resource_access_policy_id: policy.id,
-      project_access_group_id: null,
-      project_member_id: memberId,
-      status: 'active',
-      granted_by: ctx.user.id,
-      granted_at: new Date().toISOString(),
-      revoked_by: null,
-      revoked_at: null,
-      revocation_reason: null,
-    })
-    if (grantError) throw grantError
-    await writeAuditEntry({
+    await grantResourceAccessToMember(ctx, {
       projectId,
-      eventType: 'resource_grant_granted',
-      actorId: ctx.user.id,
+      resourceAccessPolicyId: policy.id,
+      projectMemberId: memberId,
       resourceType: input.resourceType,
       resourceId: input.resourceId,
-      targetMemberId: memberId,
     })
   }
 
