@@ -72,7 +72,7 @@ export async function listAllProfiles() {
   return data
 }
 
-export async function updateUserRole(userId: string, role: 'consultant' | 'curator' | 'admin') {
+export async function updateUserRole(userId: string, role: 'member' | 'consultant' | 'curator' | 'admin') {
   await requireRole('admin')
   const admin = createAdminClient()
   const { error } = await admin.from('profiles').update({ role }).eq('id', userId)
@@ -106,7 +106,7 @@ export async function assignKBsToCurator(userId: string, kbIds: string[]) {
 // happens lazily on first login via ensureProfile() (src/app/actions/auth.ts),
 // which would default role to 'consultant' regardless of what's picked here.
 // So the profile is inserted directly, not left for ensureProfile to create.
-export async function createUserAction(input: { email: string; password: string; role: 'consultant' | 'curator' | 'admin' }) {
+export async function createUserAction(input: { email: string; password: string; role: 'member' | 'consultant' | 'curator' | 'admin' }) {
   await requireRole('admin')
   if (input.password.length < 8) throw new Error('Password must be at least 8 characters')
 

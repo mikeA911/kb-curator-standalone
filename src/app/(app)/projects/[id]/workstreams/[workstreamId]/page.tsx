@@ -9,6 +9,7 @@ import { AttachArtifactForm } from '@/components/projects/AttachArtifactForm'
 import { WorkstreamSummaryForm } from '@/components/projects/WorkstreamSummaryForm'
 import { SystemUnderstandingCard } from '@/components/projects/SystemUnderstandingCard'
 import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
+import { ArtifactStatusBadge, ArtifactReviewActions } from '@/components/projects/ArtifactReviewActions'
 import { Markdown } from '@/components/shared/Markdown'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
@@ -134,14 +135,20 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
                   </svg>
                   <h3 className="font-medium">{a.title}</h3>
                 </span>
-                <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
-                  {ARTIFACT_TYPE_LABELS[a.artifact_type] ?? a.artifact_type}
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <ArtifactStatusBadge status={a.status} />
+                  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
+                    {ARTIFACT_TYPE_LABELS[a.artifact_type] ?? a.artifact_type}
+                  </span>
                 </span>
               </summary>
               <p className="mt-1 text-xs text-zinc-500">
                 {a.external_tool && <>via {a.external_tool} · </>}
                 {new Date(a.created_at).toLocaleString()}
               </p>
+              {a.validation_notes && (
+                <p className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-600">{a.validation_notes}</p>
+              )}
               {a.content && (
                 <div className="mt-2">
                   <div className="mb-1 flex justify-end">
@@ -174,6 +181,7 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
               >
                 Add a note about this artifact
               </Link>
+              <ArtifactReviewActions artifactId={a.id} projectId={id} workstreamId={workstreamId} status={a.status} canReview={canEdit} />
             </details>
           ))}
           {artifacts.length === 0 && <p className="text-sm text-zinc-500">No artifacts attached yet.</p>}

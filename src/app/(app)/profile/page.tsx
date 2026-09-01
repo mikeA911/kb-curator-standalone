@@ -6,6 +6,7 @@ import type { Profile, UserRole } from '@/types/database'
 
 const ROLE_LABELS: Record<UserRole, string> = {
   anonymous: 'Anonymous visitor',
+  member: 'Member',
   consultant: 'Consultant',
   curator: 'Curator',
   admin: 'Admin',

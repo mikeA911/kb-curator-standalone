@@ -12,7 +12,11 @@ function randomPassword() {
 export function CreateUserForm() {
   const router = useRouter()
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<Exclude<UserRole, 'anonymous'>>('consultant')
+  // 'member' default, not 'consultant' -- self-serve registration is
+  // removed (admin is the only way to create an account), so this default
+  // is what actually matters: an ordinary employee is the common case,
+  // consultant the exception (OL-007).
+  const [role, setRole] = useState<Exclude<UserRole, 'anonymous'>>('member')
   const [password, setPassword] = useState(() => randomPassword())
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<{ email: string; password: string } | null>(null)
@@ -52,6 +56,7 @@ export function CreateUserForm() {
         <label className="flex flex-col gap-1">
           <span className="text-xs text-zinc-500">Role</span>
           <select value={role} onChange={(e) => setRole(e.target.value as Exclude<UserRole, 'anonymous'>)} className="rounded border border-zinc-300 px-2 py-1.5 text-sm">
+            <option value="member">member</option>
             <option value="consultant">consultant</option>
             <option value="curator">curator</option>
             <option value="admin">admin</option>

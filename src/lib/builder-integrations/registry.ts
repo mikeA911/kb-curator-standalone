@@ -1,3 +1,4 @@
+import { hasRequiredRole } from '@/lib/auth'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type {
   BuilderIntegrationKind,
@@ -52,6 +53,12 @@ export async function registerBuilderIntegration(ctx: WorkbenchCallerContext, in
   const { user, profile, supabase } = ctx
   if (profile.role === 'anonymous') {
     throw new BuilderIntegrationValidationError('Create an account to register an integration')
+  }
+  // OL-007: 'member' is deliberately excluded from Builder self-registration
+  // -- builder_integrations_insert_own's RLS now requires
+  // is_consultant_or_above too, see 20260831120001_member_role.sql.
+  if (!hasRequiredRole(profile.role, 'consultant')) {
+    throw new BuilderIntegrationValidationError('Your account needs to be a consultant or above to register an integration')
   }
   if (!input.name.trim()) throw new BuilderIntegrationValidationError('Name is required')
   if (!input.purpose.trim()) throw new BuilderIntegrationValidationError('Purpose is required')

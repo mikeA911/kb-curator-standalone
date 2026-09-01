@@ -43,6 +43,7 @@ export function UserManagement({ profiles, knowledgeBases }: { profiles: Profile
                       onChange={(e) => startTransition(() => updateUserRole(profile.id, e.target.value as Exclude<UserRole, 'anonymous'>))}
                       className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
                     >
+                      <option value="member">member</option>
                       <option value="consultant">consultant</option>
                       <option value="curator">curator</option>
                       <option value="admin">admin</option>

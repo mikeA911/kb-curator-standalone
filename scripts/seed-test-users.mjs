@@ -17,6 +17,7 @@ function randomPassword() {
 // to 'consultant', same as an ordinary member, distinguished only by slug/
 // full_name so it reads clearly as its own persona in the UI and test docs.
 const PERSONAS = [
+  { slug: 'member', role: 'member', fullName: 'Test Member' },
   { slug: 'consultant', role: 'consultant', fullName: 'Test Consultant' },
   { slug: 'curator', role: 'curator', fullName: 'Test Curator' },
   { slug: 'admin', role: 'admin', fullName: 'Test Admin' },

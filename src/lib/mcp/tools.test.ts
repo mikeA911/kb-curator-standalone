@@ -295,14 +295,33 @@ describe('callTool', () => {
     expect(result).toEqual({ workstreamId: 'ws-1' })
   })
 
-  it('attach_workstream_artifact passes input through unchanged and returns the new artifact id', async () => {
-    attachArtifactMock.mockResolvedValue({ projectId: 'proj-1', artifactId: 'artifact-1' })
+  it('attach_workstream_artifact passes input through unchanged and returns the new artifact id and status', async () => {
+    attachArtifactMock.mockResolvedValue({ projectId: 'proj-1', artifactId: 'artifact-1', status: 'ready_for_review', validationNotes: [] })
 
     const input = { workstreamId: 'ws-1', artifactType: 'findings' as const, title: 'Findings', content: 'text' }
     const result = await callTool(ctx, 'attach_workstream_artifact', input)
 
     expect(attachArtifactMock).toHaveBeenCalledWith(ctx, input)
-    expect(result).toEqual({ attached: true, artifactId: 'artifact-1' })
+    expect(result).toEqual({ attached: true, artifactId: 'artifact-1', status: 'ready_for_review', validationNotes: [] })
+  })
+
+  it('attach_workstream_artifact relays a validation_failed status and its notes honestly', async () => {
+    attachArtifactMock.mockResolvedValue({
+      projectId: 'proj-1',
+      artifactId: 'artifact-2',
+      status: 'validation_failed',
+      validationNotes: ["'info.title' is missing."],
+    })
+
+    const input = { workstreamId: 'ws-1', artifactType: 'openapi_spec' as const, title: 'Contract v0.2', content: '{}' }
+    const result = await callTool(ctx, 'attach_workstream_artifact', input)
+
+    expect(result).toEqual({
+      attached: true,
+      artifactId: 'artifact-2',
+      status: 'validation_failed',
+      validationNotes: ["'info.title' is missing."],
+    })
   })
 })
 

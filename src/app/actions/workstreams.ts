@@ -45,3 +45,9 @@ export async function attachArtifactAction(input: {
   const { projectId } = await workbench.attachArtifact(ctx, input)
   revalidatePath(`/projects/${projectId}/workstreams/${input.workstreamId}`)
 }
+
+export async function reviewArtifactAction(artifactId: string, decision: 'approved' | 'rejected', projectId: string, workstreamId: string, notes?: string) {
+  const ctx = await requireUser()
+  await workbench.reviewArtifact(ctx, artifactId, decision, notes)
+  revalidatePath(`/projects/${projectId}/workstreams/${workstreamId}`)
+}
