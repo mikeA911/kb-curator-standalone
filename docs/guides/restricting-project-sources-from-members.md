@@ -38,6 +38,14 @@ The same Classify panel has a second dropdown, **AI sensitivity** (`Public`/`Int
 
 The same Access & Evidence page shows every classified resource, its current grants ("Whole project team" if unrestricted, or the specific groups/members if not), and a full **Audit history** of every classify/reclassify/grant/revoke event with actor and timestamp (`resource_access_audit_log` -- append-only, no client insert path, written only by the service layer). Click **Revoke** next to a grant to remove one group/member's access, or reopen **Classify** and set the classification back to "Project general" to lift the restriction entirely.
 
+## Never use a restricted source as Wiki-synthesis input
+
+`/wiki/new`'s "AI-assisted draft" mode lets a curator pick approved document chunks (or a project artifact) and has a model draft a Wiki article from them. **A published Wiki article is not restricted by its source's classification** -- restricting a `knowledge_source` and restricting the `wiki_article` later synthesized from it are two completely independent settings today (confirmed against the code, not assumed). If you feed a restricted source's chunks into a Wiki draft and approve it, the resulting article defaults to fully open -- readable by the whole Project team, or platform-wide, regardless of how carefully the source itself was locked down. Nothing in the picker currently warns you this is happening.
+
+**Until the picker itself enforces this (tracked as a real scoped-but-not-yet-built plan, see the dev request below), it is a manual curator judgment call: before selecting chunks or an artifact for an AI-assisted draft, check whether their source is restricted (Access & Evidence's Resources table, or ask the Project owner) and do not use restricted material as synthesis input.** If a Project genuinely needs that material to reach a wider audience, restrict the *resulting* Wiki article to the same audience explicitly (Access & Evidence works on `wiki_article` resources exactly the same way it works on sources) rather than assuming the source's own restriction carries over -- it does not.
+
+This is the deliberate alternative to trying to auto-classify derived content correctly: `EvidenceClassification` values aren't a ranked severity scale the way `InformationSensitivity` is, so "inherit the most restrictive classification" isn't well-defined without new design work, and even a correct label doesn't undo an LLM having already blended restricted and unrestricted source text into one synthesized paragraph. Keeping restricted sources out of synthesis inputs in the first place avoids that problem entirely, rather than trying to clean up after it.
+
 ## Reference
 
 - Design doc: `docs/dev-request-project-evidence-access-controls.md`
