@@ -25,4 +25,25 @@ describe('hasRequiredRole', () => {
   it('rejects an anonymous session against a consultant-only gate', () => {
     expect(hasRequiredRole('anonymous', 'consultant')).toBe(false)
   })
+
+  // OL-007: 'member' sits between anonymous and consultant -- this is the
+  // exact rule createProject/registerBuilderIntegration now enforce
+  // (hasRequiredRole(profile.role, 'consultant')) to exclude a member the
+  // same way the tightened projects_insert_self/builder_integrations_
+  // insert_own RLS policies do.
+  it('rejects a member against a consultant-only gate', () => {
+    expect(hasRequiredRole('member', 'consultant')).toBe(false)
+  })
+
+  it('allows a member through a member-only gate', () => {
+    expect(hasRequiredRole('member', 'member')).toBe(true)
+  })
+
+  it('rejects an anonymous session against a member-only gate', () => {
+    expect(hasRequiredRole('anonymous', 'member')).toBe(false)
+  })
+
+  it('allows a consultant through a member-only gate (ranks above it)', () => {
+    expect(hasRequiredRole('consultant', 'member')).toBe(true)
+  })
 })

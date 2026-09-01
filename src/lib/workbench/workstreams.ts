@@ -1,7 +1,8 @@
 import 'server-only'
 import { AuthError } from '@/lib/auth'
 import { ProjectValidationError } from '@/lib/projects/errors'
-import type { WorkstreamDeliverable, ArtifactType } from '@/types/database'
+import type { WorkstreamDeliverable, ArtifactType, WorkstreamArtifactStatus } from '@/types/database'
+import { validateOpenApiContent } from './openapi-validation'
 import type { WorkbenchCallerContext } from './context'
 
 // A generic repo URL (or a local filesystem path) drifts or breaks -- a
@@ -143,6 +144,19 @@ export async function attachArtifact(
     .single()
   if (workstreamError || !workstream) throw workstreamError ?? new ProjectValidationError('Workstream not found')
 
+  // OL-010: "successfully attached" must not imply the content satisfies its
+  // acceptance criteria. Only openapi_spec has a validator today (see
+  // openapi-validation.ts) -- every other artifact type has no automated
+  // check yet, so it goes straight to ready_for_review rather than being
+  // falsely marked either validated or failed.
+  let status: WorkstreamArtifactStatus = 'ready_for_review'
+  let validationNotes: string[] = []
+  if (input.artifactType === 'openapi_spec' && input.content?.trim()) {
+    const result = validateOpenApiContent(input.content)
+    status = result.ok ? 'ready_for_review' : 'validation_failed'
+    validationNotes = result.notes
+  }
+
   const { data: artifact, error } = await supabase
     .from('workstream_artifacts')
     .insert({
@@ -154,10 +168,43 @@ export async function attachArtifact(
       external_url: input.externalUrl || null,
       notes: input.notes || null,
       created_by: profile.id,
+      status,
+      validation_notes: validationNotes.length > 0 ? validationNotes.join('; ') : null,
     })
     .select('id')
     .single()
   if (error || !artifact) throw error ?? new ProjectValidationError('Failed to attach artifact')
 
-  return { projectId: workstream.project_id, artifactId: artifact.id }
+  return { projectId: workstream.project_id, artifactId: artifact.id, status, validationNotes }
+}
+
+// Same authorization bar as workstream creation/curation (can_curate_project
+// via workstream_artifacts_update_review_curator) -- reviewing whether an
+// artifact meets its acceptance criteria is a curator-level judgment, same
+// as toggleDeliverable/updateWorkstreamSummary above, broader than the
+// consultant bar attachArtifact itself uses.
+export async function reviewArtifact(
+  ctx: WorkbenchCallerContext,
+  artifactId: string,
+  decision: 'approved' | 'rejected',
+  notes?: string
+) {
+  const { user, supabase } = ctx
+
+  const { data, error } = await supabase
+    .from('workstream_artifacts')
+    .update({
+      status: decision,
+      validation_notes: notes?.trim() || null,
+      reviewed_by: user.id,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq('id', artifactId)
+    .select('id, workstream_id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new ProjectValidationError('You do not have permission to review this artifact')
+  }
+
+  return { artifactId, workstreamId: data[0].workstream_id, status: decision }
 }

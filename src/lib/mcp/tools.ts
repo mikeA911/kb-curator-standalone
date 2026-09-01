@@ -368,7 +368,8 @@ const tools: Record<string, ToolDefinition<any, any>> = {
   },
 
   attach_workstream_artifact: {
-    description: 'Attach an artifact (evidence) to a workstream.',
+    description:
+      "Attach an artifact (evidence) to a workstream. Saving the row always succeeds if the call itself succeeds, but that is NOT the same as the artifact being complete or correct -- check the returned status. For artifactType 'openapi_spec', the content is automatically checked for required sections (openapi/info/paths/responses) and status will be 'validation_failed' (with validationNotes listing exactly what's missing) or 'ready_for_review'. Every other artifact type has no automated check yet and is always 'ready_for_review'. Never tell the user the artifact was 'successfully attached' as if that means it's done -- report the actual status, and if it's 'validation_failed', relay the specific validationNotes so they know what to fix.",
     inputSchema: z.object({
       workstreamId: z.string(),
       artifactType: ArtifactTypeSchema,
@@ -378,7 +379,12 @@ const tools: Record<string, ToolDefinition<any, any>> = {
       externalUrl: z.string().optional(),
       notes: z.string().optional(),
     }),
-    outputSchema: z.object({ attached: z.literal(true), artifactId: z.string() }),
+    outputSchema: z.object({
+      attached: z.literal(true),
+      artifactId: z.string(),
+      status: z.enum(['draft', 'validation_failed', 'ready_for_review', 'approved', 'rejected']),
+      validationNotes: z.array(z.string()),
+    }),
     handler: async (
       ctx,
       input: {
@@ -392,7 +398,7 @@ const tools: Record<string, ToolDefinition<any, any>> = {
       }
     ) => {
       const result = await workbenchWorkstreams.attachArtifact(ctx, input)
-      return { attached: true as const, artifactId: result.artifactId }
+      return { attached: true as const, artifactId: result.artifactId, status: result.status, validationNotes: result.validationNotes }
     },
   },
 }

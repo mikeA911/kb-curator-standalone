@@ -35,7 +35,7 @@ export async function requireUser() {
   return { user, profile: profile as Profile, supabase }
 }
 
-const ROLE_RANK: Record<UserRole, number> = { anonymous: 0, consultant: 1, curator: 2, admin: 3 }
+const ROLE_RANK: Record<UserRole, number> = { anonymous: 0, member: 1, consultant: 2, curator: 3, admin: 4 }
 
 // Pure and exported so the authorization rule itself (e.g. "only admins can
 // approve") is unit-testable without a Next.js request context -- see

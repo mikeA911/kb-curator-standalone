@@ -1,7 +1,11 @@
 // Mirrors supabase/migrations/*.sql. Keep in sync by hand until this project
 // generates types via `supabase gen types` against the live project.
 
-export type UserRole = 'anonymous' | 'consultant' | 'curator' | 'admin'
+// 'member' (OL-007): least-privileged authenticated role, below 'consultant'
+// -- an ordinary employee who uses Ember within their own Projects but
+// can't create Projects, self-register Builder integrations, or curate
+// anything. See supabase/migrations/20260831120001_member_role.sql.
+export type UserRole = 'anonymous' | 'member' | 'consultant' | 'curator' | 'admin'
 export type DocType = string
 export type KnowledgeBaseClassification = 'platform' | 'legacy_sample' | 'project' | 'partner_pilot'
 export type KnowledgeBaseLifecycleStatus = 'active' | 'reference' | 'archived'
@@ -910,6 +914,15 @@ export type ArtifactType =
   | 'implementation_handoff'
   | 'other'
 
+// OL-010: status/review fields, additive on an otherwise-immutable row (see
+// 20260831130001_workstream_artifact_status.sql). 'draft' is the state for
+// an artifact type with no automated validator yet (everything except
+// 'openapi_spec' today); validateOpenApiContent (src/lib/workbench/
+// workstreams.ts) computes 'validation_failed'/'ready_for_review' at attach
+// time for openapi_spec; 'approved'/'rejected' only ever come from
+// reviewArtifact.
+export type WorkstreamArtifactStatus = 'draft' | 'validation_failed' | 'ready_for_review' | 'approved' | 'rejected'
+
 export interface WorkstreamArtifact {
   id: string
   workstream_id: string
@@ -924,6 +937,10 @@ export interface WorkstreamArtifact {
   assistant_prompt_version: string | null
   assistant_conversation_id: string | null
   created_at: string
+  status: WorkstreamArtifactStatus
+  validation_notes: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
 }
 
 // ============================================
@@ -1937,13 +1954,17 @@ export type ProjectWorkstreamInsert = Omit<
   Partial<Pick<ProjectWorkstream, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'>>
 export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
 
-// No WorkstreamArtifactUpdate -- insert-only, no update/delete RLS policy
-// (see the migration comment: an immutable evidence trail).
+// Every descriptive field stays immutable (still an evidence trail) -- OL-010
+// added exactly one narrow update path, reviewArtifact(), which only ever
+// touches status/validation_notes/reviewed_by/reviewed_at (see
+// WorkstreamArtifactUpdate below and workstream_artifacts_update_review_curator).
 export type WorkstreamArtifactInsert = Omit<
   WorkstreamArtifact,
-  'id' | 'created_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
+  'id' | 'created_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'status' | 'validation_notes' | 'reviewed_by' | 'reviewed_at'
 > &
-  Partial<Pick<WorkstreamArtifact, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'>>
+  Partial<Pick<WorkstreamArtifact, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'status' | 'validation_notes'>>
+export type WorkstreamArtifactUpdate = Pick<WorkstreamArtifact, 'status'> &
+  Partial<Pick<WorkstreamArtifact, 'validation_notes' | 'reviewed_by' | 'reviewed_at'>>
 
 export type AIProviderInsert = Omit<AIProviderRow, 'id' | 'created_at' | 'updated_at'>
 export type AIProviderUpdate = Partial<Omit<AIProviderRow, 'id' | 'created_at'>>
@@ -2132,7 +2153,7 @@ export interface Database {
       }
       roadmap_items: { Row: RoadmapItem; Insert: RoadmapItemInsert; Update: RoadmapItemUpdate; Relationships: [] }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
-      workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: never; Relationships: [] }
+      workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: WorkstreamArtifactUpdate; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
       system_assessment_versions: { Row: SystemAssessmentVersion; Insert: SystemAssessmentVersionInsert; Update: Partial<SystemAssessmentVersion>; Relationships: [] }
       system_assessment_questions: { Row: SystemAssessmentQuestion; Insert: SystemAssessmentQuestionInsert; Update: Partial<SystemAssessmentQuestion>; Relationships: [] }

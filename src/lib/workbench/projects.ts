@@ -1,5 +1,5 @@
 import 'server-only'
-import { AuthError } from '@/lib/auth'
+import { AuthError, hasRequiredRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
@@ -20,9 +20,11 @@ async function resolveUserIdsByEmail(emails: string[]): Promise<Map<string, stri
   return new Map((data ?? []).filter((p) => p.email).map((p) => [p.email as string, p.id]))
 }
 
-// Any authenticated, non-anonymous session can start a project -- there's no
-// platform-role gate on project creation, only a project-role one once it
-// exists (see project_members RLS). This uses the caller's own RLS-scoped
+// A consultant-or-above session can start a project (OL-007: 'member' is
+// deliberately excluded -- projects_insert_self's RLS now requires
+// is_consultant_or_above too, see 20260831120001_member_role.sql). Beyond
+// that floor there's no further platform-role gate, only a project-role one
+// once it exists (see project_members RLS). This uses the caller's own RLS-scoped
 // client throughout for the mutation itself; RLS is the real gate, this is
 // just a friendlier error message than a raw policy violation. The DB
 // trigger (create_owner_membership, 20260810120001) guarantees the creator
@@ -50,6 +52,9 @@ export async function createProject(
   const { user, profile, supabase } = ctx
   if (profile.role === 'anonymous') {
     throw new AuthError('Create an account to start a project')
+  }
+  if (!hasRequiredRole(profile.role, 'consultant')) {
+    throw new AuthError('Your account needs to be a consultant or above to start a project')
   }
   if (input.knowledgeBaseId) await requireActiveKnowledgeBase(supabase, input.knowledgeBaseId)
 

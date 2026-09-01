@@ -34,8 +34,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const isAdmin = profile?.role === 'admin'
   // Ember-first home (docs/dev-request-role-aware-project-views-and-ember-
   // first-workspace.md, View 3) -- ordinary members only. Admin/curator keep
-  // today's Workbench dashboard unchanged.
-  const isEmberFirst = profile?.role === 'consultant'
+  // today's Workbench dashboard unchanged. 'member' (OL-007) is exactly the
+  // "ordinary member" case this was already named for.
+  const isEmberFirst = profile?.role === 'consultant' || profile?.role === 'member'
 
   const [
     unpublishedWikiArticles,
