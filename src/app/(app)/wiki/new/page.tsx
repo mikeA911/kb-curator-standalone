@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { listCategories } from '@/lib/wiki/queries'
+import { getRestrictedResourceIds } from '@/lib/projects/evidence-access'
 import { NewArticleForms } from '@/components/wiki/NewArticleForms'
 
 export default async function NewWikiArticlePage() {
@@ -25,14 +26,27 @@ export default async function NewWikiArticlePage() {
 
   const documentIds = [...new Set((chunks ?? []).map((c) => c.document_id))]
   const { data: documents } = documentIds.length
-    ? await supabase.from('documents').select('id, original_filename, doc_type').in('id', documentIds)
+    ? await supabase.from('documents').select('id, original_filename, doc_type, knowledge_source_id').in('id', documentIds)
     : { data: [] }
   const documentById = new Map((documents ?? []).map((d) => [d.id, d]))
 
-  const approvedChunks = (chunks ?? []).map((c) => ({
-    ...c,
-    document: documentById.get(c.document_id) ?? null,
-  }))
+  // Keep a restricted source's chunks out of the Wiki-synthesis picker
+  // entirely, regardless of the viewer's own access to it -- see
+  // getRestrictedResourceIds's own comment for why this can't just be "can
+  // I see it" (has_evidence_access already answers that for document_chunks'
+  // own -- ungated -- select; this is the separate leak-prevention check).
+  const knowledgeSourceIds = [...new Set((documents ?? []).map((d) => d.knowledge_source_id).filter((id): id is string => !!id))]
+  const restrictedSourceIds = await getRestrictedResourceIds('knowledge_source', knowledgeSourceIds)
+
+  const approvedChunks = (chunks ?? [])
+    .filter((c) => {
+      const doc = documentById.get(c.document_id)
+      return !doc?.knowledge_source_id || !restrictedSourceIds.has(doc.knowledge_source_id)
+    })
+    .map((c) => ({
+      ...c,
+      document: documentById.get(c.document_id) ?? null,
+    }))
 
   const workstreamIds = [...new Set((artifactRows ?? []).map((a) => a.workstream_id))]
   const { data: workstreamRows } = workstreamIds.length
@@ -47,12 +61,23 @@ export default async function NewWikiArticlePage() {
     (workstreamRows ?? []).map((w) => [w.id, { name: w.name, projectName: projectNameById.get(w.project_id) ?? null }])
   )
 
-  const artifacts = (artifactRows ?? []).map((a) => ({
-    id: a.id,
-    title: a.title,
-    workstreamName: workstreamById.get(a.workstream_id)?.name ?? null,
-    projectName: workstreamById.get(a.workstream_id)?.projectName ?? null,
-  }))
+  // Same leak-prevention reasoning as the chunk filter above -- a curator
+  // with a personal grant on a restricted artifact can already see it here
+  // via workstream_artifacts_select_member's RLS, but shouldn't be able to
+  // publish it into an open Wiki article.
+  const restrictedArtifactIds = await getRestrictedResourceIds(
+    'workstream_artifact',
+    (artifactRows ?? []).map((a) => a.id)
+  )
+
+  const artifacts = (artifactRows ?? [])
+    .filter((a) => !restrictedArtifactIds.has(a.id))
+    .map((a) => ({
+      id: a.id,
+      title: a.title,
+      workstreamName: workstreamById.get(a.workstream_id)?.name ?? null,
+      projectName: workstreamById.get(a.workstream_id)?.projectName ?? null,
+    }))
 
   return (
     <div className="flex flex-col gap-6 max-w-2xl">

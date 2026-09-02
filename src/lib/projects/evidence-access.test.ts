@@ -7,7 +7,7 @@ vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: (...args: unknown[]) => createAdminClientMock(...args),
 }))
 
-const { classifyResource, EvidenceAccessValidationError, grantGroupMembership, revokeGroupMembership, setProjectInformationSensitivity } =
+const { classifyResource, EvidenceAccessValidationError, grantGroupMembership, revokeGroupMembership, setProjectInformationSensitivity, getRestrictedResourceIds } =
   await import('./evidence-access')
 
 beforeEach(() => {
@@ -158,5 +158,28 @@ describe('setProjectInformationSensitivity', () => {
     const supabase = createFakeSupabase({ projects: [{ data: null, error: new Error('no rows matched') }] })
 
     await expect(setProjectInformationSensitivity(fakeCtx(supabase), 'proj-1', 'restricted')).rejects.toThrow('no rows matched')
+  })
+})
+
+describe('getRestrictedResourceIds', () => {
+  it('returns only the ids with a non-project_general classification, regardless of any caller grant', async () => {
+    const admin = createFakeSupabase({
+      resource_access_policies: [{ data: [{ resource_id: 'src-2' }, { resource_id: 'src-3' }], error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+
+    const result = await getRestrictedResourceIds('knowledge_source', ['src-1', 'src-2', 'src-3'])
+
+    expect(result).toEqual(new Set(['src-2', 'src-3']))
+  })
+
+  it('returns an empty set without querying anything when given no ids', async () => {
+    const admin = createFakeSupabase({})
+    createAdminClientMock.mockReturnValue(admin)
+
+    const result = await getRestrictedResourceIds('knowledge_source', [])
+
+    expect(result).toEqual(new Set())
+    expect(admin._calls).toHaveLength(0)
   })
 })

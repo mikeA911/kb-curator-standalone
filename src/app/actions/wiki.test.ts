@@ -42,7 +42,12 @@ const adminSupabase = createFakeSupabase({
     { data: { content: 'some content' }, error: null },
   ],
 })
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => adminSupabase }))
+// Swappable so a single test can override just its own createAdminClient()
+// call (mockReturnValueOnce) without disturbing the shared adminSupabase
+// fixture every other test in this file relies on -- defaults preserve the
+// exact prior behavior.
+const createAdminClientMock = vi.fn(() => adminSupabase)
+vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => createAdminClientMock() }))
 
 const { setArticlePublicAction, approveArticleAction, createAIAssistedDraftAction, createManualArticleAction, attachProjectAndSetVisibilityAction } =
   await import('./wiki')
@@ -232,6 +237,79 @@ describe('createAIAssistedDraftAction — artifact-sourced (M6A Handbook path)',
 
     expect(result.ok).toBe(false)
     expect(!result.ok && result.error).toMatch(/AI-assisted draft generation failed \(groq: /)
+  })
+
+  it('refuses to synthesize from a restricted artifact, even though RLS already let this caller read it', async () => {
+    const supabase = createFakeSupabase({
+      workstream_artifacts: [{ data: { id: 'artifact-4', title: 'Restricted artifact', content: 'sensitive evidence' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+    createAdminClientMock.mockReturnValueOnce(
+      createFakeSupabase({ resource_access_policies: [{ data: [{ resource_id: 'artifact-4' }], error: null }] })
+    )
+
+    const result = await createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', workstreamArtifactId: 'artifact-4' })
+
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('restricted') })
+    expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('createAIAssistedDraftAction — chunk-sourced', () => {
+  const draftFields = {
+    title: 'Hybrid Retrieval',
+    short_description: 'A short overview',
+    quick_help: 'Quick help text',
+    content: '# Content',
+    implementation_notes: undefined,
+    limitations: undefined,
+  }
+
+  it('synthesizes from approved document chunks on success', async () => {
+    const supabase = createFakeSupabase({
+      document_chunks: [
+        {
+          data: [{ id: 'chunk-1', document_id: 'doc-1', chunk_text: 'evidence', source_page: 1, review_status: 'approved' }],
+          error: null,
+        },
+      ],
+      documents: [{ data: [{ id: 'doc-1', original_filename: 'guide.pdf', knowledge_source_id: 'src-1' }], error: null }],
+      wiki_articles: [
+        { data: null, error: null },
+        { data: { id: 'article-1', slug: 'hybrid-retrieval' }, error: null },
+      ],
+      wiki_versions: [{ data: { id: 'version-1' }, error: null }],
+      wiki_sources: [{ data: { id: 'source-1' }, error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+    const generateStructured = vi.fn().mockResolvedValue({ data: draftFields, model: 'test-model' })
+    getActiveStructuredOutputProviderMock.mockResolvedValue({ name: 'test-provider', generateStructured })
+    createAdminClientMock.mockReturnValueOnce(createFakeSupabase({ resource_access_policies: [{ data: [], error: null }] }))
+
+    const result = await createAIAssistedDraftAction({ topic: 'Hybrid Retrieval', category: 'platform_handbook', chunkIds: ['chunk-1'] })
+
+    expect(result).toEqual({ ok: true, articleId: 'article-1', slug: 'hybrid-retrieval' })
+  })
+
+  it('refuses to synthesize from a chunk whose source is restricted, even for a curator who could otherwise select it', async () => {
+    const supabase = createFakeSupabase({
+      document_chunks: [
+        {
+          data: [{ id: 'chunk-2', document_id: 'doc-2', chunk_text: 'sensitive evidence', source_page: 1, review_status: 'approved' }],
+          error: null,
+        },
+      ],
+      documents: [{ data: [{ id: 'doc-2', original_filename: 'pricing.pdf', knowledge_source_id: 'src-2' }], error: null }],
+    })
+    requireRoleMock.mockResolvedValue({ user: { id: 'curator-1' }, supabase })
+    createAdminClientMock.mockReturnValueOnce(
+      createFakeSupabase({ resource_access_policies: [{ data: [{ resource_id: 'src-2' }], error: null }] })
+    )
+
+    const result = await createAIAssistedDraftAction({ topic: 'x', category: 'platform_handbook', chunkIds: ['chunk-2'] })
+
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('restricted source') })
+    expect(getActiveStructuredOutputProviderMock).not.toHaveBeenCalled()
   })
 })
 

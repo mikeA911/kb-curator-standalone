@@ -185,6 +185,31 @@ export async function setProjectInformationSensitivity(
   if (error) throw error
 }
 
+// Which of the given resources are currently restricted (any classification
+// other than 'project_general'), regardless of the CALLER's own access to
+// them -- deliberately not the same question has_evidence_access answers.
+// Used to keep a restricted knowledge_source/workstream_artifact out of
+// Wiki-synthesis input even for a curator who personally has a grant on it
+// (src/app/(app)/wiki/new/page.tsx, src/app/actions/wiki.ts) -- publishing
+// it into an open Wiki article would leak it to everyone else regardless of
+// who did the publishing, so the check can't be "can I see it," only "is it
+// restricted at all." Admin client, same "safe metadata" shape as every
+// other read in this file -- returns which ids are restricted, never the
+// policy content itself.
+export async function getRestrictedResourceIds(resourceType: EvidenceResourceType, resourceIds: string[]): Promise<Set<string>> {
+  if (resourceIds.length === 0) return new Set()
+
+  const { data, error } = await createAdminClient()
+    .from('resource_access_policies')
+    .select('resource_id')
+    .eq('resource_type', resourceType)
+    .in('resource_id', resourceIds)
+    .neq('classification', 'project_general')
+  if (error) throw error
+
+  return new Set((data ?? []).map((r) => r.resource_id))
+}
+
 // --- Resource classification and grants ---------------------------------------
 
 export interface EvidenceResourceSummary {
