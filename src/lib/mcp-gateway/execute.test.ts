@@ -120,7 +120,7 @@ describe('executeConfirmedInvocation -- OrderLunch confirm_order_placement branc
             status: 'proposed',
             project_id: 'proj-1',
             tool_name: 'confirm_order_placement',
-            input: { approvalId: 'approval-1', totalMinor: 42000 },
+            input: { approvalId: 'approval-1', quoteHash: 'hash-1', totalMinor: 42000 },
             builder_integration_id: 'int-1',
             builder_integration_version_id: 'ver-1',
             correlated_amount: null,
@@ -148,7 +148,14 @@ describe('executeConfirmedInvocation -- OrderLunch confirm_order_placement branc
     await executeConfirmedInvocation(fakeCtx(supabase, { userId: 'owner-1', role: 'consultant' }), 'inv-1')
 
     expect(callOrder).toEqual(['confirm', 'place_order'])
-    expect(confirmApprovalMock).toHaveBeenCalledWith(expect.any(String), expect.anything(), 'delegated_user_identity', expect.anything(), 'approval-1')
+    expect(confirmApprovalMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      'delegated_user_identity',
+      expect.anything(),
+      'approval-1',
+      'hash-1'
+    )
 
     const placeOrderCall = connectAndCallToolMock.mock.calls[0]
     expect(placeOrderCall[2]).toBe('place_order')
@@ -168,7 +175,7 @@ describe('executeConfirmedInvocation -- OrderLunch confirm_order_placement branc
             status: 'proposed',
             project_id: 'proj-1',
             tool_name: 'confirm_order_placement',
-            input: { approvalId: 'approval-2' },
+            input: { approvalId: 'approval-2', quoteHash: 'hash-2' },
             builder_integration_id: 'int-1',
             builder_integration_version_id: 'ver-1',
             correlated_amount: null,
@@ -185,6 +192,36 @@ describe('executeConfirmedInvocation -- OrderLunch confirm_order_placement branc
     const result = await executeConfirmedInvocation(fakeCtx(supabase, { userId: 'owner-1' }), 'inv-2')
 
     expect(result.error).toBe('Approval is expired')
+    expect(connectAndCallToolMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses to confirm when quoteHash is missing from the stored invocation, rather than sending an empty/omitted value', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
+    const admin = createFakeSupabase({
+      builder_integration_invocations: [
+        {
+          data: {
+            id: 'inv-3',
+            status: 'proposed',
+            project_id: 'proj-1',
+            tool_name: 'confirm_order_placement',
+            input: { approvalId: 'approval-3' }, // no quoteHash
+            builder_integration_id: 'int-1',
+            builder_integration_version_id: 'ver-1',
+            correlated_amount: null,
+          },
+          error: null,
+        },
+      ],
+      builder_integrations: [{ data: { endpoint_url: 'https://orderlunch-mcp-showcase-production.up.railway.app/mcp' }, error: null }],
+      builder_integration_versions: [{ data: { credentials_policy: {}, auth_method: 'delegated_user_identity', spending_limits: {} }, error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+
+    const result = await executeConfirmedInvocation(fakeCtx(supabase, { userId: 'owner-1' }), 'inv-3')
+
+    expect(result.error).toBe('This confirmation is missing its quoteHash')
+    expect(confirmApprovalMock).not.toHaveBeenCalled()
     expect(connectAndCallToolMock).not.toHaveBeenCalled()
   })
 })

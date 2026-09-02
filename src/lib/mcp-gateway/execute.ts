@@ -405,9 +405,17 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
       // idempotency key"). The idempotency key is generated here, server-
       // side, never from anything the model or a prior stored value
       // supplied.
-      const approvalId = (invocation.input as { approvalId?: string }).approvalId
+      const { approvalId, quoteHash } = invocation.input as { approvalId?: string; quoteHash?: string }
       if (!approvalId) throw new Error('This confirmation is missing its approvalId')
-      await confirmApproval(integration.endpoint_url, version.credentials_policy, version.auth_method, { ...delegation, tools: ['request_order_approval'] }, approvalId)
+      if (!quoteHash) throw new Error('This confirmation is missing its quoteHash')
+      await confirmApproval(
+        integration.endpoint_url,
+        version.credentials_policy,
+        version.auth_method,
+        { ...delegation, tools: ['request_order_approval'] },
+        approvalId,
+        quoteHash
+      )
       const placeAuth = await resolveCredentials(version.credentials_policy, version.auth_method, { ...delegation, tools: ['place_order'] })
       output = await connectAndCallTool(integration.endpoint_url, placeAuth, 'place_order', { approvalId, idempotencyKey: crypto.randomUUID() })
     } else if (invocation.tool_name === ORDERLUNCH_CONFIRM_CANCELLATION_TOOL) {

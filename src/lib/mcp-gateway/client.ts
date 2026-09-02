@@ -56,14 +56,31 @@ function parseToolResultText(result: Awaited<ReturnType<Client['callTool']>>): u
   return JSON.parse(textBlock.text)
 }
 
+// A tool error's own `error` field varies by server: some return a bare
+// string, others (e.g. the live OrderLunch MCP Showcase, confirmed live --
+// { error: { code: 'NOT_FOUND', message: 'Order was not found', details: {} } })
+// nest it as an object. Extracting only the string case used to make
+// `new Error(message)` stringify the object itself, producing a useless
+// "[object Object]" everywhere this error surfaced (GatewayInvocationCard,
+// Ember's own turn). Handle both shapes.
+function extractToolErrorMessage(parsed: unknown): string | null {
+  if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+    const error = (parsed as { error?: unknown }).error
+    if (typeof error === 'string') return error
+    if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') {
+      return (error as { message: string }).message
+    }
+  }
+  return null
+}
+
 export async function connectAndCallTool(endpointUrl: string, auth: AuthHeader[], toolName: string, args: Record<string, unknown>): Promise<unknown> {
   return withClient(endpointUrl, auth, async (client) => {
     const result = await client.callTool({ name: toolName, arguments: args })
     if (result.isError) {
       let message = 'MCP tool call failed'
       try {
-        const parsed = parseToolResultText(result) as { error?: string }
-        if (parsed?.error) message = parsed.error
+        message = extractToolErrorMessage(parseToolResultText(result)) ?? message
       } catch {
         // Fall through to the generic message -- an error result whose text
         // block isn't parseable JSON is still a failure, just not one this

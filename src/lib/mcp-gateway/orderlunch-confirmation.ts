@@ -8,14 +8,21 @@ import { resolveCredentials, type DelegationRequestContext } from './credentials
 // here, server-side, never reachable from the model's own tool-call path
 // (see execute.ts's request_order_approval/cancel_order special-casing).
 //
-// Body shape ({ confirmed: true }) confirmed live against the real approval-
-// confirm endpoint (a bare {} or several other guesses returned 422
-// INVALID_REQUEST "confirmation control was not accepted"; { confirmed:
-// true } got past validation into a 409 business-logic response instead).
-// The cancellation-confirmation endpoint's exact body was never reached
-// live (blocked upstream -- see the confirmApproval comment below) --
-// assumed identical to its sibling for now, flagged for re-verification
-// once that's unblocked.
+// Approval-confirm body shape confirmed live against the real endpoint:
+// { quoteHash, confirmed: true } -- quoteHash is the value
+// request_order_approval's own output returns (already stashed onto the
+// confirm_order_placement invocation's input, see execute.ts), required by
+// the server's own OpenAPI contract. Its absence used to be silently
+// coerced into an empty string server-side, producing a misleading generic
+// 409 CONFLICT instead of a clear 422 -- root-caused with the colleague who
+// owns the deployment and fixed upstream (now returns 422 INVALID_REQUEST
+// for a missing/malformed quoteHash instead).
+//
+// The cancellation-confirmation endpoint has now been live-verified against
+// a real placed order: request body { confirmed: true } (same shape as
+// approval-confirm), response { id, orderId, expiresAt, confirmedAt } -- its
+// identity field is `id`, not `confirmationId`, same surprise as
+// approval-confirm's own response shape below.
 //
 // Base URL is derived from the integration's own endpointUrl (strip the
 // /mcp suffix) rather than hardcoded, so this stays reusable if a second
@@ -47,25 +54,23 @@ async function restPost(url: string, auth: AuthHeader[], body: Record<string, un
   return (parsed ?? {}) as Record<string, unknown>
 }
 
-// Live-verified as of this pass: known blocked by what looks like a genuine
-// upstream bug -- every request_order_approval observed so far has an
-// expiresAt only ~1 second after creation (not the ~10 minutes its own
-// quote's expiry would suggest), so every real confirm attempt so far has
-// returned 409 CONFLICT ("Approval is expired, already approved/used,
-// outside this user/project, or does not match the quote") even when
-// confirmed within roughly a second of creation. Flagged to the colleague
-// who owns the Railway deployment; this function's shape (endpoint, method,
-// body) is still believed correct, just not yet provably successful
-// end-to-end.
+// Live-verified end-to-end: the earlier upstream bug (approvals expiring
+// ~1s after creation instead of the ~10 minutes their quote implied, so
+// every real confirm attempt 409-CONFLICTed) no longer reproduces -- a real
+// request_order_approval's expiresAt is now minutes out, as expected. A full
+// prepare_quotation -> confirm -> place_order -> idempotent-retry ->
+// get_order_status chain succeeds against the live server with a real
+// order id and "placed" state.
 export async function confirmApproval(
   mcpEndpointUrl: string,
   credentialsPolicy: Record<string, unknown>,
   authMethod: string | null,
   delegation: DelegationRequestContext,
-  approvalId: string
+  approvalId: string,
+  quoteHash: string
 ): Promise<Record<string, unknown>> {
   const auth = await resolveCredentials(credentialsPolicy, authMethod, delegation)
-  return restPost(`${restBaseUrl(mcpEndpointUrl)}/approvals/${approvalId}/confirm`, auth, { confirmed: true })
+  return restPost(`${restBaseUrl(mcpEndpointUrl)}/approvals/${approvalId}/confirm`, auth, { quoteHash, confirmed: true })
 }
 
 export async function confirmCancellation(
@@ -77,9 +82,12 @@ export async function confirmCancellation(
 ): Promise<{ confirmationId: string }> {
   const auth = await resolveCredentials(credentialsPolicy, authMethod, delegation)
   const result = await restPost(`${restBaseUrl(mcpEndpointUrl)}/orders/${orderId}/cancellation-confirmations`, auth, { confirmed: true })
-  const confirmationId = typeof result.confirmationId === 'string' ? result.confirmationId : null
+  // Live-verified: the response's identity field is `id`, matching
+  // approval-confirm's own shape -- not `confirmationId` as the spec's prose
+  // implied.
+  const confirmationId = typeof result.id === 'string' ? result.id : null
   if (!confirmationId) {
-    throw new OrderLunchConfirmationError('Cancellation-confirmation endpoint did not return a confirmationId')
+    throw new OrderLunchConfirmationError('Cancellation-confirmation endpoint did not return an id')
   }
   return { confirmationId }
 }
