@@ -6,6 +6,7 @@ import { connectAndCallTool } from './client'
 import { resolveCredentials } from './credentials'
 import { checkSpendingLimit, extractCorrelatedAmount } from './spending'
 import { requiresConfirmation } from './risk'
+import { computeDelegationRoles, isTestOperatorOnlyTool } from './delegation'
 import type { GatewayToolContext } from './discovery'
 
 // The first code-level "propose, then confirm, then execute" gate in this
@@ -39,11 +40,28 @@ export async function runGatewayToolCall(
   const { projectId, conversationId, toolContext, input } = params
   const admin = createAdminClient()
 
+  // App-side gate, not just discovery-time filtering -- discovery already
+  // excludes a test-operator-only tool from what's offered to a non-operator
+  // (src/lib/mcp-gateway/discovery.ts), but a role can change between
+  // discovery and this call within the same turn; fail closed rather than
+  // trust a snapshot.
+  if (isTestOperatorOnlyTool(toolContext.realToolName) && !toolContext.delegationRoles.includes('test_operator')) {
+    throw new Error('This tool requires the test_operator role, which this caller does not have')
+  }
+
   if (!requiresConfirmation(toolContext.riskClassification)) {
     let output: unknown
     let errorMessage: string | null = null
     try {
-      const auth = resolveCredentials(toolContext.credentialsPolicy, toolContext.authMethod)
+      // Narrowly scoped to exactly the one tool being called -- least
+      // privilege, and avoids needing to re-derive the integration's full
+      // tool list at call time (see credentials.ts/delegation.ts).
+      const auth = await resolveCredentials(toolContext.credentialsPolicy, toolContext.authMethod, {
+        userId: toolContext.callerUserId,
+        projectId: toolContext.projectId,
+        tools: [toolContext.realToolName],
+        roles: toolContext.delegationRoles,
+      })
       output = await connectAndCallTool(toolContext.endpointUrl, auth, toolContext.realToolName, input)
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err)
@@ -139,6 +157,24 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
 
   await requireProjectAccess(ctx, invocation.project_id)
 
+  // Computed once, reused below for both the test-operator gate and the
+  // delegation token minted at actual call time.
+  const { data: confirmerMembership } = await ctx.supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', invocation.project_id)
+    .eq('user_id', ctx.user.id)
+    .eq('status', 'active')
+    .maybeSingle()
+  const confirmerRoles = computeDelegationRoles({
+    projectRole: confirmerMembership?.role ?? null,
+    platformRole: ctx.profile.role,
+    isProjectMember: !!confirmerMembership,
+  })
+  if (isTestOperatorOnlyTool(invocation.tool_name) && !confirmerRoles.includes('test_operator')) {
+    throw new Error('This tool requires the test_operator role, which this caller does not have')
+  }
+
   const { data: integration } = await admin.from('builder_integrations').select('endpoint_url').eq('id', invocation.builder_integration_id).single()
   const { data: version } = await admin
     .from('builder_integration_versions')
@@ -164,7 +200,12 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
   }
 
   try {
-    const auth = resolveCredentials(version.credentials_policy, version.auth_method)
+    const auth = await resolveCredentials(version.credentials_policy, version.auth_method, {
+      userId: ctx.user.id,
+      projectId: invocation.project_id,
+      tools: [invocation.tool_name],
+      roles: confirmerRoles,
+    })
     const output = await connectAndCallTool(integration.endpoint_url, auth, invocation.tool_name, invocation.input)
     await admin
       .from('builder_integration_invocations')

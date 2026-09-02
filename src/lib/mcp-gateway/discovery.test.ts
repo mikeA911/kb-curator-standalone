@@ -25,7 +25,7 @@ describe('makeGatewayToolName / parseGatewayToolName', () => {
 describe('listAvailableTools', () => {
   it('returns nothing and makes no further queries when the Project has no granted integrations', async () => {
     const fakeSupabase = createFakeSupabase({ builder_integration_project_availability: [{ data: [], error: null }] })
-    const result = await listAvailableTools(fakeSupabase as never, 'proj-1')
+    const result = await listAvailableTools(fakeSupabase as never, 'proj-1', { userId: 'user-1', platformRole: 'consultant' })
     expect(result.toolSpecs).toEqual([])
     expect(connectAndListToolsMock).not.toHaveBeenCalled()
   })
@@ -60,9 +60,10 @@ describe('listAvailableTools', () => {
           error: null,
         },
       ],
+      project_members: [{ data: { role: 'consultant' }, error: null }],
     })
 
-    const result = await listAvailableTools(fakeSupabase as never, 'proj-1')
+    const result = await listAvailableTools(fakeSupabase as never, 'proj-1', { userId: 'user-1', platformRole: 'consultant' })
 
     expect(result.toolSpecs.map((t) => t.name)).toEqual(['gw__orderlunch-mcp__get_menu', 'gw__orderlunch-mcp__place_order'])
     const getMenuContext = result.contextByToolName.get('gw__orderlunch-mcp__get_menu')
@@ -77,7 +78,7 @@ describe('listAvailableTools', () => {
       builder_integrations: [{ data: [], error: null }], // simulates the status='active'/endpoint_url-not-null filter excluding it
       builder_integration_versions: [{ data: [], error: null }],
     })
-    const result = await listAvailableTools(fakeSupabase as never, 'proj-1')
+    const result = await listAvailableTools(fakeSupabase as never, 'proj-1', { userId: 'user-1', platformRole: 'consultant' })
     expect(result.toolSpecs).toEqual([])
     expect(connectAndListToolsMock).not.toHaveBeenCalled()
   })
@@ -106,9 +107,48 @@ describe('listAvailableTools', () => {
           error: null,
         },
       ],
+      project_members: [{ data: { role: 'consultant' }, error: null }],
     })
 
-    const result = await listAvailableTools(fakeSupabase as never, 'proj-1')
+    const result = await listAvailableTools(fakeSupabase as never, 'proj-1', { userId: 'user-1', platformRole: 'consultant' })
     expect(result.toolSpecs).toEqual([])
+  })
+
+  it('excludes a test-operator-only tool from a non-admin caller, but includes it for a platform admin who is also a Project member', async () => {
+    const integrationRows = {
+      builder_integration_project_availability: [{ data: [{ builder_integration_id: 'int-1' }], error: null }],
+      builder_integrations: [
+        { data: [{ id: 'int-1', slug: 'orderlunch-mcp', protocol: 'mcp', endpoint_url: 'http://localhost:8787/mcp', active_version_id: 'v1', status: 'active' }], error: null },
+      ],
+      builder_integration_versions: [
+        {
+          data: [
+            {
+              id: 'v1',
+              builder_integration_id: 'int-1',
+              risk_classification: 'read_only',
+              credentials_policy: {},
+              auth_method: null,
+              spending_limits: {},
+              approval_policy: {},
+              certification_status: 'sandbox_tested',
+            },
+          ],
+          error: null,
+        },
+      ],
+    }
+    connectAndListToolsMock.mockResolvedValue([
+      { name: 'get_menu', description: 'Get the menu' },
+      { name: 'advance_order_state', description: 'Test-only: advance an order to the next state' },
+    ])
+
+    const nonAdmin = createFakeSupabase({ ...integrationRows, project_members: [{ data: { role: 'consultant' }, error: null }] })
+    const nonAdminResult = await listAvailableTools(nonAdmin as never, 'proj-1', { userId: 'user-1', platformRole: 'consultant' })
+    expect(nonAdminResult.toolSpecs.map((t) => t.name)).toEqual(['gw__orderlunch-mcp__get_menu'])
+
+    const adminMember = createFakeSupabase({ ...integrationRows, project_members: [{ data: { role: 'consultant' }, error: null }] })
+    const adminResult = await listAvailableTools(adminMember as never, 'proj-1', { userId: 'admin-1', platformRole: 'admin' })
+    expect(adminResult.toolSpecs.map((t) => t.name)).toEqual(['gw__orderlunch-mcp__get_menu', 'gw__orderlunch-mcp__advance_order_state'])
   })
 })

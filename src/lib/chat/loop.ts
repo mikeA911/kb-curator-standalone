@@ -301,7 +301,9 @@ export async function runAssistantTurn(
   // availability has no concept of a non-Project-bound grant) -- discovered
   // once per turn here, alongside the fixed tool list, not re-discovered
   // per tool call inside the iteration loop below.
-  const gatewayDiscovery = resolvedProjectId ? await listAvailableTools(ctx.supabase, resolvedProjectId) : { toolSpecs: [], contextByToolName: new Map() }
+  const gatewayDiscovery = resolvedProjectId
+    ? await listAvailableTools(ctx.supabase, resolvedProjectId, { userId: ctx.user.id, platformRole: ctx.profile.role })
+    : { toolSpecs: [], contextByToolName: new Map() }
   const systemPrompt = feedbackContext
     ? buildFeedbackSystemPrompt(feedbackContext)
     : projectContext

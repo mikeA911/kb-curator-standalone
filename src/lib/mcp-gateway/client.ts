@@ -20,8 +20,13 @@ export interface AuthHeader {
   value: string
 }
 
-async function withClient<T>(endpointUrl: string, auth: AuthHeader | null, fn: (client: Client) => Promise<T>): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl), auth ? { requestInit: { headers: { [auth.header]: auth.value } } } : undefined)
+// A list, not a single pair -- some registered integrations (e.g. the live
+// OrderLunch MCP Showcase) require more than one header simultaneously
+// (a static gateway API key plus a per-call delegation bearer token). An
+// empty array behaves exactly like the old `null` -- no auth headers sent.
+async function withClient<T>(endpointUrl: string, auth: AuthHeader[], fn: (client: Client) => Promise<T>): Promise<T> {
+  const headers = auth.length > 0 ? Object.fromEntries(auth.map((a) => [a.header, a.value])) : undefined
+  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl), headers ? { requestInit: { headers } } : undefined)
   const client = new Client({ name: 'kb-sandbox-agent-gateway', version: '0.1.0' })
   await client.connect(transport)
   try {
@@ -31,7 +36,7 @@ async function withClient<T>(endpointUrl: string, auth: AuthHeader | null, fn: (
   }
 }
 
-export async function connectAndListTools(endpointUrl: string, auth: AuthHeader | null): Promise<McpToolSummary[]> {
+export async function connectAndListTools(endpointUrl: string, auth: AuthHeader[]): Promise<McpToolSummary[]> {
   return withClient(endpointUrl, auth, async (client) => {
     const { tools } = await client.listTools()
     return tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
@@ -51,7 +56,7 @@ function parseToolResultText(result: Awaited<ReturnType<Client['callTool']>>): u
   return JSON.parse(textBlock.text)
 }
 
-export async function connectAndCallTool(endpointUrl: string, auth: AuthHeader | null, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+export async function connectAndCallTool(endpointUrl: string, auth: AuthHeader[], toolName: string, args: Record<string, unknown>): Promise<unknown> {
   return withClient(endpointUrl, auth, async (client) => {
     const result = await client.callTool({ name: toolName, arguments: args })
     if (result.isError) {

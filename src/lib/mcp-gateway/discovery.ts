@@ -4,6 +4,8 @@ import type { BuilderIntegrationRiskClassification, Database, ExternalAgentProto
 import type { ToolSpec } from '@/lib/ai/provider'
 import { connectAndListTools } from './client'
 import { classifyToolRisk } from './risk'
+import { resolveCredentials } from './credentials'
+import { computeDelegationRoles, isTestOperatorOnlyTool } from './delegation'
 
 // Every Gateway-dispatched tool name is namespaced gw__<integration-slug>__
 // <real-tool-name>, both to avoid collisions between two registered
@@ -36,6 +38,13 @@ export interface GatewayToolContext {
   authMethod: string | null
   spendingLimits: { perOrderMax?: number; dailyMax?: number; currency?: string }
   approvalPolicy: { requiresHumanConfirmation?: boolean; confirmationFields?: string[] }
+  // The caller's delegation roles for this Project, computed once at
+  // discovery time (see listAvailableTools) -- reused at actual call time
+  // (execute.ts) so a fresh, narrowly-scoped token is minted per call
+  // without re-querying project_members for the same answer twice.
+  callerUserId: string
+  projectId: string
+  delegationRoles: string[]
 }
 
 export interface GatewayDiscoveryResult {
@@ -50,7 +59,11 @@ export interface GatewayDiscoveryResult {
 // not a hard architectural constraint (see the plan's own design note).
 const DISCOVERABLE_STATUSES = ['sandbox_tested', 'security_reviewed', 'outlet_accepted', 'production_approved']
 
-export async function listAvailableTools(supabase: SupabaseClient<Database>, projectId: string): Promise<GatewayDiscoveryResult> {
+export async function listAvailableTools(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+  caller: { userId: string; platformRole: string }
+): Promise<GatewayDiscoveryResult> {
   const { data: availability, error } = await supabase
     .from('builder_integration_project_availability')
     .select('builder_integration_id')
@@ -85,6 +98,25 @@ export async function listAvailableTools(supabase: SupabaseClient<Database>, pro
     .in('certification_status', DISCOVERABLE_STATUSES)
   if (versionsError) throw versionsError
 
+  // Computed once, reused for every integration below -- the caller's role
+  // on THIS Project doesn't vary per integration. Needed to mint a
+  // discovery-scoped delegation token (delegated_user_identity integrations
+  // require auth on every MCP request, including tools/list, not just
+  // gated calls) and to filter test-operator-only tools out of what Ember
+  // is even offered.
+  const { data: membership } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', projectId)
+    .eq('user_id', caller.userId)
+    .eq('status', 'active')
+    .maybeSingle()
+  const roles = computeDelegationRoles({
+    projectRole: membership?.role ?? null,
+    platformRole: caller.platformRole,
+    isProjectMember: !!membership,
+  })
+
   const toolSpecs: ToolSpec[] = []
   const contextByToolName = new Map<string, GatewayToolContext>()
 
@@ -94,7 +126,18 @@ export async function listAvailableTools(supabase: SupabaseClient<Database>, pro
 
     let discovered: Awaited<ReturnType<typeof connectAndListTools>>
     try {
-      discovered = await connectAndListTools(integration.endpoint_url, null)
+      // Discovery never calls a specific tool, so the delegation token's own
+      // `tools` claim is intentionally empty here -- a real, narrowly-scoped
+      // token (naming the one tool being invoked) is minted fresh at actual
+      // call time instead (src/lib/mcp-gateway/execute.ts), never reused
+      // from this one.
+      const auth = await resolveCredentials(version.credentials_policy, version.auth_method, {
+        userId: caller.userId,
+        projectId,
+        tools: [],
+        roles,
+      })
+      discovered = await connectAndListTools(integration.endpoint_url, auth)
     } catch {
       // An unreachable/misbehaving integration must never break Ember's
       // whole turn -- skip it silently from this turn's tool list (same
@@ -104,6 +147,10 @@ export async function listAvailableTools(supabase: SupabaseClient<Database>, pro
     }
 
     for (const tool of discovered) {
+      // Excluded from what Ember can even see/call, not just from what the
+      // remote server would separately reject -- see delegation.ts.
+      if (isTestOperatorOnlyTool(tool.name) && !roles.includes('test_operator')) continue
+
       const gatewayName = makeGatewayToolName(integration.slug, tool.name)
       toolSpecs.push({ name: gatewayName, description: tool.description ?? tool.name, parameters: tool.inputSchema ?? { type: 'object' } })
       contextByToolName.set(gatewayName, {
@@ -118,6 +165,9 @@ export async function listAvailableTools(supabase: SupabaseClient<Database>, pro
         authMethod: version.auth_method,
         spendingLimits: version.spending_limits,
         approvalPolicy: version.approval_policy,
+        callerUserId: caller.userId,
+        projectId,
+        delegationRoles: roles,
       })
     }
   }
