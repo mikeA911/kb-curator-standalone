@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
 import { MemberDirectory } from '@/components/projects/MemberDirectory'
 import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
+import { ProjectStarterPromptForm } from '@/components/projects/ProjectStarterPromptForm'
 import { ProjectStatusSection } from '@/components/projects/ProjectStatusSection'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
@@ -224,6 +225,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {user && viewerMembership && <MemberDirectory projectId={project.id} members={directoryMembers} viewerUserId={user.id} />}
 
       <ProjectGoalForm projectId={project.id} goal={project.goal} canEdit={canManage} />
+      <ProjectStarterPromptForm projectId={project.id} starterPrompt={project.starter_prompt} canEdit={canCurateWorkstreams} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge</h2>

@@ -552,6 +552,24 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
       })
   }
 
+  // Curator/owner-set per-project prompt (Sandz Pilot Meeting Brief's
+  // onboarding pattern) -- a clickable suggestion shown across every
+  // empty-conversation state (first-ever use, "welcome back", and the
+  // plain empty state), not just one of them, since a returning user
+  // ("welcome back") is the common case for anyone who has used Ember
+  // before, not an edge case.
+  const projectStarterPromptChip =
+    !feedbackCategory && projectId && projectContext?.starterPrompt ? (
+      <button
+        type="button"
+        onClick={() => send(projectContext.starterPrompt!)}
+        disabled={isPending}
+        className="self-start rounded-full border border-zinc-300 px-2.5 py-1 text-xs text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+      >
+        {projectContext.starterPrompt}
+      </button>
+    ) : null
+
   return (
     <div ref={ref} className={embedded ? '' : 'fixed bottom-4 right-4 z-50'}>
       {open ? (
@@ -812,18 +830,27 @@ export function ChatPanel({ projectId, embedded, onClose }: { projectId?: string
                       {prompt}
                     </button>
                   ))}
+                  {projectStarterPromptChip}
                 </div>
               </div>
             )}
-            {!showFeedbackChooser && showShortWelcome && messages.length === 0 && <p className="text-sm text-zinc-500">{SHORT_WELCOME}</p>}
+            {!showFeedbackChooser && showShortWelcome && messages.length === 0 && (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm text-zinc-500">{SHORT_WELCOME}</p>
+                {projectStarterPromptChip}
+              </div>
+            )}
             {!showFeedbackChooser && historyLoaded && !showOnboarding && !showShortWelcome && messages.length === 0 && (
-              <p className="text-sm text-zinc-500">
-                {feedbackCategory
-                  ? 'Tell Ember about it below.'
-                  : projectId
-                    ? `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
-                    : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
-              </p>
+              <div className="flex flex-col gap-2">
+                <p className="text-sm text-zinc-500">
+                  {feedbackCategory
+                    ? 'Tell Ember about it below.'
+                    : projectId
+                      ? `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
+                      : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
+                </p>
+                {projectStarterPromptChip}
+              </div>
             )}
             {!showFeedbackChooser && messages.map((m, i) =>
               m.role === 'user' ? (

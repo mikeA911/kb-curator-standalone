@@ -640,6 +640,12 @@ export interface Project {
   // (see 20260829120001_project_information_sensitivity.sql). null =
   // unclassified, treated as 'internal' by src/lib/ai/sensitivity.ts.
   information_sensitivity: InformationSensitivity | null
+  // A short, clickable prompt Ember offers when opened bound to this
+  // project (ChatPanel.tsx's project-bound empty state). Curator/owner/
+  // admin-settable, see updateProjectStarterPrompt -- deliberately not
+  // gated by the same RLS as the rest of this row (see that function's
+  // comment). 20260904110001_project_starter_prompt.sql.
+  starter_prompt: string | null
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -1847,6 +1853,7 @@ export type ProjectInsert = Omit<
   | 'published_at'
   | 'published_by'
   | 'goal'
+  | 'starter_prompt'
   | 'public_full_detail'
   | 'information_sensitivity'
   | 'created_via'
@@ -1862,6 +1869,7 @@ export type ProjectInsert = Omit<
       | 'published_at'
       | 'published_by'
       | 'goal'
+      | 'starter_prompt'
       | 'public_full_detail'
       | 'information_sensitivity'
       | 'created_via'

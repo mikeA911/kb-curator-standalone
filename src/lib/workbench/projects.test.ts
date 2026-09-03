@@ -4,6 +4,8 @@ import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 vi.mock('@/lib/knowledge-bases', () => ({ requireActiveKnowledgeBase: vi.fn() }))
 const createUserMock = vi.fn().mockResolvedValue({ data: { user: { id: 'new-user-1' } }, error: null })
 const adminInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
+const adminUpdateMock = vi.fn()
+const adminUpdateEqMock = vi.fn().mockResolvedValue({ error: null })
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: () => ({
     auth: { admin: { createUser: (...args: unknown[]) => createUserMock(...args) } },
@@ -16,11 +18,15 @@ vi.mock('@/lib/supabase/admin', () => ({
       // client -- a no-op insert here keeps that logging silent in tests
       // that don't care about it, rather than a swallowed-but-noisy error.
       insert: (...args: unknown[]) => adminInsertMock(...args),
+      update: (...args: unknown[]) => {
+        adminUpdateMock(...args)
+        return { eq: (...eqArgs: unknown[]) => adminUpdateEqMock(...eqArgs) }
+      },
     }),
   }),
 }))
 
-const { createProject, detachKnowledgeBase, searchProjects, createAndAddProjectMember } = await import('./projects')
+const { createProject, detachKnowledgeBase, searchProjects, createAndAddProjectMember, updateProjectStarterPrompt } = await import('./projects')
 
 function ctxWith(supabase: unknown) {
   return { user: { id: 'user-1', email: 'owner@example.com' }, profile: { role: 'consultant' }, supabase } as never
@@ -237,5 +243,56 @@ describe('createAndAddProjectMember', () => {
     expect(adminInsertMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'new-user-1', email: 'new-hire@sandz.example', role: 'member' }))
     const memberInsert = supabase._calls.find((c) => c.table === 'project_members' && c.method === 'insert')
     expect(memberInsert?.args).toEqual({ project_id: 'project-1', user_id: 'new-user-1', role: 'curator', status: 'active' })
+  })
+})
+
+// 2026-09-04: the Sandz Pilot Meeting Brief's onboarding pattern calls for
+// a per-project starter prompt Ember offers -- deliberately curator-
+// inclusive (owner/curator/admin), not projects_update_managers' owner-only
+// RLS, so this writes via the admin client after an explicit check.
+describe('updateProjectStarterPrompt', () => {
+  beforeEach(() => {
+    adminUpdateMock.mockClear()
+    adminUpdateEqMock.mockClear().mockResolvedValue({ error: null })
+  })
+
+  function adminCtxWith(supabase: unknown) {
+    return { user: { id: 'admin-1' }, profile: { role: 'admin' }, supabase } as never
+  }
+
+  it('rejects a non-admin caller with no owner/curator membership on the project', async () => {
+    const supabase = createFakeSupabase({})
+    await expect(updateProjectStarterPrompt(ctxWith(supabase), 'project-1', 'Ask me anything')).rejects.toThrow(
+      "owner or curator role"
+    )
+    expect(adminUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-admin caller whose project role is consultant', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'consultant' }, error: null }] })
+    await expect(updateProjectStarterPrompt(ctxWith(supabase), 'project-1', 'Ask me anything')).rejects.toThrow(
+      "owner or curator role"
+    )
+    expect(adminUpdateMock).not.toHaveBeenCalled()
+  })
+
+  it('allows an active project curator to set it', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'curator' }, error: null }] })
+    await updateProjectStarterPrompt(ctxWith(supabase), 'project-1', '  Ask about the pilot  ')
+    expect(adminUpdateMock).toHaveBeenCalledWith({ starter_prompt: 'Ask about the pilot' })
+    expect(adminUpdateEqMock).toHaveBeenCalledWith('id', 'project-1')
+  })
+
+  it('allows a platform admin without any project membership check', async () => {
+    const supabase = createFakeSupabase({})
+    await updateProjectStarterPrompt(adminCtxWith(supabase), 'project-1', 'Ask about the pilot')
+    expect(adminUpdateMock).toHaveBeenCalledWith({ starter_prompt: 'Ask about the pilot' })
+    expect(supabase._calls.find((c) => c.table === 'project_members')).toBeUndefined()
+  })
+
+  it('stores null for a blank/whitespace-only value, clearing the prompt', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
+    await updateProjectStarterPrompt(ctxWith(supabase), 'project-1', '   ')
+    expect(adminUpdateMock).toHaveBeenCalledWith({ starter_prompt: null })
   })
 })

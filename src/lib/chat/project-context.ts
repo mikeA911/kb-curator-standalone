@@ -20,6 +20,9 @@ export interface ProjectContext {
   informationSensitivity: InformationSensitivity | null
   knowledgeBases: { id: string; name: string }[]
   wikiArticles: { id: string; slug: string; title: string }[]
+  // A short, clickable prompt Ember offers when opened bound to this
+  // project (ChatPanel.tsx) -- curator/owner-set, see updateProjectStarterPrompt.
+  starterPrompt: string | null
 }
 
 // Same bar as viewing the project page itself (is_project_member, not the
@@ -29,7 +32,7 @@ export interface ProjectContext {
 export async function getProjectContext(ctx: WorkbenchCallerContext, projectId: string): Promise<ProjectContext | null> {
   const { data: project, error } = await ctx.supabase
     .from('projects')
-    .select('id, name, goal, information_sensitivity')
+    .select('id, name, goal, information_sensitivity, starter_prompt')
     .eq('id', projectId)
     .maybeSingle()
   if (error) throw error
@@ -50,6 +53,7 @@ export async function getProjectContext(ctx: WorkbenchCallerContext, projectId: 
       .map((l) => l.article)
       .filter((a): a is { id: string; slug: string; title: string; status: string; visibility_scope: string } => a !== null)
       .map((a) => ({ id: a.id, slug: a.slug, title: a.title })),
+    starterPrompt: project.starter_prompt,
   }
 }
 

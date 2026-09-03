@@ -287,6 +287,27 @@ export async function updateProjectGoal(ctx: WorkbenchCallerContext, projectId: 
   if (error) throw error
 }
 
+// A short, clickable prompt Ember offers when opened bound to this project
+// (ChatPanel.tsx's project-bound empty state) -- the Sandz Pilot Meeting
+// Brief's onboarding pattern explicitly calls for one per Q&A/feedback
+// Project (e.g. "Ask anything about the Sandz pilot, suggest an
+// improvement, or report a problem"). Deliberately owner/curator/admin, not
+// projects_update_managers' owner-only RLS -- a project curator should be
+// able to set this for their own team's Project, so this writes via the
+// admin client after an explicit check, same pattern as
+// createAndAddProjectMember/approveSourceSubmission.
+export async function updateProjectStarterPrompt(ctx: WorkbenchCallerContext, projectId: string, starterPrompt: string): Promise<void> {
+  if (ctx.profile.role !== 'admin') {
+    const role = await getActiveProjectRole(ctx, projectId)
+    if (role !== 'owner' && role !== 'curator') {
+      throw new AuthError('Requires this project\'s owner or curator role (or platform admin) to set its starter prompt')
+    }
+  }
+  const admin = createAdminClient()
+  const { error } = await admin.from('projects').update({ starter_prompt: starterPrompt.trim() || null }).eq('id', projectId)
+  if (error) throw error
+}
+
 // Backs the Ember search_projects tool (docs/dev-request-ember-onboarding-
 // capability-gaps.md, item 1) -- lets Ember discover an existing project
 // before proposing to create a new one, closing the gap where she had no

@@ -79,6 +79,12 @@ export async function updateProjectGoalAction(projectId: string, goal: string) {
   revalidatePath(`/projects/${projectId}`)
 }
 
+export async function updateProjectStarterPromptAction(projectId: string, starterPrompt: string) {
+  const ctx = await requireUser()
+  await workbench.updateProjectStarterPrompt(ctx, projectId, starterPrompt)
+  revalidatePath(`/projects/${projectId}`)
+}
+
 export async function searchProfilesByEmailAction(query: string): Promise<{ id: string; email: string }[]> {
   const ctx = await requireUser()
   return workbench.searchProfilesByEmail(ctx, query)
