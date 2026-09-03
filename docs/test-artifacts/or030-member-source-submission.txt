@@ -1,0 +1,7 @@
+OR-030 onboarding regression test source
+
+This is a harmless synthetic document created solely to verify that an everyday
+Project member can submit a candidate knowledge source for curator review.
+
+Test assertion: Ember should not retrieve this statement until a curator has
+approved the submission.

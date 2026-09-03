@@ -417,6 +417,76 @@ export async function createAndAddProjectMember(
   if (memberError) throw memberError
 }
 
+const EMAIL_LIKE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export interface BulkAddResultRow {
+  email: string
+  status: 'added' | 'created' | 'skipped' | 'failed'
+  password?: string
+  error?: string
+}
+
+// "Add all Sandz employees" (e.g. onboarding a whole department to a Sandz
+// HR project) one email at a time is real friction -- this is the same
+// batching a curator would otherwise do by hand, just sequential calls to
+// addProjectMember/createAndAddProjectMember so authorization (including
+// the non-admin platformRole cap on new accounts) stays byte-for-byte the
+// same as the single-add path, never a second, drifting implementation.
+// Duplicate/blank/malformed entries are reported per-row, not silently
+// dropped, so the curator can see exactly what happened to every line they
+// pasted or uploaded.
+export async function bulkAddProjectMembers(
+  ctx: WorkbenchCallerContext,
+  input: {
+    projectId: string
+    emails: string[]
+    projectRole: ProjectRole
+    platformRoleForNew: 'member' | 'consultant' | 'curator' | 'admin'
+  }
+): Promise<BulkAddResultRow[]> {
+  const results: BulkAddResultRow[] = []
+  const seen = new Set<string>()
+
+  for (const raw of input.emails) {
+    const email = raw.trim()
+    if (!email) continue
+    if (seen.has(email)) {
+      results.push({ email, status: 'skipped', error: 'Duplicate in this batch' })
+      continue
+    }
+    seen.add(email)
+    if (!EMAIL_LIKE.test(email)) {
+      results.push({ email, status: 'failed', error: 'Not a valid email address' })
+      continue
+    }
+
+    try {
+      await addProjectMember(ctx, input.projectId, email, input.projectRole)
+      results.push({ email, status: 'added' })
+    } catch (err) {
+      if (err instanceof ProjectValidationError && err.message === `No account found for ${email}`) {
+        const password = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+        try {
+          await createAndAddProjectMember(ctx, {
+            projectId: input.projectId,
+            email,
+            password,
+            projectRole: input.projectRole,
+            platformRole: input.platformRoleForNew,
+          })
+          results.push({ email, status: 'created', password })
+        } catch (createErr) {
+          results.push({ email, status: 'failed', error: createErr instanceof Error ? createErr.message : 'Failed to create account' })
+        }
+      } else {
+        results.push({ email, status: 'failed', error: err instanceof Error ? err.message : 'Failed to add' })
+      }
+    }
+  }
+
+  return results
+}
+
 export async function updateProjectMemberRole(ctx: WorkbenchCallerContext, memberId: string, role: ProjectRole) {
   const { error } = await ctx.supabase.from('project_members').update({ role }).eq('id', memberId)
   if (error) throw error

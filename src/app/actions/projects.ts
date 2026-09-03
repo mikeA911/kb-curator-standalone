@@ -112,6 +112,18 @@ export async function createAndAddProjectMemberAction(input: {
   revalidatePath(`/projects/${input.projectId}/members`)
 }
 
+export async function bulkAddProjectMembersAction(input: {
+  projectId: string
+  emails: string[]
+  projectRole: ProjectRole
+  platformRoleForNew: 'member' | 'consultant' | 'curator' | 'admin'
+}) {
+  const ctx = await requireUser()
+  const results = await workbench.bulkAddProjectMembers(ctx, input)
+  revalidatePath(`/projects/${input.projectId}/members`)
+  return results
+}
+
 export async function updateProjectMemberRoleAction(memberId: string, projectId: string, role: ProjectRole) {
   const ctx = await requireUser()
   await workbench.updateProjectMemberRole(ctx, memberId, role)
