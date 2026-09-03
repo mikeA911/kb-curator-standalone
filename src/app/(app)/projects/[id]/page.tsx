@@ -174,6 +174,45 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     (p) => p.requirement_status === 'required' && !assignedTypes.has(p.approval_type)
   )
 
+  // Real, recurring RLS-visibility gap found live 2026-09-04:
+  // project_knowledge_bases and project_wiki_articles both deliberately
+  // have no admin bypass on SELECT (20260824210001_project_junction_
+  // manage_policies_no_select_leak.sql -- closing a real leak where an
+  // admin's *blanket, table-wide* bypass let them enumerate every OTHER
+  // project's attachments too, not just this one). A platform admin doing
+  // legitimate setup on a Project they haven't joined as a member saw a
+  // misleading "nothing attached" state even when something genuinely was.
+  // Fixed narrowly here, never by touching that RLS: scoped to this one
+  // already-known project id (never a blanket table query, so this can
+  // never let an admin discover another project's attachments), and only
+  // when the primary RLS-scoped result came back empty.
+  let effectiveKnowledgeBases = knowledgeBases
+  let effectiveUnattachedKnowledgeBases = unattachedKnowledgeBases
+  let effectiveLinkedArticles = linkedArticles
+  if (viewerProfile?.role === 'admin' && !viewerMembership && (knowledgeBases.length === 0 || linkedArticles.length === 0)) {
+    const admin = createAdminClient()
+    if (knowledgeBases.length === 0) {
+      const { data: links } = await admin.from('project_knowledge_bases').select('knowledge_base_id').eq('project_id', id)
+      const kbIds = (links ?? []).map((l) => l.knowledge_base_id)
+      if (kbIds.length > 0) {
+        const { data: kbs } = await admin.from('knowledge_bases').select('id, name').in('id', kbIds)
+        effectiveKnowledgeBases = kbs ?? []
+        effectiveUnattachedKnowledgeBases = unattachedKnowledgeBases.filter((kb) => !kbIds.includes(kb.id))
+      }
+    }
+    if (linkedArticles.length === 0) {
+      const { data: links } = await admin.from('project_wiki_articles').select('id, wiki_article_id').eq('project_id', id)
+      if (links && links.length > 0) {
+        const { data: articles } = await admin
+          .from('wiki_articles')
+          .select('id, slug, title, status, visibility_scope')
+          .in('id', links.map((l) => l.wiki_article_id))
+        const byId = new Map((articles ?? []).map((a) => [a.id, a]))
+        effectiveLinkedArticles = links.map((l) => ({ linkId: l.id, article: byId.get(l.wiki_article_id) ?? null })).filter((l) => l.article !== null)
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -232,9 +271,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <p className="text-sm text-zinc-600">
           Platform Knowledge: <Link href="/wiki" className="underline">AI Engineering Wiki</Link>
         </p>
-        {knowledgeBases.length > 0 ? (
+        {effectiveKnowledgeBases.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm">
-            {knowledgeBases.map((kb) => (
+            {effectiveKnowledgeBases.map((kb) => (
               <li key={kb.id} className="flex items-center gap-2">
                 Project Knowledge: {kb.name}
                 {canManage && <KnowledgeBaseDetachButton projectId={project.id} knowledgeBaseId={kb.id} />}
@@ -244,11 +283,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         ) : (
           <p className="text-sm text-zinc-500">No project-specific knowledge base attached yet.</p>
         )}
-        {canManage && <KnowledgeBaseAttachManager projectId={project.id} availableKnowledgeBases={unattachedKnowledgeBases} />}
+        {canManage && <KnowledgeBaseAttachManager projectId={project.id} availableKnowledgeBases={effectiveUnattachedKnowledgeBases} />}
 
-        {linkedArticles.length > 0 && (
+        {effectiveLinkedArticles.length > 0 && (
           <ul className="mt-1 flex flex-col gap-1 text-sm">
-            {linkedArticles.map((l) =>
+            {effectiveLinkedArticles.map((l) =>
               l.article ? (
                 <li key={l.linkId}>
                   Wiki:{' '}
