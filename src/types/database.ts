@@ -890,6 +890,31 @@ export interface ResourceAccessRequest {
   created_at: string
 }
 
+export type SourceSubmissionKind = 'file' | 'artifact'
+export type ProjectSourceSubmissionStatus = 'pending' | 'approved' | 'rejected'
+
+// Member-submitted knowledge sources, with project-curator approval
+// (20260904100001_project_source_submissions.sql) -- the propose/decide
+// counterpart to ResourceAccessRequest above, but for *new* content rather
+// than access to existing content, and gated on can_curate_project
+// (owner-or-curator) rather than can_manage_project (owner-only). See
+// src/lib/workbench/source-submissions.ts.
+export interface ProjectSourceSubmission {
+  id: string
+  project_id: string
+  knowledge_base_id: string
+  source_kind: SourceSubmissionKind
+  title: string
+  document_id: string | null
+  workstream_artifact_id: string | null
+  submitted_by: string
+  status: ProjectSourceSubmissionStatus
+  decision_reason: string | null
+  decided_by: string | null
+  decided_at: string | null
+  created_at: string
+}
+
 // M5D (simplified) -- a Workstream is a scope document (repository scope,
 // goal, a named guardrail, a deliverables checklist) that tells a
 // consultant what to do with an external tool (e.g. Claude Code against a
@@ -1886,6 +1911,16 @@ export type ResourceAccessRequestInsert = Omit<
 export type ResourceAccessRequestUpdate = Partial<
   Omit<ResourceAccessRequest, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'requester_id' | 'created_at'>
 >
+
+export type ProjectSourceSubmissionInsert = Omit<
+  ProjectSourceSubmission,
+  'id' | 'created_at' | 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'
+> &
+  Partial<Pick<ProjectSourceSubmission, 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'>>
+export type ProjectSourceSubmissionUpdate = Partial<
+  Omit<ProjectSourceSubmission, 'id' | 'project_id' | 'knowledge_base_id' | 'source_kind' | 'title' | 'submitted_by' | 'created_at'>
+>
+
 export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
@@ -2172,6 +2207,12 @@ export interface Database {
         Row: ResourceAccessRequest
         Insert: ResourceAccessRequestInsert
         Update: ResourceAccessRequestUpdate
+        Relationships: []
+      }
+      project_source_submissions: {
+        Row: ProjectSourceSubmission
+        Insert: ProjectSourceSubmissionInsert
+        Update: ProjectSourceSubmissionUpdate
         Relationships: []
       }
       ai_provider_sensitivity_eligibility: {
