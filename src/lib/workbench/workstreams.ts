@@ -3,7 +3,7 @@ import { AuthError } from '@/lib/auth'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import type { WorkstreamDeliverable, ArtifactType, WorkstreamArtifactStatus } from '@/types/database'
 import { validateOpenApiContent } from './openapi-validation'
-import type { WorkbenchCallerContext } from './context'
+import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 
 // A generic repo URL (or a local filesystem path) drifts or breaks -- a
 // PR/commit link is durable. This is the authoritative check; the form has
@@ -21,10 +21,18 @@ function isGithubUrl(url: string): boolean {
 // then RLS (project_workstreams_manage_curator -- can_curate_project,
 // project-role-aware) is the real gate -- not a platform-role check, which
 // would incorrectly block a project-scoped curator whose platform role is
-// merely 'consultant'. An INSERT blocked by RLS surfaces as a real Postgres
-// policy-violation error already, no manual zero-rows check needed (that's
-// only necessary for UPDATE, where a non-matching row updates zero rows
-// without erroring).
+// merely 'consultant'.
+//
+// OL-002 (2026-08-31 builder-journey report): a consultant-role project
+// member offered this action by Ember got only a raw Postgres RLS
+// policy-violation error, with no specific explanation and (per OL-003) a
+// long pending state before it surfaced. The tool description now tells the
+// model to preflight-check the caller's role first (OR-028), but that's a
+// prompt instruction, not a guarantee -- this explicit check is the actual
+// fix: even when the model doesn't preflight, the failure is now a clear,
+// specific message instead of a raw DB error. RLS stays the real
+// enforcement boundary; this is defense in depth for a better failure mode,
+// same as createAndAddProjectMember in projects.ts.
 export async function createWorkstream(
   ctx: WorkbenchCallerContext,
   input: {
@@ -39,6 +47,17 @@ export async function createWorkstream(
 ) {
   const { profile, supabase } = ctx
   if (profile.role === 'anonymous') throw new AuthError('Create an account to create a workstream')
+
+  if (profile.role !== 'admin') {
+    const projectRole = await getActiveProjectRole(ctx, input.projectId)
+    if (projectRole !== 'owner' && projectRole !== 'curator') {
+      throw new AuthError(
+        `Creating a workstream needs this project's owner or curator role (or platform admin) -- you're currently ${
+          projectRole ? `a ${projectRole} on this project` : 'not an active member of this project'
+        }. Ask the project owner or a curator to create it, or to give you the curator role.`
+      )
+    }
+  }
 
   const deliverables: WorkstreamDeliverable[] = input.deliverables.filter((label) => label.trim()).map((label) => ({ label, completed: false }))
 

@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
-import type { WorkbenchCallerContext } from './context'
+import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
 // own row or staff see everyone -- a plain consultant creating/managing a
@@ -362,14 +362,8 @@ export async function createAndAddProjectMember(
   input: { projectId: string; email: string; password: string; projectRole: ProjectRole; platformRole: 'member' | 'consultant' | 'curator' | 'admin' }
 ) {
   if (ctx.profile.role !== 'admin') {
-    const { data: membership } = await ctx.supabase
-      .from('project_members')
-      .select('role')
-      .eq('project_id', input.projectId)
-      .eq('user_id', ctx.user.id)
-      .eq('status', 'active')
-      .maybeSingle()
-    if (!membership || (membership.role !== 'owner' && membership.role !== 'curator')) {
+    const projectRole = await getActiveProjectRole(ctx, input.projectId)
+    if (projectRole !== 'owner' && projectRole !== 'curator') {
       throw new AuthError('Requires admin role, or an active owner/curator membership on this project')
     }
     if (input.platformRole === 'curator' || input.platformRole === 'admin') {
