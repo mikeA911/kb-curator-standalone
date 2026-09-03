@@ -31,6 +31,7 @@ function randomTempPassword(): string {
 
 interface MemberWithEmail extends ProjectMember {
   email: string
+  platformRole: PlatformRole | null
 }
 
 export function MembersManager({
@@ -142,7 +143,7 @@ export function MembersManager({
           <thead className="border-b border-zinc-200 text-left text-zinc-500">
             <tr>
               <th className="px-4 py-2 font-medium">Member</th>
-              <th className="px-4 py-2 font-medium">Role</th>
+              <th className="px-4 py-2 font-medium">Project role</th>
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium"></th>
             </tr>
@@ -151,8 +152,11 @@ export function MembersManager({
             {members.map((m) => (
               <tr key={m.id} className="border-b border-zinc-100 last:border-0">
                 <td className="px-4 py-3">
-                  {m.email}
-                  {m.user_id === currentUserId && <span className="ml-1 text-xs text-zinc-400">(you)</span>}
+                  <div>
+                    {m.email}
+                    {m.user_id === currentUserId && <span className="ml-1 text-xs text-zinc-400">(you)</span>}
+                  </div>
+                  {m.platformRole && <div className="text-xs text-zinc-400">Platform: {m.platformRole}</div>}
                 </td>
                 <td className="px-4 py-3">
                   <select

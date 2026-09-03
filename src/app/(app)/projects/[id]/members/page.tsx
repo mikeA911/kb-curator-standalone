@@ -33,24 +33,32 @@ export default async function ProjectMembersPage({ params }: { params: Promise<{
   if (!canManage) redirect(`/projects/${id}`)
   const canTransferOwnership = viewerIsAdmin || viewerMembership?.role === 'owner'
 
-  // Member emails are for display only -- project_members itself (fetched
-  // above, RLS-checked) is the real authorization boundary. profiles RLS
-  // only lets a caller see their own row or staff see everyone, so a
-  // consultant-platform-role project owner can't read a co-member's email
-  // through the normal client; the admin client here only ever returns
-  // id+email, same narrow pattern as resolveUserIdsByEmail in projects.ts.
+  // Member emails/platform roles are for display only -- project_members
+  // itself (fetched above, RLS-checked) is the real authorization boundary.
+  // profiles RLS only lets a caller see their own row or staff see everyone,
+  // so a consultant-platform-role project owner can't read a co-member's
+  // email/role through the normal client; the admin client here only ever
+  // returns id+email+role, same narrow pattern as resolveUserIdsByEmail in
+  // projects.ts. Showing platform role alongside Project role directly
+  // addresses OL-005 (2026-08-31 builder-journey report): the two are easy
+  // to conflate ("Platform Curator" vs "Project Curator" are different
+  // things), and this page is already gated to owner/curator/admin viewers.
   const admin = createAdminClient()
   const { data: profiles } = await admin
     .from('profiles')
-    .select('id, email')
+    .select('id, email, role')
     .in('id', (members ?? []).map((m) => m.user_id))
-  const emailById = new Map((profiles ?? []).map((p) => [p.id, p.email]))
+  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]))
 
   return (
     <MembersManager
       projectId={id}
       projectName={project.name}
-      members={(members ?? []).map((m) => ({ ...m, email: emailById.get(m.user_id) ?? m.user_id }))}
+      members={(members ?? []).map((m) => ({
+        ...m,
+        email: profileById.get(m.user_id)?.email ?? m.user_id,
+        platformRole: profileById.get(m.user_id)?.role ?? null,
+      }))}
       currentUserId={user.id}
       viewerIsAdmin={viewerIsAdmin}
       canTransferOwnership={canTransferOwnership}
