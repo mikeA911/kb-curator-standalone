@@ -342,6 +342,48 @@ export async function addProjectMember(ctx: WorkbenchCallerContext, projectId: s
   if (error) throw error
 }
 
+// Collapses the two-step "create the account on /admin, then go add them to
+// the project" flow into one -- addProjectMember above throws "No account
+// found" for anyone who hasn't been created yet, which was the real
+// remaining gap in Project onboarding (self-serve /register is removed,
+// see createUserAction's comment in app/actions/admin.ts). Admin-only,
+// re-checked here rather than trusted from the caller, since this directly
+// creates an auth user + profile -- same defense-in-depth as every other
+// admin action in app/actions/admin.ts. Sets a real password directly
+// (no email delivery configured in this environment), same as
+// createUserAction, which the admin must then hand to the new person
+// out of band.
+export async function createAndAddProjectMember(
+  ctx: WorkbenchCallerContext,
+  input: { projectId: string; email: string; password: string; projectRole: ProjectRole; platformRole: 'member' | 'consultant' | 'curator' | 'admin' }
+) {
+  if (ctx.profile.role !== 'admin') throw new AuthError('Requires admin role')
+  if (input.password.length < 8) throw new ProjectValidationError('Password must be at least 8 characters')
+
+  const admin = createAdminClient()
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+  })
+  if (createError) throw createError
+
+  const { error: profileError } = await admin.from('profiles').insert({
+    id: created.user.id,
+    email: input.email,
+    full_name: null,
+    role: input.platformRole,
+    is_active: true,
+    assigned_kbs: [],
+  })
+  if (profileError) throw profileError
+
+  const { error: memberError } = await ctx.supabase
+    .from('project_members')
+    .insert({ project_id: input.projectId, user_id: created.user.id, role: input.projectRole, status: 'active' })
+  if (memberError) throw memberError
+}
+
 export async function updateProjectMemberRole(ctx: WorkbenchCallerContext, memberId: string, role: ProjectRole) {
   const { error } = await ctx.supabase.from('project_members').update({ role }).eq('id', memberId)
   if (error) throw error

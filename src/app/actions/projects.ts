@@ -90,6 +90,18 @@ export async function addProjectMemberAction(projectId: string, email: string, r
   revalidatePath(`/projects/${projectId}/members`)
 }
 
+export async function createAndAddProjectMemberAction(input: {
+  projectId: string
+  email: string
+  password: string
+  projectRole: ProjectRole
+  platformRole: 'member' | 'consultant' | 'curator' | 'admin'
+}) {
+  const ctx = await requireRole('admin')
+  await workbench.createAndAddProjectMember(ctx, input)
+  revalidatePath(`/projects/${input.projectId}/members`)
+}
+
 export async function updateProjectMemberRoleAction(memberId: string, projectId: string, role: ProjectRole) {
   const ctx = await requireUser()
   await workbench.updateProjectMemberRole(ctx, memberId, role)

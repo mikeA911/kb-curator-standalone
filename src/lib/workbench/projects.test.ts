@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createFakeSupabase } from '@/lib/test-support/fake-supabase'
 
 vi.mock('@/lib/knowledge-bases', () => ({ requireActiveKnowledgeBase: vi.fn() }))
+const createUserMock = vi.fn().mockResolvedValue({ data: { user: { id: 'new-user-1' } }, error: null })
+const adminInsertMock = vi.fn().mockResolvedValue({ data: null, error: null })
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: () => ({
+    auth: { admin: { createUser: (...args: unknown[]) => createUserMock(...args) } },
     from: () => ({
       select: () => ({
         in: async () => ({ data: [{ id: 'user-2', email: 'teammate@example.com' }], error: null }),
@@ -12,12 +15,12 @@ vi.mock('@/lib/supabase/admin', () => ({
       // logStatusChange in ./projects) also goes through this admin
       // client -- a no-op insert here keeps that logging silent in tests
       // that don't care about it, rather than a swallowed-but-noisy error.
-      insert: async () => ({ data: null, error: null }),
+      insert: (...args: unknown[]) => adminInsertMock(...args),
     }),
   }),
 }))
 
-const { createProject, detachKnowledgeBase, searchProjects } = await import('./projects')
+const { createProject, detachKnowledgeBase, searchProjects, createAndAddProjectMember } = await import('./projects')
 
 function ctxWith(supabase: unknown) {
   return { user: { id: 'user-1', email: 'owner@example.com' }, profile: { role: 'consultant' }, supabase } as never
@@ -126,5 +129,67 @@ describe('detachKnowledgeBase -- Project-Aware Knowledge and Assistant Context (
 
     const del = supabase._calls.find((c) => c.table === 'project_knowledge_bases' && c.method === 'delete')
     expect(del).toBeDefined()
+  })
+})
+
+// Collapses "create the account on /admin, then go add them to the
+// project" into one admin-only action -- addProjectMember's own "No account
+// found" error was the real remaining Phase-5 onboarding gap for the Sandz
+// pilot.
+describe('createAndAddProjectMember', () => {
+  beforeEach(() => {
+    createUserMock.mockClear()
+    adminInsertMock.mockClear()
+  })
+
+  function adminCtxWith(supabase: unknown) {
+    return { user: { id: 'admin-1', email: 'admin@example.com' }, profile: { role: 'admin' }, supabase } as never
+  }
+
+  it('rejects a non-admin caller before creating anything', async () => {
+    const supabase = createFakeSupabase({})
+    await expect(
+      createAndAddProjectMember(ctxWith(supabase), {
+        projectId: 'project-1',
+        email: 'new-hire@sandz.example',
+        password: 'a-real-password',
+        projectRole: 'consultant',
+        platformRole: 'member',
+      })
+    ).rejects.toThrow('Requires admin role')
+    expect(createUserMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a password under 8 characters before creating anything', async () => {
+    const supabase = createFakeSupabase({})
+    await expect(
+      createAndAddProjectMember(adminCtxWith(supabase), {
+        projectId: 'project-1',
+        email: 'new-hire@sandz.example',
+        password: 'short',
+        projectRole: 'consultant',
+        platformRole: 'member',
+      })
+    ).rejects.toThrow('Password must be at least 8 characters')
+    expect(createUserMock).not.toHaveBeenCalled()
+  })
+
+  it('creates the auth user, the profile with the requested platform role, and the project membership', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
+
+    await createAndAddProjectMember(adminCtxWith(supabase), {
+      projectId: 'project-1',
+      email: 'new-hire@sandz.example',
+      password: 'a-real-password',
+      projectRole: 'curator',
+      platformRole: 'member',
+    })
+
+    expect(createUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'new-hire@sandz.example', password: 'a-real-password', email_confirm: true })
+    )
+    expect(adminInsertMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'new-user-1', email: 'new-hire@sandz.example', role: 'member' }))
+    const memberInsert = supabase._calls.find((c) => c.table === 'project_members' && c.method === 'insert')
+    expect(memberInsert?.args).toEqual({ project_id: 'project-1', user_id: 'new-user-1', role: 'curator', status: 'active' })
   })
 })

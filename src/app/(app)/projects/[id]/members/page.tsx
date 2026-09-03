@@ -44,6 +44,7 @@ export default async function ProjectMembersPage({ params }: { params: Promise<{
       projectName={project.name}
       members={(members ?? []).map((m) => ({ ...m, email: emailById.get(m.user_id) ?? m.user_id }))}
       currentUserId={user.id}
+      viewerIsAdmin={viewerProfile?.role === 'admin'}
     />
   )
 }

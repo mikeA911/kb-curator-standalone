@@ -6,12 +6,23 @@ import Link from 'next/link'
 import type { ProjectMember, ProjectRole, ProjectMemberStatus } from '@/types/database'
 import {
   addProjectMemberAction,
+  createAndAddProjectMemberAction,
   updateProjectMemberRoleAction,
   updateProjectMemberStatusAction,
   transferOwnershipAction,
 } from '@/app/actions/projects'
 
 const ROLES: ProjectRole[] = ['owner', 'curator', 'consultant', 'viewer']
+const PLATFORM_ROLES = ['member', 'consultant', 'curator', 'admin'] as const
+type PlatformRole = (typeof PLATFORM_ROLES)[number]
+
+function randomTempPassword(): string {
+  // Not shown as a security boundary -- this environment has no email
+  // delivery, so an admin always hands this to the new person out of band
+  // (Slack, in person, etc) right after creating the account. Just needs to
+  // clear the 8-char minimum without the admin having to invent one.
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+}
 
 interface MemberWithEmail extends ProjectMember {
   email: string
@@ -22,17 +33,29 @@ export function MembersManager({
   projectName,
   members,
   currentUserId,
+  viewerIsAdmin,
 }: {
   projectId: string
   projectName: string
   members: MemberWithEmail[]
   currentUserId: string
+  viewerIsAdmin: boolean
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<ProjectRole>('consultant')
   const [error, setError] = useState<string | null>(null)
+
+  // Set only when handleAdd hits "no account for this email" and the viewer
+  // is admin -- offers to create the account and add them in one step
+  // instead of bouncing to /admin first. addProjectMember's own "No account
+  // found for {email}" message (workbench/projects.ts) is matched literally;
+  // update both together if that message ever changes.
+  const [noAccountEmail, setNoAccountEmail] = useState<string | null>(null)
+  const [newAccountPassword, setNewAccountPassword] = useState('')
+  const [newAccountPlatformRole, setNewAccountPlatformRole] = useState<PlatformRole>('member')
+  const [created, setCreated] = useState<{ email: string; password: string } | null>(null)
 
   function run(action: () => Promise<void>) {
     setError(null)
@@ -49,9 +72,48 @@ export function MembersManager({
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim()) return
-    run(async () => {
-      await addProjectMemberAction(projectId, email.trim(), role)
-      setEmail('')
+    const trimmedEmail = email.trim()
+    setNoAccountEmail(null)
+    setCreated(null)
+    setError(null)
+    startTransition(async () => {
+      try {
+        await addProjectMemberAction(projectId, trimmedEmail, role)
+        setEmail('')
+        router.refresh()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Action failed'
+        if (viewerIsAdmin && message === `No account found for ${trimmedEmail}`) {
+          setNoAccountEmail(trimmedEmail)
+          setNewAccountPassword(randomTempPassword())
+        } else {
+          setError(message)
+        }
+      }
+    })
+  }
+
+  function handleCreateAndAdd(e: React.FormEvent) {
+    e.preventDefault()
+    if (!noAccountEmail || !newAccountPassword.trim()) return
+    const targetEmail = noAccountEmail
+    setError(null)
+    startTransition(async () => {
+      try {
+        await createAndAddProjectMemberAction({
+          projectId,
+          email: targetEmail,
+          password: newAccountPassword.trim(),
+          projectRole: role,
+          platformRole: newAccountPlatformRole,
+        })
+        setCreated({ email: targetEmail, password: newAccountPassword.trim() })
+        setNoAccountEmail(null)
+        setEmail('')
+        router.refresh()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Action failed')
+      }
     })
   }
 
@@ -134,7 +196,7 @@ export function MembersManager({
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Existing user's email"
+            placeholder={viewerIsAdmin ? "Person's email" : "Existing user's email"}
             className="flex-1 rounded border border-zinc-300 px-3 py-2 text-sm"
           />
           <select value={role} onChange={(e) => setRole(e.target.value as ProjectRole)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
@@ -150,6 +212,53 @@ export function MembersManager({
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
+
+      {noAccountEmail && (
+        <form onSubmit={handleCreateAndAdd} className="flex flex-col gap-3 rounded border border-amber-300 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-amber-900">No account for {noAccountEmail} yet</h2>
+          <p className="text-xs text-amber-800">
+            Create an account for them and add them to {projectName} as <strong>{role}</strong> in one step. Share the password below with
+            them directly -- this environment doesn&apos;t send invite emails.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={newAccountPassword}
+              onChange={(e) => setNewAccountPassword(e.target.value)}
+              placeholder="Temporary password"
+              className="rounded border border-amber-300 px-3 py-2 text-sm"
+            />
+            <select
+              value={newAccountPlatformRole}
+              onChange={(e) => setNewAccountPlatformRole(e.target.value as PlatformRole)}
+              className="rounded border border-amber-300 px-3 py-2 text-sm"
+            >
+              {PLATFORM_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  Platform: {r}
+                </option>
+              ))}
+            </select>
+            <button disabled={isPending} className="rounded bg-amber-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              {isPending ? 'Working…' : 'Create & add'}
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => setNoAccountEmail(null)}
+              className="rounded border border-amber-300 px-3 py-2 text-sm text-amber-800 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {created && (
+        <div className="rounded border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">
+          Created <strong>{created.email}</strong> and added them to {projectName}. Password (shown once, share it now):{' '}
+          <code className="rounded bg-white px-1.5 py-0.5">{created.password}</code>
+        </div>
+      )}
     </div>
   )
 }
