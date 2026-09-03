@@ -167,6 +167,35 @@ describe('callTool', () => {
     expect(result.guide.length).toBeGreaterThan(1000)
   })
 
+  // OR-030 -- curator-led Project onboarding (membership authority, member-
+  // submitted knowledge sources, per-project starter prompt) added four new
+  // catalogue entries; these confirm Ember can actually discover them, and
+  // that the explicit "never claim X" guidance (curator can't create a
+  // curator/admin account; a submission isn't retrievable until approved)
+  // survived topic-narrowing rather than only existing in the full catalogue.
+  it('get_navigation_guide surfaces the new member-invite entry and its curator/admin cap', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'invite a member' })) as { guide: string }
+    expect(result.guide).toContain('### Add or invite a member to a Project')
+    expect(result.guide).toContain('a curator can never create a new curator or admin account')
+  })
+
+  it('get_navigation_guide surfaces the new source-submission entry and the not-yet-retrievable rule', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'submit a candidate source' })) as { guide: string }
+    expect(result.guide).toContain('### Submit a candidate source for a Project')
+    expect(result.guide).toContain('Nothing becomes retrievable by Ember at this point')
+  })
+
+  it('get_navigation_guide surfaces the source-review entry and the real-approval-moment rule', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'review and decide a candidate source' })) as { guide: string }
+    expect(result.guide).toContain('### Review and decide a candidate source')
+    expect(result.guide).toContain('this is the moment the source actually becomes retrievable by Ember, never before')
+  })
+
+  it('get_navigation_guide surfaces the new starter-prompt entry', async () => {
+    const result = (await callTool(ctx, 'get_navigation_guide', { topic: 'starter prompt' })) as { guide: string }
+    expect(result.guide).toContain("### Configure a Project's Ember starter prompt")
+  })
+
   it('search_wiki embeds the query, calls match_wiki_vectors, and shapes the output with content and category', async () => {
     embedMock.mockResolvedValue({ embedding: [0.1, 0.2, 0.3], model: 'embed-model', dimensions: 3, usage: { inputTokens: 3, outputTokens: 0 } })
     rpcMock.mockResolvedValue({
