@@ -11,6 +11,7 @@ import {
   updateProjectMemberStatusAction,
   transferOwnershipAction,
 } from '@/app/actions/projects'
+import { BulkAddMembersForm } from './BulkAddMembersForm'
 
 const ROLES: ProjectRole[] = ['owner', 'curator', 'consultant', 'viewer']
 // A non-admin (project owner/curator) creating a brand-new account can only
@@ -227,6 +228,8 @@ export function MembersManager({
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
+
+      <BulkAddMembersForm projectId={projectId} viewerIsAdmin={viewerIsAdmin} />
 
       {noAccountEmail && (
         <form onSubmit={handleCreateAndAdd} className="flex flex-col gap-3 rounded border border-amber-300 bg-amber-50 p-4">
