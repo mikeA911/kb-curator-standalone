@@ -59,6 +59,8 @@ If the staff user is not a Project member, the interface must not expose private
 
 Implementation should use a narrowly defined metadata projection, RPC or equivalent policy-safe query. Do not use a service-role content query and then rely on the UI to hide sensitive fields.
 
+**Superseded 2026-09-01, admin only:** the "non-member staff -> no link" rule above was implemented literally for both admin and curator, but that's stricter than what actually holds underneath -- `is_project_member`'s RLS already carries an unconditional `is_admin` bypass (predates this doc; not a new bypass added here, so the "no admin 'read everything' bypass" Non-goal above still holds at the *design* level), and the workspace page (View 2 below) already relies on that bypass to let a non-member admin manage a Project (`docs/test-reports/2026-08-31-orderlunch-builder-journey.md`, OL-001). Hiding "Open workspace" from an admin was therefore adding UI friction without adding any actual protection. Per owner direction, an admin viewer now always gets "Open workspace" regardless of membership; a non-member curator -- who has no such bypass -- gets a "Request membership" action instead of the dead-end "Membership required" label, addressed to the Project owner via the existing Project Notes flow. See `docs/ember/KB-SANDBOX-CAPABILITY-AND-NAVIGATION-CATALOGUE.md`'s "View the organization portfolio" entry for the current, accurate behavior -- treat the acceptance criteria and Stage-1 checklist below as historical for the admin/curator distinction specifically.
+
 ## View 2 — Project member workspace
 
 For non-staff users:

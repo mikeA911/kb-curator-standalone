@@ -1,8 +1,11 @@
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { getProjectNote, listNoteReplies } from '@/lib/projects/notes'
 import { ProjectNoteThread } from '@/components/projects/ProjectNoteThread'
+import { AccessRequestDecisionActions } from '@/components/projects/AccessRequestDecisionActions'
+import type { ResourceAccessRequest } from '@/types/database'
 
 const STATUS_STYLES: Record<string, string> = {
   open: 'bg-amber-100 text-amber-800',
@@ -20,7 +23,7 @@ async function contextLink(
   contextType: string | null,
   contextId: string | null,
   projectId: string,
-) {
+): Promise<{ href: string | null; label: string; request?: ResourceAccessRequest } | null> {
   if (!contextType || !contextId) return null
   if (contextType === 'eval_run') return { href: `/evals/runs/${contextId}`, label: 'Eval run' }
   if (contextType === 'workstream') return { href: `/projects/${projectId}/workstreams/${contextId}`, label: 'Workstream' }
@@ -28,6 +31,26 @@ async function contextLink(
     const { data: artifact } = await supabase.from('workstream_artifacts').select('workstream_id, title').eq('id', contextId).maybeSingle()
     if (!artifact) return { href: null, label: 'Artifact (deleted or not visible)' }
     return { href: `/projects/${projectId}/workstreams/${artifact.workstream_id}#${contextId}`, label: `Artifact: ${artifact.title}` }
+  }
+  if (contextType === 'resource_access_request') {
+    // resource_access_requests_select_own_or_manager already scopes this to
+    // the requester or the decider -- whoever is reading this note. The
+    // resource's own title needs the admin client regardless: the whole
+    // premise of this note is that the requester (very likely this viewer)
+    // does NOT have has_evidence_access on it yet. Only knowledge_source is
+    // produced by requestResourceAccess today (src/lib/projects/access-
+    // requests.ts) -- the other two EvidenceResourceType values degrade to
+    // the plain resource_type label below if this ever expands.
+    const { data: request } = await supabase.from('resource_access_requests').select('*').eq('id', contextId).maybeSingle()
+    if (!request) return { href: null, label: 'Access request (deleted)' }
+    let title = request.resource_type.replace('_', ' ')
+    if (request.resource_type === 'knowledge_source') {
+      const { data: source } = await createAdminClient().from('knowledge_sources').select('title').eq('id', request.resource_id).maybeSingle()
+      if (source) title = source.title
+    }
+    // Only link through once approved -- before that, the whole point is
+    // the viewer (very likely the requester) can't open it yet.
+    return { href: request.status === 'approved' ? `/sources/${request.resource_id}` : null, label: `Access request: ${title}`, request }
   }
   return { href: null, label: contextType }
 }
@@ -55,6 +78,11 @@ export default async function ProjectNoteDetailPage({ params }: { params: Promis
     note.author_id === user.id || (note.recipient_type === 'user' && note.recipient_user_id === user.id) || canCurate
 
   const ctx = await contextLink(supabase, note.context_type, note.context_id, id)
+  // can_manage_project's exact boundary (owner or platform admin), not
+  // canCurate above -- resource_access_requests_update_manager and
+  // resource_access_grants_manage_owner don't grant a project-curator role
+  // that access either, so a curator here would just hit an RLS rejection.
+  const canDecideAccessRequest = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -91,6 +119,10 @@ export default async function ProjectNoteDetailPage({ params }: { params: Promis
           </p>
         )}
       </div>
+
+      {ctx?.request && canDecideAccessRequest && ctx.request.status === 'pending' && (
+        <AccessRequestDecisionActions projectId={id} requestId={ctx.request.id} />
+      )}
 
       <ProjectNoteThread noteId={note.id} status={note.status} canResolve={canResolve} replies={replies} />
     </div>

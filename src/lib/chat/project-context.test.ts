@@ -16,7 +16,12 @@ describe('getProjectContext', () => {
 
   it('resolves name, goal, attached knowledge bases, and attached wiki articles', async () => {
     const supabase = createFakeSupabase({
-      projects: [{ data: { id: 'proj-1', name: 'Zadara Pilot', goal: 'Answer helpdesk questions', information_sensitivity: null }, error: null }],
+      projects: [
+        {
+          data: { id: 'proj-1', name: 'Zadara Pilot', goal: 'Answer helpdesk questions', information_sensitivity: null, starter_prompt: 'Ask about the Zadara pilot' },
+          error: null,
+        },
+      ],
       project_knowledge_bases: [{ data: [{ knowledge_base_id: 'zadara_sandz' }], error: null }],
       knowledge_bases: [{ data: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }], error: null }],
       project_wiki_articles: [{ data: [{ id: 'link-1', wiki_article_id: 'article-1' }], error: null }],
@@ -37,6 +42,7 @@ describe('getProjectContext', () => {
       informationSensitivity: null,
       knowledgeBases: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }],
       wikiArticles: [{ id: 'article-1', slug: 'zadara-copilot', title: 'Zadara Copilot' }],
+      starterPrompt: 'Ask about the Zadara pilot',
     })
   })
 
@@ -62,6 +68,7 @@ describe('describeProjectKnowledgeScope', () => {
       informationSensitivity: null,
       knowledgeBases: [{ id: 'zadara_sandz', name: 'Zadara / Sandz' }],
       wikiArticles: [{ id: 'a1', slug: 'zadara-copilot', title: 'Zadara Copilot' }],
+      starterPrompt: null,
     })
     expect(text).toBe('knowledge base(s) Zadara / Sandz; Wiki article(s) Zadara Copilot')
   })
@@ -74,6 +81,7 @@ describe('describeProjectKnowledgeScope', () => {
       informationSensitivity: null,
       knowledgeBases: [],
       wikiArticles: [],
+      starterPrompt: null,
     })
     expect(text).toBe('no attached knowledge base; no attached Wiki articles')
   })

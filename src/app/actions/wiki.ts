@@ -18,6 +18,7 @@ import { linkSource, unlinkSource } from '@/lib/wiki/sources'
 import { linkRelatedArticle, unlinkRelatedArticle } from '@/lib/wiki/relations'
 import { linkProjectArticle, unlinkProjectArticle } from '@/lib/wiki/project-links'
 import { synthesizeWikiDraft, type WikiDraftProposal, type SourceChunkInput } from '@/lib/wiki/synthesis'
+import { getRestrictedResourceIds } from '@/lib/projects/evidence-access'
 import type { AIProvider } from '@/lib/ai/provider'
 import type { WikiCategoryId, WikiSourceType, WikiVisibilityScope } from '@/types/database'
 
@@ -165,10 +166,24 @@ async function createAIAssistedDraftInner(
   const documentIds = [...new Set((chunks ?? []).map((c) => c.document_id))]
   const { data: sourceDocuments, error: docsError } = await supabase
     .from('documents')
-    .select('id, original_filename')
+    .select('id, original_filename, knowledge_source_id')
     .in('id', documentIds)
   if (docsError) throw docsError
   const documentNameById = new Map((sourceDocuments ?? []).map((d) => [d.id, d.original_filename]))
+
+  // Defense-in-depth -- /wiki/new's own picker already excludes a
+  // restricted source's chunks (src/app/(app)/wiki/new/page.tsx), but this
+  // action can be called directly with any chunk id. Not gated by the
+  // caller's own access to the source (see getRestrictedResourceIds) -- a
+  // curator who legitimately has a grant on a restricted source still
+  // shouldn't be able to publish it into an open Wiki article.
+  const knowledgeSourceIds = [...new Set((sourceDocuments ?? []).map((d) => d.knowledge_source_id).filter((id): id is string => !!id))]
+  const restrictedSourceIds = await getRestrictedResourceIds('knowledge_source', knowledgeSourceIds)
+  if (restrictedSourceIds.size > 0) {
+    throw new WikiValidationError(
+      'One or more selected chunks belong to a restricted source and cannot be used to synthesize a Wiki draft. Restrict the resulting article directly if it needs to reach a narrower audience.'
+    )
+  }
 
   const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: user.id })
 
@@ -229,6 +244,16 @@ async function createAIAssistedDraftFromArtifact(
     .single()
   if (error || !artifact) throw error ?? new WikiValidationError('Artifact not found')
   if (!artifact.content) throw new WikiValidationError('This artifact has no content to synthesize from (it is a link-only artifact)')
+
+  // Same defense-in-depth as the chunk path above -- not gated by whether
+  // this caller can see the artifact (RLS already allowed the fetch above),
+  // only by whether it's restricted at all.
+  const restrictedArtifactIds = await getRestrictedResourceIds('workstream_artifact', [artifact.id])
+  if (restrictedArtifactIds.size > 0) {
+    throw new WikiValidationError(
+      'This artifact is restricted and cannot be used to synthesize a Wiki draft. Restrict the resulting article directly if it needs to reach a narrower audience.'
+    )
+  }
 
   const provider = await getActiveStructuredOutputProvider(supabase, { requestedBy: userId })
 

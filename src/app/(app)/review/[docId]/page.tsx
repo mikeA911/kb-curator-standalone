@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { getRestrictedResourceIds } from '@/lib/projects/evidence-access'
 import { ChunkReviewer } from '@/components/curator/ChunkReviewer'
 
 // Chunk enrichment (enrichMoreChunks -> enrichDocumentChunks) calls one AI
@@ -23,5 +24,15 @@ export default async function ReviewPage({ params }: { params: Promise<{ docId: 
     .eq('document_id', docId)
     .order('chunk_index', { ascending: true })
 
-  return <ChunkReviewer document={document} chunks={chunks ?? []} />
+  // Early heads-up, not a gate -- the actual leak prevention is at
+  // Wiki-synthesis-input time (src/app/(app)/wiki/new/page.tsx,
+  // src/app/actions/wiki.ts). document_chunks' own RLS has no evidence-
+  // access gating at all, so a curator can reach this page for a restricted
+  // source's document regardless of their own access to it.
+  const restrictedIds = document.knowledge_source_id
+    ? await getRestrictedResourceIds('knowledge_source', [document.knowledge_source_id])
+    : new Set<string>()
+  const sourceRestricted = !!document.knowledge_source_id && restrictedIds.has(document.knowledge_source_id)
+
+  return <ChunkReviewer document={document} chunks={chunks ?? []} sourceRestricted={sourceRestricted} />
 }

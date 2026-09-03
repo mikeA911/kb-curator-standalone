@@ -25,7 +25,10 @@ function requireManager(ctx: WorkbenchCallerContext) {
   if (ctx.profile.role === 'anonymous') throw new AuthError('Create an account to manage project evidence access')
 }
 
-async function writeAuditEntry(entry: {
+// Exported for src/lib/projects/access-requests.ts's decideResourceAccessRequest
+// -- an Approve decision needs the exact same audit-log shape as a manual
+// grant made from the Access & Evidence page, without duplicating it.
+export async function writeAuditEntry(entry: {
   projectId: string
   eventType: EvidenceAuditEventType
   actorId: string
@@ -182,6 +185,31 @@ export async function setProjectInformationSensitivity(
   if (error) throw error
 }
 
+// Which of the given resources are currently restricted (any classification
+// other than 'project_general'), regardless of the CALLER's own access to
+// them -- deliberately not the same question has_evidence_access answers.
+// Used to keep a restricted knowledge_source/workstream_artifact out of
+// Wiki-synthesis input even for a curator who personally has a grant on it
+// (src/app/(app)/wiki/new/page.tsx, src/app/actions/wiki.ts) -- publishing
+// it into an open Wiki article would leak it to everyone else regardless of
+// who did the publishing, so the check can't be "can I see it," only "is it
+// restricted at all." Admin client, same "safe metadata" shape as every
+// other read in this file -- returns which ids are restricted, never the
+// policy content itself.
+export async function getRestrictedResourceIds(resourceType: EvidenceResourceType, resourceIds: string[]): Promise<Set<string>> {
+  if (resourceIds.length === 0) return new Set()
+
+  const { data, error } = await createAdminClient()
+    .from('resource_access_policies')
+    .select('resource_id')
+    .eq('resource_type', resourceType)
+    .in('resource_id', resourceIds)
+    .neq('classification', 'project_general')
+  if (error) throw error
+
+  return new Set((data ?? []).map((r) => r.resource_id))
+}
+
 // --- Resource classification and grants ---------------------------------------
 
 export interface EvidenceResourceSummary {
@@ -271,6 +299,40 @@ export class EvidenceAccessValidationError extends Error {
   }
 }
 
+// Shared by classifyResource's memberIds loop below and by
+// decideResourceAccessRequest (src/lib/projects/access-requests.ts) approving
+// a request -- the exact same grant-insert-plus-audit shape either way. Uses
+// the caller's own RLS-scoped client, so the caller must already satisfy
+// resource_access_grants_manage_owner (can_manage_project) -- both call
+// sites already require that (requireManager here is a weaker anonymous-only
+// check; decideResourceAccessRequest enforces can_manage_project itself
+// before calling this).
+export async function grantResourceAccessToMember(
+  ctx: WorkbenchCallerContext,
+  input: { projectId: string; resourceAccessPolicyId: string; projectMemberId: string; resourceType: EvidenceResourceType; resourceId: string }
+): Promise<void> {
+  const { error: grantError } = await ctx.supabase.from('resource_access_grants').insert({
+    resource_access_policy_id: input.resourceAccessPolicyId,
+    project_access_group_id: null,
+    project_member_id: input.projectMemberId,
+    status: 'active',
+    granted_by: ctx.user.id,
+    granted_at: new Date().toISOString(),
+    revoked_by: null,
+    revoked_at: null,
+    revocation_reason: null,
+  })
+  if (grantError) throw grantError
+  await writeAuditEntry({
+    projectId: input.projectId,
+    eventType: 'resource_grant_granted',
+    actorId: ctx.user.id,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    targetMemberId: input.projectMemberId,
+  })
+}
+
 export async function classifyResource(ctx: WorkbenchCallerContext, projectId: string, input: ClassifyResourceInput): Promise<void> {
   requireManager(ctx)
 
@@ -333,25 +395,12 @@ export async function classifyResource(ctx: WorkbenchCallerContext, projectId: s
   }
 
   for (const memberId of memberIds) {
-    const { error: grantError } = await ctx.supabase.from('resource_access_grants').insert({
-      resource_access_policy_id: policy.id,
-      project_access_group_id: null,
-      project_member_id: memberId,
-      status: 'active',
-      granted_by: ctx.user.id,
-      granted_at: new Date().toISOString(),
-      revoked_by: null,
-      revoked_at: null,
-      revocation_reason: null,
-    })
-    if (grantError) throw grantError
-    await writeAuditEntry({
+    await grantResourceAccessToMember(ctx, {
       projectId,
-      eventType: 'resource_grant_granted',
-      actorId: ctx.user.id,
+      resourceAccessPolicyId: policy.id,
+      projectMemberId: memberId,
       resourceType: input.resourceType,
       resourceId: input.resourceId,
-      targetMemberId: memberId,
     })
   }
 

@@ -79,6 +79,12 @@ export async function updateProjectGoalAction(projectId: string, goal: string) {
   revalidatePath(`/projects/${projectId}`)
 }
 
+export async function updateProjectStarterPromptAction(projectId: string, starterPrompt: string) {
+  const ctx = await requireUser()
+  await workbench.updateProjectStarterPrompt(ctx, projectId, starterPrompt)
+  revalidatePath(`/projects/${projectId}`)
+}
+
 export async function searchProfilesByEmailAction(query: string): Promise<{ id: string; email: string }[]> {
   const ctx = await requireUser()
   return workbench.searchProfilesByEmail(ctx, query)
@@ -88,6 +94,22 @@ export async function addProjectMemberAction(projectId: string, email: string, r
   const ctx = await requireUser()
   await workbench.addProjectMember(ctx, projectId, email, role)
   revalidatePath(`/projects/${projectId}/members`)
+}
+
+export async function createAndAddProjectMemberAction(input: {
+  projectId: string
+  email: string
+  password: string
+  projectRole: ProjectRole
+  platformRole: 'member' | 'consultant' | 'curator' | 'admin'
+}) {
+  // Not admin-only -- a project owner/curator can also call this, capped to
+  // platformRole 'member'/'consultant'. workbench.createAndAddProjectMember
+  // is the real gate (it bypasses RLS via the service-role client to create
+  // the auth user, so it can't rely on RLS the way addProjectMember does).
+  const ctx = await requireUser()
+  await workbench.createAndAddProjectMember(ctx, input)
+  revalidatePath(`/projects/${input.projectId}/members`)
 }
 
 export async function updateProjectMemberRoleAction(memberId: string, projectId: string, role: ProjectRole) {

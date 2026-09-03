@@ -11,3 +11,20 @@ import { requireUser } from '@/lib/auth'
 // checks live, regardless of which entry point (Server Action, future MCP
 // tool, future Assistant) produced the context.
 export type WorkbenchCallerContext = Awaited<ReturnType<typeof requireUser>>
+
+// Small shared helper for the "does this caller hold role X on this
+// specific project" check that keeps coming up wherever a workbench
+// function needs a clearer failure than a raw RLS rejection (e.g.
+// createWorkstream, createAndAddProjectMember) -- always via the caller's
+// own RLS-scoped client, never the service-role client, so this can never
+// see a membership the caller itself isn't allowed to see.
+export async function getActiveProjectRole(ctx: WorkbenchCallerContext, projectId: string): Promise<string | null> {
+  const { data } = await ctx.supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', projectId)
+    .eq('user_id', ctx.user.id)
+    .eq('status', 'active')
+    .maybeSingle()
+  return data?.role ?? null
+}

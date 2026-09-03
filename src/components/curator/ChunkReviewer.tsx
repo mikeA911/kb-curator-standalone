@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Document, DocumentChunk } from '@/types/database'
 import {
@@ -21,12 +21,34 @@ const REVIEW_STYLES: Record<DocumentChunk['review_status'], string> = {
   failed: 'bg-red-100 text-red-800',
 }
 
-export function ChunkReviewer({ document, chunks }: { document: Document; chunks: DocumentChunk[] }) {
+export function ChunkReviewer({
+  document,
+  chunks,
+  sourceRestricted,
+}: {
+  document: Document
+  chunks: DocumentChunk[]
+  sourceRestricted: boolean
+}) {
   const router = useRouter()
   const [index, setIndex] = useState(0)
   const [notes, setNotes] = useState('')
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+
+  // A one-time heads-up on page load, not a gate on every Approve click --
+  // the real enforcement is at Wiki-synthesis-input time (see
+  // src/app/actions/wiki.ts), and a confirm() per chunk would be pure
+  // friction for a document with dozens of chunks without adding any real
+  // protection.
+  useEffect(() => {
+    if (sourceRestricted) {
+      window.alert(
+        "This document's source is classified as restricted. Approved chunks remain part of that restricted source and stay excluded from Wiki-synthesis input."
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const visible = chunks.filter((c) => !c.is_filtered)
   const chunk = visible[index]

@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
-import type { WorkbenchCallerContext } from './context'
+import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
 // own row or staff see everyone -- a plain consultant creating/managing a
@@ -287,6 +287,27 @@ export async function updateProjectGoal(ctx: WorkbenchCallerContext, projectId: 
   if (error) throw error
 }
 
+// A short, clickable prompt Ember offers when opened bound to this project
+// (ChatPanel.tsx's project-bound empty state) -- the Sandz Pilot Meeting
+// Brief's onboarding pattern explicitly calls for one per Q&A/feedback
+// Project (e.g. "Ask anything about the Sandz pilot, suggest an
+// improvement, or report a problem"). Deliberately owner/curator/admin, not
+// projects_update_managers' owner-only RLS -- a project curator should be
+// able to set this for their own team's Project, so this writes via the
+// admin client after an explicit check, same pattern as
+// createAndAddProjectMember/approveSourceSubmission.
+export async function updateProjectStarterPrompt(ctx: WorkbenchCallerContext, projectId: string, starterPrompt: string): Promise<void> {
+  if (ctx.profile.role !== 'admin') {
+    const role = await getActiveProjectRole(ctx, projectId)
+    if (role !== 'owner' && role !== 'curator') {
+      throw new AuthError('Requires this project\'s owner or curator role (or platform admin) to set its starter prompt')
+    }
+  }
+  const admin = createAdminClient()
+  const { error } = await admin.from('projects').update({ starter_prompt: starterPrompt.trim() || null }).eq('id', projectId)
+  if (error) throw error
+}
+
 // Backs the Ember search_projects tool (docs/dev-request-ember-onboarding-
 // capability-gaps.md, item 1) -- lets Ember discover an existing project
 // before proposing to create a new one, closing the gap where she had no
@@ -340,6 +361,60 @@ export async function addProjectMember(ctx: WorkbenchCallerContext, projectId: s
 
   const { error } = await ctx.supabase.from('project_members').insert({ project_id: projectId, user_id: userId, role, status: 'active' })
   if (error) throw error
+}
+
+// Collapses the two-step "create the account on /admin, then go add them to
+// the project" flow into one -- addProjectMember above throws "No account
+// found" for anyone who hasn't been created yet, which was the real
+// remaining gap in Project onboarding (self-serve /register is removed,
+// see createUserAction's comment in app/actions/admin.ts). A platform admin
+// can call this for anyone at any platform role; a project owner/curator
+// (confirmed by Mike 2026-09-03 -- the curator is the department head who
+// knows their own staff and needs to invite them directly, not bounce every
+// invite through an admin) can also call it for their own project, but is
+// capped to platformRole 'member'/'consultant' -- minting a new curator or
+// admin account stays an admin-only escalation. This directly creates an
+// auth user + profile via the service-role client (bypasses RLS entirely),
+// so unlike addProjectMember's insert below, RLS is *not* the real gate
+// here -- this explicit check is, same defense-in-depth spirit as every
+// admin action in app/actions/admin.ts.
+export async function createAndAddProjectMember(
+  ctx: WorkbenchCallerContext,
+  input: { projectId: string; email: string; password: string; projectRole: ProjectRole; platformRole: 'member' | 'consultant' | 'curator' | 'admin' }
+) {
+  if (ctx.profile.role !== 'admin') {
+    const projectRole = await getActiveProjectRole(ctx, input.projectId)
+    if (projectRole !== 'owner' && projectRole !== 'curator') {
+      throw new AuthError('Requires admin role, or an active owner/curator membership on this project')
+    }
+    if (input.platformRole === 'curator' || input.platformRole === 'admin') {
+      throw new AuthError('Only a platform admin can create a curator or admin account')
+    }
+  }
+  if (input.password.length < 8) throw new ProjectValidationError('Password must be at least 8 characters')
+
+  const admin = createAdminClient()
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+  })
+  if (createError) throw createError
+
+  const { error: profileError } = await admin.from('profiles').insert({
+    id: created.user.id,
+    email: input.email,
+    full_name: null,
+    role: input.platformRole,
+    is_active: true,
+    assigned_kbs: [],
+  })
+  if (profileError) throw profileError
+
+  const { error: memberError } = await ctx.supabase
+    .from('project_members')
+    .insert({ project_id: input.projectId, user_id: created.user.id, role: input.projectRole, status: 'active' })
+  if (memberError) throw memberError
 }
 
 export async function updateProjectMemberRole(ctx: WorkbenchCallerContext, memberId: string, role: ProjectRole) {

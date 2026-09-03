@@ -269,6 +269,7 @@ function AIAssistedForm({
       </div>
       {sourceMode === 'chunks' ? (
         <Field label={`Source chunks (${selected.size} selected — only approved chunks are eligible)`}>
+          <p className="text-xs text-zinc-500">Chunks from a restricted source are automatically excluded here.</p>
           <div className="max-h-72 overflow-y-auto rounded border border-zinc-300">
             {approvedChunks.length === 0 && <p className="p-3 text-sm text-zinc-500">No approved chunks yet.</p>}
             {approvedChunks.map((chunk) => (
@@ -287,6 +288,7 @@ function AIAssistedForm({
         </Field>
       ) : (
         <Field label="Source artifact (from a project you're a member of)">
+          <p className="text-xs text-zinc-500">Restricted artifacts are automatically excluded here.</p>
           <select value={artifactId} onChange={(e) => setArtifactId(e.target.value)} className="w-full rounded border border-zinc-300 px-3 py-2 text-sm">
             <option value="">Select an artifact…</option>
             {artifacts.map((a) => (

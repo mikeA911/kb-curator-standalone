@@ -27,8 +27,15 @@ describe('createWorkstreamAction', () => {
   })
 
   it('inserts through the RLS-scoped client -- project_workstreams_manage_curator is the real gate', async () => {
-    const supabase = createFakeSupabase({ project_workstreams: [{ data: { id: 'ws-1' }, error: null }] })
-    requireUserMock.mockResolvedValue({ profile: { role: 'curator', id: 'user-1' }, supabase })
+    // profile.role here is the caller's *platform* role; createWorkstream's
+    // own preflight check (OL-002 fix) looks at their *project* role on
+    // p-1, so this needs a project_members row too, not just a platform
+    // role of 'curator' -- the two are deliberately different axes.
+    const supabase = createFakeSupabase({
+      project_members: [{ data: { role: 'curator' }, error: null }],
+      project_workstreams: [{ data: { id: 'ws-1' }, error: null }],
+    })
+    requireUserMock.mockResolvedValue({ profile: { role: 'curator', id: 'user-1' }, user: { id: 'user-1' }, supabase })
 
     const result = await createWorkstreamAction({
       projectId: 'p-1',

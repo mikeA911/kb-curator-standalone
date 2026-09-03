@@ -2,9 +2,60 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireUser, AuthError } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { createProjectNote } from '@/lib/projects/notes'
 import type { ProjectNoteRecipientType } from '@/types/database'
+
+// Organization Portfolio's "Request membership" (a curator viewing a
+// project they're not on, per project_notes_insert_curator_or_admin,
+// 20260901120001_project_notes_request_membership.sql -- admins never hit
+// this path since they already get a direct "Open workspace" link there).
+// Addressed to the project owner when one exists, otherwise any curator/
+// admin, matching recipient_type's existing options -- createProjectNote
+// itself does the actual RLS-backed insert, no separate service function
+// needed for a single fixed-shape note.
+export async function requestProjectMembershipAction(projectId: string) {
+  const { profile, supabase } = await requireUser()
+  if (profile.role !== 'curator' && profile.role !== 'admin') {
+    throw new ProjectValidationError('Only curators and admins can request membership from the Organization Portfolio')
+  }
+
+  // Admin client, not the caller's session client -- projects_select_members
+  // RLS scopes SELECT to members/admin, and the whole point of this action
+  // is a non-member curator, who could never read this row through their own
+  // client. Same narrow "safe metadata via admin client" pattern as
+  // getOrganizationPortfolio (src/lib/projects/portfolio.ts) -- owner_id
+  // only, nothing content-shaped.
+  const { data: project, error: projectError } = await createAdminClient().from('projects').select('owner_id').eq('id', projectId).single()
+  if (projectError || !project) throw projectError ?? new ProjectValidationError('Project not found')
+
+  // Idempotency guard, not just the UI's already-sent state -- project_notes_select_own
+  // (author_id = auth.uid()) makes this readable through the caller's own
+  // client even though they're not a project member. Without this, a
+  // second tab, a race with the revalidated page, or a direct call could
+  // still fire a duplicate note (and duplicate notification) to the owner.
+  const { data: existingRequest, error: existingRequestError } = await supabase
+    .from('project_notes')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('author_id', profile.id)
+    .eq('subject', 'Membership request')
+    .eq('status', 'open')
+    .maybeSingle()
+  if (existingRequestError) throw existingRequestError
+  if (existingRequest) return
+
+  await createProjectNote(supabase, profile, {
+    projectId,
+    recipientType: project.owner_id ? 'user' : 'curator',
+    recipientUserId: project.owner_id,
+    subject: 'Membership request',
+    body: `${profile.email ?? 'A staff member'} has requested to join this project. Add them from Members if approved.`,
+  })
+
+  revalidatePath('/projects/portfolio')
+}
 
 export async function createProjectNoteAction(input: {
   projectId: string

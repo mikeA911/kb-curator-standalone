@@ -24,6 +24,7 @@ export interface PortfolioProjectRow {
   hasUnpublishedDraft: boolean
   updatedAt: string
   viewerIsMember: boolean
+  viewerHasPendingMembershipRequest: boolean
 }
 
 export async function getOrganizationPortfolio(supabase: SupabaseClient<Database>, viewerId: string): Promise<PortfolioProjectRow[]> {
@@ -37,19 +38,34 @@ export async function getOrganizationPortfolio(supabase: SupabaseClient<Database
   const projectIds = projects.map((p) => p.id)
   const ownerIds = [...new Set(projects.map((p) => p.owner_id).filter((id): id is string => !!id))]
 
-  const [{ data: owners, error: ownersError }, { data: memberRows, error: membersError }, { data: kbLinks, error: kbError }, { data: policies, error: policiesError }, { data: assignments, error: assignmentsError }] =
-    await Promise.all([
-      ownerIds.length > 0 ? supabase.from('profiles').select('id, email').in('id', ownerIds) : Promise.resolve({ data: [], error: null }),
-      supabase.from('project_members').select('project_id, user_id, status').in('project_id', projectIds),
-      supabase.from('project_knowledge_bases').select('project_id').in('project_id', projectIds),
-      supabase.from('project_approval_policies').select('project_id, approval_type, requirement_status').in('project_id', projectIds),
-      supabase.from('project_authority_assignments').select('project_id, approval_type, status').in('project_id', projectIds),
-    ])
+  const [
+    { data: owners, error: ownersError },
+    { data: memberRows, error: membersError },
+    { data: kbLinks, error: kbError },
+    { data: policies, error: policiesError },
+    { data: assignments, error: assignmentsError },
+    { data: pendingRequests, error: pendingRequestsError },
+  ] = await Promise.all([
+    ownerIds.length > 0 ? supabase.from('profiles').select('id, email').in('id', ownerIds) : Promise.resolve({ data: [], error: null }),
+    supabase.from('project_members').select('project_id, user_id, status').in('project_id', projectIds),
+    supabase.from('project_knowledge_bases').select('project_id').in('project_id', projectIds),
+    supabase.from('project_approval_policies').select('project_id, approval_type, requirement_status').in('project_id', projectIds),
+    supabase.from('project_authority_assignments').select('project_id, approval_type, status').in('project_id', projectIds),
+    // Own already-sent, still-open "Membership request" notes -- a curator
+    // reloading this page must see the request they already sent, not a
+    // reset "Request membership" button that would let them fire off a
+    // duplicate note (and duplicate notification) to the same owner every
+    // visit. project_notes_select_own covers this for a non-member author.
+    supabase.from('project_notes').select('project_id').eq('author_id', viewerId).eq('subject', 'Membership request').eq('status', 'open').in('project_id', projectIds),
+  ])
   if (ownersError) throw ownersError
   if (membersError) throw membersError
   if (kbError) throw kbError
   if (policiesError) throw policiesError
   if (assignmentsError) throw assignmentsError
+  if (pendingRequestsError) throw pendingRequestsError
+
+  const pendingRequestProjectIds = new Set((pendingRequests ?? []).map((r) => r.project_id))
 
   const ownerEmailById = new Map((owners ?? []).map((o) => [o.id, o.email]))
 
@@ -99,6 +115,7 @@ export async function getOrganizationPortfolio(supabase: SupabaseClient<Database
       hasUnpublishedDraft: p.visibility === 'private' && p.public_profile != null,
       updatedAt: p.updated_at,
       viewerIsMember: viewerMemberProjectIds.has(p.id),
+      viewerHasPendingMembershipRequest: pendingRequestProjectIds.has(p.id),
     }
   })
 }

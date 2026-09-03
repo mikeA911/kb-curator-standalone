@@ -1,0 +1,14 @@
+-- Per-project starter prompt for Ember (2026-09-04). The Sandz Pilot
+-- Meeting Brief's suggested onboarding pattern (docs/commercial/Sandz-
+-- Pilot-Meeting-Brief-and-Follow-Up-QA.docx, section 6) explicitly asks
+-- for "a visible starter prompt" on a Project's Q&A/feedback experience --
+-- generic across the whole platform, not something a curator can set for
+-- their own Project today (ChatPanel.tsx's STARTER_PROMPTS is one hardcoded
+-- global list). No RLS needed here: updateProjectStarterPrompt
+-- (src/lib/workbench/projects.ts) writes it via the admin client after an
+-- explicit owner/curator/admin check, same pattern as
+-- createAndAddProjectMember and approveSourceSubmission -- deliberately not
+-- relying on projects_update_managers (can_manage_project, owner-only),
+-- since a project curator should be able to set this for their own team's
+-- Project.
+alter table projects add column starter_prompt text;

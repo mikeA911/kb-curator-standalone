@@ -10,6 +10,8 @@ This document explains the principal deployment choices, their trade-offs, and a
 
 > **Architecture decision:** [ADR-0001: Dedicated-Instance-First Deployment with a SaaS-Ready Architecture](../architecture-decisions/ADR-0001-dedicated-instance-first-deployment.md) establishes dedicated customer instances as the initial commercial deployment model while preserving a future path to shared SaaS.
 
+> **Multiple-client operations:** [Managing Multiple Dedicated Client Deployments](./ManagingMultipleClientDeployments.md) describes how one shared product codebase should support separate client instances without permanent customer Git branches.
+
 ## Executive summary
 
 KB Sandbox has relatively little dependency on Vercel-specific services. It is primarily a Next.js application connected to Supabase for its database, authentication, and file storage, with external AI providers selected through configuration.

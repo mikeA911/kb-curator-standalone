@@ -640,6 +640,12 @@ export interface Project {
   // (see 20260829120001_project_information_sensitivity.sql). null =
   // unclassified, treated as 'internal' by src/lib/ai/sensitivity.ts.
   information_sensitivity: InformationSensitivity | null
+  // A short, clickable prompt Ember offers when opened bound to this
+  // project (ChatPanel.tsx's project-bound empty state). Curator/owner/
+  // admin-settable, see updateProjectStarterPrompt -- deliberately not
+  // gated by the same RLS as the rest of this row (see that function's
+  // comment). 20260904110001_project_starter_prompt.sql.
+  starter_prompt: string | null
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -864,6 +870,54 @@ export interface ResourceAccessAuditLogEntry {
   to_classification: EvidenceClassification | null
   target_group_id: string | null
   target_member_id: string | null
+  created_at: string
+}
+
+export type ResourceAccessRequestStatus = 'pending' | 'approved' | 'denied'
+
+// A member locked out of a restricted resource by has_evidence_access can
+// ask for it instead of never learning it exists -- the request/approve/
+// reject counterpart to ResourceAccessGrant above. note_id is the
+// notification sent to whoever decides (access_steward_user_id, else the
+// Project owner, else any curator); outcome_note_id is the reply sent back
+// to the requester once decided. See src/lib/projects/access-requests.ts.
+export interface ResourceAccessRequest {
+  id: string
+  project_id: string
+  resource_type: EvidenceResourceType
+  resource_id: string
+  requester_id: string
+  status: ResourceAccessRequestStatus
+  note_id: string | null
+  outcome_note_id: string | null
+  decided_by: string | null
+  decision_reason: string | null
+  decided_at: string | null
+  created_at: string
+}
+
+export type SourceSubmissionKind = 'file' | 'artifact'
+export type ProjectSourceSubmissionStatus = 'pending' | 'approved' | 'rejected'
+
+// Member-submitted knowledge sources, with project-curator approval
+// (20260904100001_project_source_submissions.sql) -- the propose/decide
+// counterpart to ResourceAccessRequest above, but for *new* content rather
+// than access to existing content, and gated on can_curate_project
+// (owner-or-curator) rather than can_manage_project (owner-only). See
+// src/lib/workbench/source-submissions.ts.
+export interface ProjectSourceSubmission {
+  id: string
+  project_id: string
+  knowledge_base_id: string
+  source_kind: SourceSubmissionKind
+  title: string
+  document_id: string | null
+  workstream_artifact_id: string | null
+  submitted_by: string
+  status: ProjectSourceSubmissionStatus
+  decision_reason: string | null
+  decided_by: string | null
+  decided_at: string | null
   created_at: string
 }
 
@@ -1799,6 +1853,7 @@ export type ProjectInsert = Omit<
   | 'published_at'
   | 'published_by'
   | 'goal'
+  | 'starter_prompt'
   | 'public_full_detail'
   | 'information_sensitivity'
   | 'created_via'
@@ -1814,6 +1869,7 @@ export type ProjectInsert = Omit<
       | 'published_at'
       | 'published_by'
       | 'goal'
+      | 'starter_prompt'
       | 'public_full_detail'
       | 'information_sensitivity'
       | 'created_via'
@@ -1854,6 +1910,25 @@ export type ResourceAccessGrantInsert = Omit<ResourceAccessGrant, 'id'>
 export type ResourceAccessGrantUpdate = Partial<Omit<ResourceAccessGrant, 'id' | 'resource_access_policy_id'>>
 
 export type ResourceAccessAuditLogEntryInsert = Omit<ResourceAccessAuditLogEntry, 'id' | 'created_at'>
+
+export type ResourceAccessRequestInsert = Omit<
+  ResourceAccessRequest,
+  'id' | 'created_at' | 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'
+> &
+  Partial<Pick<ResourceAccessRequest, 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'>>
+export type ResourceAccessRequestUpdate = Partial<
+  Omit<ResourceAccessRequest, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'requester_id' | 'created_at'>
+>
+
+export type ProjectSourceSubmissionInsert = Omit<
+  ProjectSourceSubmission,
+  'id' | 'created_at' | 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'
+> &
+  Partial<Pick<ProjectSourceSubmission, 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'>>
+export type ProjectSourceSubmissionUpdate = Partial<
+  Omit<ProjectSourceSubmission, 'id' | 'project_id' | 'knowledge_base_id' | 'source_kind' | 'title' | 'submitted_by' | 'created_at'>
+>
+
 export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
@@ -2136,6 +2211,18 @@ export interface Database {
       }
       resource_access_grants: { Row: ResourceAccessGrant; Insert: ResourceAccessGrantInsert; Update: ResourceAccessGrantUpdate; Relationships: [] }
       resource_access_audit_log: { Row: ResourceAccessAuditLogEntry; Insert: ResourceAccessAuditLogEntryInsert; Update: never; Relationships: [] }
+      resource_access_requests: {
+        Row: ResourceAccessRequest
+        Insert: ResourceAccessRequestInsert
+        Update: ResourceAccessRequestUpdate
+        Relationships: []
+      }
+      project_source_submissions: {
+        Row: ProjectSourceSubmission
+        Insert: ProjectSourceSubmissionInsert
+        Update: ProjectSourceSubmissionUpdate
+        Relationships: []
+      }
       ai_provider_sensitivity_eligibility: {
         Row: AiProviderSensitivityEligibility
         Insert: AiProviderSensitivityEligibilityInsert

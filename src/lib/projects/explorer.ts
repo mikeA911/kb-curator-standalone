@@ -1,6 +1,7 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { listKnowledgeBasesForProject } from './queries'
 
 // Read-only organization Explorer (docs/dev-request-role-aware-project-views-
@@ -22,6 +23,13 @@ const MAX_SOURCES_PER_KB = 8
 export interface ExplorerSource {
   id: string
   title: string
+  // Only ever computed for the root Project's own directly-attached KBs
+  // (getSourcesForRootKb below) -- a source reached through a connected
+  // Project's shared KB stays silently omitted if restricted, same as
+  // before; locking across a Project boundary the viewer isn't a member of
+  // is a different, bigger question, deliberately out of scope here.
+  locked: boolean
+  alreadyRequested: boolean
 }
 
 export interface ExplorerKnowledgeBase {
@@ -55,7 +63,58 @@ async function getSourcesForKb(supabase: SupabaseClient<Database>, kbId: string)
     .limit(MAX_SOURCES_PER_KB + 1)
   if (error) throw error
   const rows = data ?? []
-  return { sources: rows.slice(0, MAX_SOURCES_PER_KB), truncated: rows.length > MAX_SOURCES_PER_KB }
+  const sources = rows.slice(0, MAX_SOURCES_PER_KB).map((r) => ({ ...r, locked: false, alreadyRequested: false }))
+  return { sources, truncated: rows.length > MAX_SOURCES_PER_KB }
+}
+
+// Root-level-only counterpart to getSourcesForKb (see ExplorerSource.locked's
+// comment) -- a restricted source is shown, not silently omitted, so a
+// member can request it instead of never learning it exists. The admin-
+// client query is the same "safe metadata via admin client" pattern as
+// getOrganizationPortfolio (src/lib/projects/portfolio.ts): id+title only,
+// never content. Lock state is computed by diffing that against the
+// viewer's own RLS-scoped query (has_evidence_access already computes
+// exactly the right accessible set), not by re-deriving has_evidence_access
+// in application code.
+async function getSourcesForRootKb(
+  supabase: SupabaseClient<Database>,
+  kbId: string,
+  viewerId: string
+): Promise<{ sources: ExplorerSource[]; truncated: boolean }> {
+  const admin = createAdminClient()
+  const [{ data: allRows, error: allError }, { data: viewerRows, error: viewerError }] = await Promise.all([
+    admin.from('knowledge_sources').select('id, title').eq('knowledge_base_id', kbId).order('title'),
+    supabase.from('knowledge_sources').select('id').eq('knowledge_base_id', kbId),
+  ])
+  if (allError) throw allError
+  if (viewerError) throw viewerError
+
+  const accessibleIds = new Set((viewerRows ?? []).map((r) => r.id))
+  const rows = allRows ?? []
+  const truncated = rows.length > MAX_SOURCES_PER_KB
+  const capped = rows.slice(0, MAX_SOURCES_PER_KB)
+
+  const lockedIds = capped.filter((r) => !accessibleIds.has(r.id)).map((r) => r.id)
+  const requestedIds = new Set<string>()
+  if (lockedIds.length > 0) {
+    const { data: pending, error: pendingError } = await supabase
+      .from('resource_access_requests')
+      .select('resource_id')
+      .eq('resource_type', 'knowledge_source')
+      .eq('requester_id', viewerId)
+      .eq('status', 'pending')
+      .in('resource_id', lockedIds)
+    if (pendingError) throw pendingError
+    for (const r of pending ?? []) requestedIds.add(r.resource_id)
+  }
+
+  const sources = capped.map((r) => ({
+    id: r.id,
+    title: r.title,
+    locked: !accessibleIds.has(r.id),
+    alreadyRequested: requestedIds.has(r.id),
+  }))
+  return { sources, truncated }
 }
 
 // Bounded, non-recursive by construction (acceptance criteria 13, 18, 19):
@@ -63,7 +122,11 @@ async function getSourcesForKb(supabase: SupabaseClient<Database>, kbId: string)
 // looks at a connected Project's own connected Projects. A Project reachable
 // through two different root knowledge bases is expanded once and referenced
 // (not re-expanded) the second time -- dedupedProjectIds tracks that.
-export async function getOrganizationExplorer(supabase: SupabaseClient<Database>, rootProjectId: string): Promise<OrganizationExplorer> {
+export async function getOrganizationExplorer(
+  supabase: SupabaseClient<Database>,
+  rootProjectId: string,
+  viewerId: string | null
+): Promise<OrganizationExplorer> {
   const rootKbs = await listKnowledgeBasesForProject(supabase, rootProjectId)
   if (rootKbs.length === 0) return { rootProjectId, knowledgeBases: [] }
 
@@ -71,7 +134,11 @@ export async function getOrganizationExplorer(supabase: SupabaseClient<Database>
   const knowledgeBases: ExplorerRootKnowledgeBase[] = []
 
   for (const kb of rootKbs) {
-    const { sources, truncated } = await getSourcesForKb(supabase, kb.id)
+    // Locked-source detection only applies at the root level, and only for
+    // a real signed-in viewer -- an anonymous visitor gets today's plain
+    // RLS-filtered behavior (no admin-client peek, no lock UI, nothing to
+    // request as a non-member anyway).
+    const { sources, truncated } = viewerId ? await getSourcesForRootKb(supabase, kb.id, viewerId) : await getSourcesForKb(supabase, kb.id)
 
     const { data: links, error: linksError } = await supabase
       .from('project_knowledge_bases')

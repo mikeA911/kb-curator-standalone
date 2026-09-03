@@ -35,7 +35,7 @@ export default async function ProjectsPortfolioPage() {
         </p>
       </div>
 
-      <OrganizationPortfolio rows={rows} />
+      <OrganizationPortfolio rows={rows} viewerIsAdmin={profile?.role === 'admin'} />
     </div>
   )
 }

@@ -20,8 +20,13 @@ export interface AuthHeader {
   value: string
 }
 
-async function withClient<T>(endpointUrl: string, auth: AuthHeader | null, fn: (client: Client) => Promise<T>): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl), auth ? { requestInit: { headers: { [auth.header]: auth.value } } } : undefined)
+// A list, not a single pair -- some registered integrations (e.g. the live
+// OrderLunch MCP Showcase) require more than one header simultaneously
+// (a static gateway API key plus a per-call delegation bearer token). An
+// empty array behaves exactly like the old `null` -- no auth headers sent.
+async function withClient<T>(endpointUrl: string, auth: AuthHeader[], fn: (client: Client) => Promise<T>): Promise<T> {
+  const headers = auth.length > 0 ? Object.fromEntries(auth.map((a) => [a.header, a.value])) : undefined
+  const transport = new StreamableHTTPClientTransport(new URL(endpointUrl), headers ? { requestInit: { headers } } : undefined)
   const client = new Client({ name: 'kb-sandbox-agent-gateway', version: '0.1.0' })
   await client.connect(transport)
   try {
@@ -31,7 +36,7 @@ async function withClient<T>(endpointUrl: string, auth: AuthHeader | null, fn: (
   }
 }
 
-export async function connectAndListTools(endpointUrl: string, auth: AuthHeader | null): Promise<McpToolSummary[]> {
+export async function connectAndListTools(endpointUrl: string, auth: AuthHeader[]): Promise<McpToolSummary[]> {
   return withClient(endpointUrl, auth, async (client) => {
     const { tools } = await client.listTools()
     return tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
@@ -51,14 +56,31 @@ function parseToolResultText(result: Awaited<ReturnType<Client['callTool']>>): u
   return JSON.parse(textBlock.text)
 }
 
-export async function connectAndCallTool(endpointUrl: string, auth: AuthHeader | null, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+// A tool error's own `error` field varies by server: some return a bare
+// string, others (e.g. the live OrderLunch MCP Showcase, confirmed live --
+// { error: { code: 'NOT_FOUND', message: 'Order was not found', details: {} } })
+// nest it as an object. Extracting only the string case used to make
+// `new Error(message)` stringify the object itself, producing a useless
+// "[object Object]" everywhere this error surfaced (GatewayInvocationCard,
+// Ember's own turn). Handle both shapes.
+function extractToolErrorMessage(parsed: unknown): string | null {
+  if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+    const error = (parsed as { error?: unknown }).error
+    if (typeof error === 'string') return error
+    if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') {
+      return (error as { message: string }).message
+    }
+  }
+  return null
+}
+
+export async function connectAndCallTool(endpointUrl: string, auth: AuthHeader[], toolName: string, args: Record<string, unknown>): Promise<unknown> {
   return withClient(endpointUrl, auth, async (client) => {
     const result = await client.callTool({ name: toolName, arguments: args })
     if (result.isError) {
       let message = 'MCP tool call failed'
       try {
-        const parsed = parseToolResultText(result) as { error?: string }
-        if (parsed?.error) message = parsed.error
+        message = extractToolErrorMessage(parseToolResultText(result)) ?? message
       } catch {
         // Fall through to the generic message -- an error result whose text
         // block isn't parseable JSON is still a failure, just not one this

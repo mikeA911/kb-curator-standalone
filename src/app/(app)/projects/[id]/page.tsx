@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ProjectFindings } from '@/components/projects/ProjectFindings'
 import { MemberDirectory } from '@/components/projects/MemberDirectory'
 import { ProjectGoalForm } from '@/components/projects/ProjectGoalForm'
+import { ProjectStarterPromptForm } from '@/components/projects/ProjectStarterPromptForm'
 import { ProjectStatusSection } from '@/components/projects/ProjectStatusSection'
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
@@ -16,6 +17,8 @@ import { listRecentConversations } from '@/lib/chat/conversations'
 import { ProjectAssistantSection } from '@/components/projects/ProjectAssistantSection'
 import { getOrganizationExplorer } from '@/lib/projects/explorer'
 import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer'
+import { SubmitSourceForm } from '@/components/projects/SubmitSourceForm'
+import { SourceSubmissionsReview } from '@/components/projects/SourceSubmissionsReview'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -77,6 +80,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     { data: statusHistory },
     explorer,
     { data: activeMembers },
+    { data: submittableArtifacts },
+    { data: sourceSubmissions },
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -95,13 +100,33 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     // curator+ viewers -- an ungated fetch just returns empty for anyone
     // else, same as the rest of this page's queries.
     supabase.from('project_status_history').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-    getOrganizationExplorer(supabase, id),
+    getOrganizationExplorer(supabase, id, user?.id ?? null),
     // Member Directory (docs/dev-request-role-aware-project-views-and-ember-
     // first-workspace.md, View 2) -- RLS (project_members_select_member)
     // already scopes this to the caller's own accessible project, same
     // is_project_member gate as everything else on this page.
     user
       ? supabase.from('project_members').select('id, user_id, role, business_function').eq('project_id', id).eq('status', 'active').order('created_at')
+      : Promise.resolve({ data: null }),
+    // Member-submitted knowledge sources (2026-09-04) -- only an already-
+    // approved, content-bearing artifact is offered, matching
+    // submitArtifactSource's own eligibility check (src/lib/workbench/
+    // source-submissions.ts) so the picker never offers something the
+    // submit action would just reject.
+    user
+      ? supabase
+          .from('workstream_artifacts')
+          .select('id, title, workstream:project_workstreams!inner(project_id)')
+          .eq('workstream.project_id', id)
+          .eq('status', 'approved')
+          .not('content', 'is', null)
+      : Promise.resolve({ data: null }),
+    // RLS (project_source_submissions_select_own_or_curator) already scopes
+    // this to the caller's own submissions, or every submission if they can
+    // curate this project -- an ungated fetch just returns less for anyone
+    // else, same as the rest of this page's queries.
+    user
+      ? supabase.from('project_source_submissions').select('*').eq('project_id', id).order('created_at', { ascending: false })
       : Promise.resolve({ data: null }),
   ])
   const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
@@ -114,7 +139,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // Emails are for display only, same narrow admin-client pattern as
   // members/page.tsx and notes/page.tsx -- project_members itself (fetched
   // above under RLS) is the real authorization boundary.
-  const memberUserIds = (activeMembers ?? []).map((m) => m.user_id)
+  const memberUserIds = [
+    ...new Set([...(activeMembers ?? []).map((m) => m.user_id), ...(sourceSubmissions ?? []).map((s) => s.submitted_by)]),
+  ]
   const { data: memberProfiles } =
     memberUserIds.length > 0 ? await createAdminClient().from('profiles').select('id, email').in('id', memberUserIds) : { data: [] }
   const memberEmailById = new Map((memberProfiles ?? []).map((p) => [p.id, p.email]))
@@ -198,6 +225,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       {user && viewerMembership && <MemberDirectory projectId={project.id} members={directoryMembers} viewerUserId={user.id} />}
 
       <ProjectGoalForm projectId={project.id} goal={project.goal} canEdit={canManage} />
+      <ProjectStarterPromptForm projectId={project.id} starterPrompt={project.starter_prompt} canEdit={canCurateWorkstreams} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge</h2>
@@ -231,6 +259,32 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               ) : null
             )}
           </ul>
+        )}
+
+        {/* Member-submitted knowledge sources (2026-09-04) -- any active
+            member can propose a source; the project's owner/curator/admin
+            (canCurateWorkstreams -- can_curate_project, the same bar as
+            Workstreams above) decides. */}
+        {canCurateWorkstreams && (
+          <SourceSubmissionsReview
+            projectId={project.id}
+            submissions={(sourceSubmissions ?? [])
+              .filter((s) => s.status === 'pending')
+              .map((s) => ({
+                id: s.id,
+                title: s.title,
+                sourceKind: s.source_kind,
+                submitterEmail: memberEmailById.get(s.submitted_by) ?? s.submitted_by,
+                createdAt: s.created_at,
+              }))}
+          />
+        )}
+        {user && viewerMembership && (
+          <SubmitSourceForm
+            projectId={project.id}
+            knowledgeBases={knowledgeBases}
+            artifacts={(submittableArtifacts ?? []).map((a) => ({ id: a.id, title: a.title }))}
+          />
         )}
       </section>
 

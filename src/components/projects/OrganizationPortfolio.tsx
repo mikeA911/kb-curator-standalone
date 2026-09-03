@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { PortfolioProjectRow } from '@/lib/projects/portfolio'
+import { RequestMembershipButton } from './RequestMembershipButton'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -19,10 +20,16 @@ const STATUS_STYLES: Record<string, string> = {
 
 // Every field here is safe organization metadata -- names, counts, dates.
 // No source titles, snippets, artifacts or conversations. A non-member row
-// gets a plain "Membership required" label instead of a link, per the dev
-// request's explicit instruction not to navigate from portfolio metadata
-// into protected content.
-export function OrganizationPortfolio({ rows }: { rows: PortfolioProjectRow[] }) {
+// gets no direct link into protected content, per the dev request's explicit
+// instruction not to navigate from portfolio metadata into it -- except for
+// a platform admin, who already has an unconditional RLS bypass
+// (is_project_member/projects_select_members) on every project's content
+// regardless of membership, so hiding the link from them would only add
+// friction without adding safety. A non-member curator (the only other role
+// that can reach this page) has no such bypass, so instead of a dead
+// "Membership required" label they get a one-click request that notes the
+// project owner (project_notes_insert_curator_or_admin, 20260901120001).
+export function OrganizationPortfolio({ rows, viewerIsAdmin }: { rows: PortfolioProjectRow[]; viewerIsAdmin: boolean }) {
   if (rows.length === 0) return <p className="text-sm text-zinc-500">No projects exist yet.</p>
 
   return (
@@ -67,12 +74,12 @@ export function OrganizationPortfolio({ rows }: { rows: PortfolioProjectRow[] })
               </td>
               <td className="px-4 py-3 text-xs text-zinc-500">{new Date(p.updatedAt).toLocaleDateString()}</td>
               <td className="px-4 py-3 text-right">
-                {p.viewerIsMember ? (
+                {p.viewerIsMember || viewerIsAdmin ? (
                   <Link href={`/projects/${p.id}`} className="text-sm underline">
                     Open workspace
                   </Link>
                 ) : (
-                  <span className="text-xs text-zinc-400">Membership required</span>
+                  <RequestMembershipButton projectId={p.id} alreadyRequested={p.viewerHasPendingMembershipRequest} />
                 )}
               </td>
             </tr>

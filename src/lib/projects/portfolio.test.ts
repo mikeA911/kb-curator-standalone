@@ -74,6 +74,7 @@ describe('getOrganizationPortfolio', () => {
       project_authority_assignments: [
         { data: [{ project_id: 'proj-1', approval_type: 'pricing', status: 'active' }], error: null },
       ],
+      project_notes: [{ data: [], error: null }],
     })
 
     const result = await getOrganizationPortfolio(supabase as never, 'viewer-1')
@@ -94,6 +95,7 @@ describe('getOrganizationPortfolio', () => {
       hasUnpublishedDraft: true,
       updatedAt: '2026-08-30T00:00:00Z',
       viewerIsMember: true,
+      viewerHasPendingMembershipRequest: false,
     })
 
     expect(proj2).toEqual({
@@ -109,6 +111,7 @@ describe('getOrganizationPortfolio', () => {
       hasUnpublishedDraft: false,
       updatedAt: '2026-08-20T00:00:00Z',
       viewerIsMember: false,
+      viewerHasPendingMembershipRequest: false,
     })
   })
 })
