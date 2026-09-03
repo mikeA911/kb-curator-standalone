@@ -346,18 +346,36 @@ export async function addProjectMember(ctx: WorkbenchCallerContext, projectId: s
 // the project" flow into one -- addProjectMember above throws "No account
 // found" for anyone who hasn't been created yet, which was the real
 // remaining gap in Project onboarding (self-serve /register is removed,
-// see createUserAction's comment in app/actions/admin.ts). Admin-only,
-// re-checked here rather than trusted from the caller, since this directly
-// creates an auth user + profile -- same defense-in-depth as every other
-// admin action in app/actions/admin.ts. Sets a real password directly
-// (no email delivery configured in this environment), same as
-// createUserAction, which the admin must then hand to the new person
-// out of band.
+// see createUserAction's comment in app/actions/admin.ts). A platform admin
+// can call this for anyone at any platform role; a project owner/curator
+// (confirmed by Mike 2026-09-03 -- the curator is the department head who
+// knows their own staff and needs to invite them directly, not bounce every
+// invite through an admin) can also call it for their own project, but is
+// capped to platformRole 'member'/'consultant' -- minting a new curator or
+// admin account stays an admin-only escalation. This directly creates an
+// auth user + profile via the service-role client (bypasses RLS entirely),
+// so unlike addProjectMember's insert below, RLS is *not* the real gate
+// here -- this explicit check is, same defense-in-depth spirit as every
+// admin action in app/actions/admin.ts.
 export async function createAndAddProjectMember(
   ctx: WorkbenchCallerContext,
   input: { projectId: string; email: string; password: string; projectRole: ProjectRole; platformRole: 'member' | 'consultant' | 'curator' | 'admin' }
 ) {
-  if (ctx.profile.role !== 'admin') throw new AuthError('Requires admin role')
+  if (ctx.profile.role !== 'admin') {
+    const { data: membership } = await ctx.supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', input.projectId)
+      .eq('user_id', ctx.user.id)
+      .eq('status', 'active')
+      .maybeSingle()
+    if (!membership || (membership.role !== 'owner' && membership.role !== 'curator')) {
+      throw new AuthError('Requires admin role, or an active owner/curator membership on this project')
+    }
+    if (input.platformRole === 'curator' || input.platformRole === 'admin') {
+      throw new AuthError('Only a platform admin can create a curator or admin account')
+    }
+  }
   if (input.password.length < 8) throw new ProjectValidationError('Password must be at least 8 characters')
 
   const admin = createAdminClient()

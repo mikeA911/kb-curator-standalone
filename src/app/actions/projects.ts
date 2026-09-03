@@ -97,7 +97,11 @@ export async function createAndAddProjectMemberAction(input: {
   projectRole: ProjectRole
   platformRole: 'member' | 'consultant' | 'curator' | 'admin'
 }) {
-  const ctx = await requireRole('admin')
+  // Not admin-only -- a project owner/curator can also call this, capped to
+  // platformRole 'member'/'consultant'. workbench.createAndAddProjectMember
+  // is the real gate (it bypasses RLS via the service-role client to create
+  // the auth user, so it can't rely on RLS the way addProjectMember does).
+  const ctx = await requireUser()
   await workbench.createAndAddProjectMember(ctx, input)
   revalidatePath(`/projects/${input.projectId}/members`)
 }

@@ -11,6 +11,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), '
 const sql = read('supabase/migrations/20260810120001_project_members.sql')
 const fixSql = read('supabase/migrations/20260810120002_fix_projects_select_returning.sql')
 const eval3RlsSql = read('supabase/migrations/20260809110004_eval_rls.sql')
+const curatorMembersSql = read('supabase/migrations/20260903100001_curator_manages_project_members.sql')
 
 describe('project_members schema', () => {
   it('enforces one membership row per user/project', () => {
@@ -82,7 +83,7 @@ describe('project_members RLS', () => {
     expect(sql).toMatch(/alter table project_members enable row level security/)
   })
 
-  it('gates all mutation to can_manage_project (owner or admin) -- a non-owner can never grant themselves a role', () => {
+  it('this original policy alone still gates all mutation to can_manage_project (owner or admin) -- extended, not replaced, by 20260903100001 below', () => {
     const start = sql.indexOf('"project_members_manage_owner"')
     const section = sql.slice(start, start + 250)
     expect(section).toMatch(/for all using \(can_manage_project\(project_id, auth\.uid\(\)\)\)/)
@@ -92,6 +93,26 @@ describe('project_members RLS', () => {
     const start = sql.indexOf('"project_members_select_member"')
     const section = sql.slice(start, start + 200)
     expect(section).toMatch(/for select using \(is_project_member\(project_id, auth\.uid\(\)\)\)/)
+  })
+})
+
+// 2026-09-03: curator = department head (or their assistant) running their
+// own project's team -- needs to invite/manage their own staff directly,
+// per Mike. Additive on top of project_members_manage_owner above (multiple
+// permissive policies for the same command are OR'd by Postgres), so a
+// curator gains member-management without touching the owner-only policy.
+describe('project_members RLS -- curator can manage non-owner rows (20260903100001)', () => {
+  it('uses can_curate_project (owner or curator), not can_manage_project', () => {
+    const start = curatorMembersSql.indexOf('"project_members_curate"')
+    const section = curatorMembersSql.slice(start, start + 300)
+    expect(section).toMatch(/can_curate_project\(project_id, auth\.uid\(\)\)/)
+  })
+
+  it('excludes owner rows from both the existing-row match and the new-value check -- a curator can never touch the owner row or grant owner', () => {
+    const start = curatorMembersSql.indexOf('"project_members_curate"')
+    const section = curatorMembersSql.slice(start, start + 300)
+    expect(section).toMatch(/for all using \(can_curate_project\(project_id, auth\.uid\(\)\) and role <> 'owner'\)/)
+    expect(section).toMatch(/with check \(can_curate_project\(project_id, auth\.uid\(\)\) and role <> 'owner'\)/)
   })
 })
 

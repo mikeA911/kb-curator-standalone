@@ -133,9 +133,11 @@ describe('detachKnowledgeBase -- Project-Aware Knowledge and Assistant Context (
 })
 
 // Collapses "create the account on /admin, then go add them to the
-// project" into one admin-only action -- addProjectMember's own "No account
-// found" error was the real remaining Phase-5 onboarding gap for the Sandz
-// pilot.
+// project" into one action -- addProjectMember's own "No account found"
+// error was the real remaining Phase-5 onboarding gap for the Sandz pilot.
+// A platform admin can do this for anyone; a project owner/curator can also
+// do it for their own project (2026-09-03 -- the curator is the department
+// head who knows their own staff), capped to platformRole member/consultant.
 describe('createAndAddProjectMember', () => {
   beforeEach(() => {
     createUserMock.mockClear()
@@ -146,7 +148,7 @@ describe('createAndAddProjectMember', () => {
     return { user: { id: 'admin-1', email: 'admin@example.com' }, profile: { role: 'admin' }, supabase } as never
   }
 
-  it('rejects a non-admin caller before creating anything', async () => {
+  it('rejects a non-admin caller with no membership on the project before creating anything', async () => {
     const supabase = createFakeSupabase({})
     await expect(
       createAndAddProjectMember(ctxWith(supabase), {
@@ -156,7 +158,51 @@ describe('createAndAddProjectMember', () => {
         projectRole: 'consultant',
         platformRole: 'member',
       })
-    ).rejects.toThrow('Requires admin role')
+    ).rejects.toThrow('Requires admin role, or an active owner/curator membership on this project')
+    expect(createUserMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-admin caller whose project role is consultant, not owner/curator', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'consultant' }, error: null }] })
+    await expect(
+      createAndAddProjectMember(ctxWith(supabase), {
+        projectId: 'project-1',
+        email: 'new-hire@sandz.example',
+        password: 'a-real-password',
+        projectRole: 'consultant',
+        platformRole: 'member',
+      })
+    ).rejects.toThrow('Requires admin role, or an active owner/curator membership on this project')
+    expect(createUserMock).not.toHaveBeenCalled()
+  })
+
+  it('allows an active project curator to create and add a new member capped to platformRole member/consultant', async () => {
+    const supabase = createFakeSupabase({
+      project_members: [{ data: { role: 'curator' }, error: null }, { data: null, error: null }],
+    })
+
+    await createAndAddProjectMember(ctxWith(supabase), {
+      projectId: 'project-1',
+      email: 'new-hire@sandz.example',
+      password: 'a-real-password',
+      projectRole: 'consultant',
+      platformRole: 'consultant',
+    })
+
+    expect(createUserMock).toHaveBeenCalledWith(expect.objectContaining({ email: 'new-hire@sandz.example' }))
+  })
+
+  it('rejects a project curator (non-admin) trying to grant a curator or admin platform role', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'curator' }, error: null }] })
+    await expect(
+      createAndAddProjectMember(ctxWith(supabase), {
+        projectId: 'project-1',
+        email: 'new-hire@sandz.example',
+        password: 'a-real-password',
+        projectRole: 'consultant',
+        platformRole: 'curator',
+      })
+    ).rejects.toThrow('Only a platform admin can create a curator or admin account')
     expect(createUserMock).not.toHaveBeenCalled()
   })
 

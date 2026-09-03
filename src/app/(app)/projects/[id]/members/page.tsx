@@ -22,8 +22,16 @@ export default async function ProjectMembersPage({ params }: { params: Promise<{
 
   const { data: viewerProfile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   const viewerMembership = (members ?? []).find((m) => m.user_id === user.id)
-  const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
+  const viewerIsAdmin = viewerProfile?.role === 'admin'
+  // Curator = the department head (or their assistant) running this
+  // project's own team -- confirmed by Mike 2026-09-03, they know their
+  // staff and need to invite them directly. Matches can_curate_project
+  // (owner/curator) on the DB side, see 20260903100001_curator_manages_
+  // project_members.sql -- transferring ownership itself stays owner/admin
+  // only (see canTransferOwnership below).
+  const canManage = viewerIsAdmin || viewerMembership?.role === 'owner' || viewerMembership?.role === 'curator'
   if (!canManage) redirect(`/projects/${id}`)
+  const canTransferOwnership = viewerIsAdmin || viewerMembership?.role === 'owner'
 
   // Member emails are for display only -- project_members itself (fetched
   // above, RLS-checked) is the real authorization boundary. profiles RLS
@@ -44,7 +52,8 @@ export default async function ProjectMembersPage({ params }: { params: Promise<{
       projectName={project.name}
       members={(members ?? []).map((m) => ({ ...m, email: emailById.get(m.user_id) ?? m.user_id }))}
       currentUserId={user.id}
-      viewerIsAdmin={viewerProfile?.role === 'admin'}
+      viewerIsAdmin={viewerIsAdmin}
+      canTransferOwnership={canTransferOwnership}
     />
   )
 }

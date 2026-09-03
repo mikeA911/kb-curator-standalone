@@ -13,8 +13,13 @@ import {
 } from '@/app/actions/projects'
 
 const ROLES: ProjectRole[] = ['owner', 'curator', 'consultant', 'viewer']
-const PLATFORM_ROLES = ['member', 'consultant', 'curator', 'admin'] as const
-type PlatformRole = (typeof PLATFORM_ROLES)[number]
+// A non-admin (project owner/curator) creating a brand-new account can only
+// ever grant 'member' or 'consultant' -- minting a curator/admin account
+// stays a platform-admin-only escalation (see createAndAddProjectMember's
+// server-side check, which is the real enforcement, not this list).
+const PLATFORM_ROLES_ADMIN = ['member', 'consultant', 'curator', 'admin'] as const
+const PLATFORM_ROLES_NON_ADMIN = ['member', 'consultant'] as const
+type PlatformRole = (typeof PLATFORM_ROLES_ADMIN)[number]
 
 function randomTempPassword(): string {
   // Not shown as a security boundary -- this environment has no email
@@ -34,12 +39,14 @@ export function MembersManager({
   members,
   currentUserId,
   viewerIsAdmin,
+  canTransferOwnership,
 }: {
   projectId: string
   projectName: string
   members: MemberWithEmail[]
   currentUserId: string
   viewerIsAdmin: boolean
+  canTransferOwnership: boolean
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -47,14 +54,18 @@ export function MembersManager({
   const [role, setRole] = useState<ProjectRole>('consultant')
   const [error, setError] = useState<string | null>(null)
 
-  // Set only when handleAdd hits "no account for this email" and the viewer
-  // is admin -- offers to create the account and add them in one step
-  // instead of bouncing to /admin first. addProjectMember's own "No account
-  // found for {email}" message (workbench/projects.ts) is matched literally;
-  // update both together if that message ever changes.
+  // Set whenever handleAdd hits "no account for this email" -- offers to
+  // create the account and add them in one step instead of bouncing to
+  // /admin first. Reaching this page at all already requires admin/owner/
+  // curator (see members/page.tsx's canManage), and all three can call
+  // createAndAddProjectMemberAction -- a non-admin is just capped to
+  // platformRole member/consultant there. addProjectMember's own "No
+  // account found for {email}" message (workbench/projects.ts) is matched
+  // literally; update both together if that message ever changes.
   const [noAccountEmail, setNoAccountEmail] = useState<string | null>(null)
   const [newAccountPassword, setNewAccountPassword] = useState('')
   const [newAccountPlatformRole, setNewAccountPlatformRole] = useState<PlatformRole>('member')
+  const availablePlatformRoles = viewerIsAdmin ? PLATFORM_ROLES_ADMIN : PLATFORM_ROLES_NON_ADMIN
   const [created, setCreated] = useState<{ email: string; password: string } | null>(null)
 
   function run(action: () => Promise<void>) {
@@ -83,7 +94,7 @@ export function MembersManager({
         router.refresh()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Action failed'
-        if (viewerIsAdmin && message === `No account found for ${trimmedEmail}`) {
+        if (message === `No account found for ${trimmedEmail}`) {
           setNoAccountEmail(trimmedEmail)
           setNewAccountPassword(randomTempPassword())
         } else {
@@ -150,7 +161,7 @@ export function MembersManager({
                     onChange={(e) => run(() => updateProjectMemberRoleAction(m.id, projectId, e.target.value as ProjectRole))}
                     className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
                   >
-                    {ROLES.map((r) => (
+                    {ROLES.filter((r) => r !== 'owner' || canTransferOwnership || m.role === 'owner').map((r) => (
                       <option key={r} value={r}>
                         {r}
                       </option>
@@ -171,7 +182,7 @@ export function MembersManager({
                   </label>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {m.role !== 'owner' && (
+                  {m.role !== 'owner' && canTransferOwnership && (
                     <button
                       disabled={isPending}
                       onClick={() => {
@@ -196,7 +207,7 @@ export function MembersManager({
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder={viewerIsAdmin ? "Person's email" : "Existing user's email"}
+            placeholder="Person's email"
             className="flex-1 rounded border border-zinc-300 px-3 py-2 text-sm"
           />
           <select value={role} onChange={(e) => setRole(e.target.value as ProjectRole)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
@@ -232,7 +243,7 @@ export function MembersManager({
               onChange={(e) => setNewAccountPlatformRole(e.target.value as PlatformRole)}
               className="rounded border border-amber-300 px-3 py-2 text-sm"
             >
-              {PLATFORM_ROLES.map((r) => (
+              {availablePlatformRoles.map((r) => (
                 <option key={r} value={r}>
                   Platform: {r}
                 </option>
