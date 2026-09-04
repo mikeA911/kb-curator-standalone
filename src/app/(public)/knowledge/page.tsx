@@ -29,6 +29,14 @@ export default async function PublicKnowledgePage({
         </p>
       </div>
 
+      <aside className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+        This page contains only articles approved for public viewing. Sandz and other
+        organization-specific knowledge remains protected.{' '}
+        <Link href="/login" className="font-semibold underline underline-offset-4 hover:text-amber-800">
+          Sign in to view the knowledge available to you.
+        </Link>
+      </aside>
+
       <form className="flex flex-wrap gap-2" action="/knowledge">
         <input
           type="search"
@@ -67,7 +75,18 @@ export default async function PublicKnowledgePage({
             {article.short_description && <p className="mt-1 text-sm text-zinc-600">{article.short_description}</p>}
           </Link>
         ))}
-        {articles.length === 0 && <p className="text-sm text-zinc-500 sm:col-span-2">No public articles yet.</p>}
+        {articles.length === 0 && (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-5 sm:col-span-2">
+            <p className="text-sm font-medium text-zinc-800">No public articles match this view.</p>
+            <p className="mt-1 text-sm leading-6 text-zinc-600">
+              The material may be organization-only rather than missing.{' '}
+              <Link href="/login" className="font-medium underline underline-offset-4 hover:text-zinc-900">
+                Sign in and open the full Wiki
+              </Link>{' '}
+              to see content your account is permitted to use.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

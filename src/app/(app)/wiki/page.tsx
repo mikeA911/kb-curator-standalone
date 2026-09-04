@@ -51,6 +51,9 @@ export default async function WikiListPage({
   const { category, status, q, view: viewParam } = await searchParams
   const view: ViewMode = viewParam === 'list' ? 'list' : 'cards'
   const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   const [categories, articles, wikiStats, projectsWithKnowledge, knowledgeBaseSynopses] = await Promise.all([
     listCategories(supabase),
@@ -61,7 +64,7 @@ export default async function WikiListPage({
     }),
     getWikiStats(supabase),
     listProjectsWithKnowledge(supabase),
-    listKnowledgeBaseSynopses(supabase),
+    listKnowledgeBaseSynopses(user?.id ?? null),
   ])
 
   const filters: WikiFilters = { category, status, q, view }
@@ -122,12 +125,47 @@ export default async function WikiListPage({
           <p className="text-sm text-zinc-500">No knowledge bases available yet.</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-3">
-            {knowledgeBaseSynopses.map((kb) => (
-              <div key={kb.id} className="rounded border border-zinc-200 bg-white p-4">
-                <div className="font-medium">{kb.name}</div>
-                {kb.description && <p className="mt-1 text-sm text-zinc-600">{kb.description}</p>}
-              </div>
-            ))}
+            {knowledgeBaseSynopses.map((kb) => {
+              const isRestricted = kb.visibilityScope !== 'platform' && kb.visibilityScope !== 'public'
+              return (
+                <div key={kb.id} className="rounded border border-zinc-200 bg-white p-4">
+                  <div className="font-medium">{kb.name}</div>
+                  {kb.description && <p className="mt-1 text-sm text-zinc-600">{kb.description}</p>}
+                  {isRestricted && (
+                    <p className="mt-2 text-xs text-zinc-400">
+                      {kb.visibilityScope === 'project_private' ? 'Private to a Project' : 'Shared with selected Projects'}
+                      {kb.disclosableOwningProjects.length > 0 && (
+                        <>
+                          {' — '}
+                          {kb.disclosableOwningProjects.map((p, i) => (
+                            <span key={p.id}>
+                              {i > 0 && ', '}
+                              <Link href={`/projects/${p.id}`} className="underline">
+                                {p.name}
+                              </Link>
+                              {p.ownerEmail && ` (${p.ownerEmail})`}
+                            </span>
+                          ))}
+                        </>
+                      )}
+                    </p>
+                  )}
+                  {kb.viewerProjectLinks.length > 0 && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Used in:{' '}
+                      {kb.viewerProjectLinks.map((p, i) => (
+                        <span key={p.id}>
+                          {i > 0 && ', '}
+                          <Link href={`/projects/${p.id}`} className="underline">
+                            {p.name}
+                          </Link>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </section>

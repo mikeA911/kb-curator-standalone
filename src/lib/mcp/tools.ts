@@ -9,6 +9,8 @@ import * as workbenchWorkstreams from '@/lib/workbench/workstreams'
 import { createManualDraftArticle, WikiValidationError } from '@/lib/wiki/articles'
 import { linkRelatedArticle } from '@/lib/wiki/relations'
 import { getActiveEmbeddingProvider } from '@/lib/ai'
+import { listDiscoverableProjects } from '@/lib/projects/directory'
+import { requestProjectJoin } from '@/lib/projects/join-requests'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type { Database, InformationSensitivity } from '@/types/database'
 
@@ -285,6 +287,41 @@ const tools: Record<string, ToolDefinition<any, any>> = {
     handler: async (ctx, input: { query: string; limit: number }) => {
       const results = await workbenchProjects.searchProjects(ctx, input.query, input.limit)
       return { projects: results }
+    },
+  },
+
+  list_discoverable_projects: {
+    description:
+      "List Projects the user isn't necessarily a member of but is allowed to know exist -- name, type, objective, status, owner, and whether the user is already a member or has a pending join request. Never returns Project content, membership lists, or evidence. Use this when a user asks to find a Project, or what Projects exist, that search_projects (their own memberships only) doesn't already cover.",
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      projects: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          projectType: z.string(),
+          objective: z.string().nullable(),
+          status: z.string(),
+          ownerEmail: z.string().nullable(),
+          isOrganizationHome: z.boolean(),
+          viewerIsMember: z.boolean(),
+          viewerHasPendingJoinRequest: z.boolean(),
+        })
+      ),
+    }),
+    handler: async (ctx) => {
+      const projects = await listDiscoverableProjects(ctx)
+      return { projects }
+    },
+  },
+
+  request_project_membership: {
+    description:
+      "File a request to join a discoverable Project the user is not yet a member of. Does NOT grant access immediately -- the Project's owner or curator must approve it. Only usable on a Project returned by list_discoverable_projects with viewerIsMember false; fails for a Project the user can't already see. Tell the user their request is pending, never that they've joined.",
+    inputSchema: z.object({ projectId: z.string(), reason: z.string().optional() }),
+    outputSchema: z.object({ requestId: z.string(), alreadyRequested: z.boolean() }),
+    handler: async (ctx, input: { projectId: string; reason?: string }) => {
+      return requestProjectJoin(ctx, input)
     },
   },
 

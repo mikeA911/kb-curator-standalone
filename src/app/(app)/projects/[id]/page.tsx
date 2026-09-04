@@ -20,6 +20,12 @@ import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer
 import { SubmitSourceForm } from '@/components/projects/SubmitSourceForm'
 import { SourceSubmissionsReview } from '@/components/projects/SourceSubmissionsReview'
 import { ProjectCategorySelector } from '@/components/projects/ProjectCategorySelector'
+import { ProjectDiscoverabilitySelector } from '@/components/projects/ProjectDiscoverabilitySelector'
+import { RequestToJoinButton } from '@/components/projects/RequestToJoinButton'
+import { JoinRequestsReview } from '@/components/projects/JoinRequestsReview'
+import { ProjectDirectory } from '@/components/projects/ProjectDirectory'
+import { listDiscoverableProjects } from '@/lib/projects/directory'
+import { requireUser } from '@/lib/auth'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -62,6 +68,50 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           console.error(`ProjectPage: admin-client re-check for project ${id} also failed`, adminError)
         }
       }
+
+      // OR-036: the "chicken-and-egg" discoverability fallback -- a
+      // genuinely new (non-member) user hitting a Project marked
+      // discoverability='platform' would otherwise 404 here forever, since
+      // projects_select_members RLS is deliberately untouched (active member
+      // of any role, or platform admin, same as before this feature).
+      // Served the same way /projects/portfolio already serves org-wide
+      // safe metadata to non-members: an explicit non-anonymous check, then
+      // a narrow admin-client query for only safe columns -- never a
+      // broadened RLS policy. A genuinely non-discoverable Project a
+      // non-member hits still 404s below, unchanged.
+      if (viewerProfile && viewerProfile.role !== 'anonymous') {
+        const admin = createAdminClient()
+        const { data: discoverable } = await admin
+          .from('projects')
+          .select('id, name, objective, project_type, status, owner_id, discoverability, is_organization_home')
+          .eq('id', id)
+          .maybeSingle()
+        if (discoverable && discoverable.discoverability === 'platform') {
+          const [{ data: owner }, { data: pendingRequest }] = await Promise.all([
+            discoverable.owner_id
+              ? admin.from('profiles').select('email').eq('id', discoverable.owner_id).maybeSingle()
+              : Promise.resolve({ data: null }),
+            supabase.from('project_join_requests').select('id').eq('project_id', id).eq('requester_id', user.id).eq('status', 'pending').maybeSingle(),
+          ])
+          const directoryProjects = discoverable.is_organization_home
+            ? await listDiscoverableProjects(await requireUser(), { excludeProjectId: id })
+            : []
+
+          return (
+            <div className="flex max-w-2xl flex-col gap-6">
+              <div>
+                <h1 className="text-xl font-semibold">{discoverable.name}</h1>
+                <p className="mt-1 text-sm text-zinc-500">{TYPE_LABELS[discoverable.project_type] ?? discoverable.project_type}</p>
+              </div>
+              {discoverable.objective && <p className="text-sm text-zinc-600">{discoverable.objective}</p>}
+              {owner?.email && <p className="text-xs text-zinc-500">Owner: {owner.email}</p>}
+              <p className="text-sm text-zinc-600">You&rsquo;re not yet a member of this Project. Request to join to see its full workspace.</p>
+              <RequestToJoinButton projectId={id} alreadyRequested={!!pendingRequest} />
+              {discoverable.is_organization_home && <ProjectDirectory projects={directoryProjects} viewerIsAdmin={viewerProfile.role === 'admin'} />}
+            </div>
+          )
+        }
+      }
     }
     notFound()
   }
@@ -83,6 +133,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     { data: activeMembers },
     { data: submittableArtifacts },
     { data: sourceSubmissions },
+    { data: joinRequests },
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -129,6 +180,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     user
       ? supabase.from('project_source_submissions').select('*').eq('project_id', id).order('created_at', { ascending: false })
       : Promise.resolve({ data: null }),
+    // OR-036: RLS (project_join_requests_select_own_or_manager) already
+    // scopes this to the caller's own request or every request if they can
+    // curate this project -- same ungated-fetch convention as
+    // sourceSubmissions above.
+    user ? supabase.from('project_join_requests').select('*').eq('project_id', id).order('created_at', { ascending: false }) : Promise.resolve({ data: null }),
   ])
   const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
   const { data: statusHistoryActors } =
@@ -141,7 +197,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // members/page.tsx and notes/page.tsx -- project_members itself (fetched
   // above under RLS) is the real authorization boundary.
   const memberUserIds = [
-    ...new Set([...(activeMembers ?? []).map((m) => m.user_id), ...(sourceSubmissions ?? []).map((s) => s.submitted_by)]),
+    ...new Set([
+      ...(activeMembers ?? []).map((m) => m.user_id),
+      ...(sourceSubmissions ?? []).map((s) => s.submitted_by),
+      ...(joinRequests ?? []).map((r) => r.requester_id),
+    ]),
   ]
   const { data: memberProfiles } =
     memberUserIds.length > 0 ? await createAdminClient().from('profiles').select('id, email').in('id', memberUserIds) : { data: [] }
@@ -264,6 +324,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-zinc-500">{TYPE_LABELS[project.project_type] ?? project.project_type}</p>
           <span className="text-zinc-300">·</span>
           <ProjectCategorySelector projectId={project.id} category={project.portfolio_category} canEdit={canCurateWorkstreams} />
+          <span className="text-zinc-300">·</span>
+          <ProjectDiscoverabilitySelector projectId={project.id} discoverability={project.discoverability} canEdit={canCurateWorkstreams} />
         </div>
         {project.objective && <p className="mt-2 text-sm text-zinc-600">{project.objective}</p>}
         {Object.keys(project.details ?? {}).length > 0 && (
@@ -281,6 +343,22 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </div>
 
       {user && viewerMembership && <MemberDirectory projectId={project.id} members={directoryMembers} viewerUserId={user.id} />}
+
+      {canCurateWorkstreams && (
+        <JoinRequestsReview
+          projectId={project.id}
+          requests={(joinRequests ?? [])
+            .filter((r) => r.status === 'pending')
+            .map((r) => ({ id: r.id, requesterEmail: memberEmailById.get(r.requester_id) ?? r.requester_id, createdAt: r.created_at }))}
+        />
+      )}
+
+      {project.is_organization_home && (
+        <ProjectDirectory
+          projects={await listDiscoverableProjects(await requireUser(), { excludeProjectId: project.id })}
+          viewerIsAdmin={viewerProfile?.role === 'admin'}
+        />
+      )}
 
       <ProjectGoalForm projectId={project.id} goal={project.goal} canEdit={canManage} />
       <ProjectStarterPromptForm projectId={project.id} starterPrompt={project.starter_prompt} canEdit={canCurateWorkstreams} />

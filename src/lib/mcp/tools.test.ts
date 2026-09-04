@@ -355,7 +355,7 @@ describe('callTool', () => {
 })
 
 describe('listTools', () => {
-  it('lists all ten registered tools with descriptions', () => {
+  it('lists all twelve registered tools with descriptions', () => {
     const names = listTools().map((t) => t.name)
     expect(names).toEqual([
       'get_navigation_guide',
@@ -363,6 +363,8 @@ describe('listTools', () => {
       'search_wiki',
       'list_project_notes',
       'search_projects',
+      'list_discoverable_projects',
+      'request_project_membership',
       'classify_project',
       'create_project',
       'approve_project',

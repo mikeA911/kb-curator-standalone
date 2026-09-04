@@ -12,6 +12,11 @@ vi.mock('@/lib/supabase/admin', () => ({
     from: () => ({
       select: () => ({
         in: async () => ({ data: [{ id: 'user-2', email: 'teammate@example.com' }], error: null }),
+        // enrollInOrganizationHome's is_organization_home lookup -- no org
+        // home project seeded in these tests, so it's always a safe no-op
+        // (matches "no project currently flagged as the org home" in its
+        // own doc comment).
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
       }),
       // createProject's best-effort project_status_history log (see
       // logStatusChange in ./projects) also goes through this admin

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/projects'
-import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile, PortfolioCategory } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile, PortfolioCategory, ProjectDiscoverability } from '@/types/database'
 
 export async function createProjectAction(input: {
   name: string
@@ -90,6 +90,12 @@ export async function updateProjectPortfolioCategoryAction(projectId: string, ca
   await workbench.updateProjectPortfolioCategory(ctx, projectId, category)
   revalidatePath(`/projects/${projectId}`)
   revalidatePath('/projects')
+}
+
+export async function updateProjectDiscoverabilityAction(projectId: string, discoverability: ProjectDiscoverability) {
+  const ctx = await requireUser()
+  await workbench.updateProjectDiscoverability(ctx, projectId, discoverability)
+  revalidatePath(`/projects/${projectId}`)
 }
 
 export async function searchProfilesByEmailAction(query: string): Promise<{ id: string; email: string }[]> {

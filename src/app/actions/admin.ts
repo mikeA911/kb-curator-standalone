@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
+import { enrollInOrganizationHome } from '@/lib/workbench/projects'
 
 // Every action here requires admin first (using the caller's own RLS-scoped
 // session), then switches to the service-role client for the actual write --
@@ -127,6 +128,8 @@ export async function createUserAction(input: { email: string; password: string;
     assigned_kbs: [],
   })
   if (profileError) throw profileError
+
+  await enrollInOrganizationHome(admin, created.user.id)
 
   revalidatePath('/admin')
 }
