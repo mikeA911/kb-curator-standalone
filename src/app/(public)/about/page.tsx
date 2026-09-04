@@ -177,6 +177,11 @@ export default function AboutPage() {
       <section>
         <p className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Explore further</p>
         <h2 className="mt-2 text-2xl font-semibold text-zinc-950">Go deeper—learn about the latest AI trends here</h2>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
+          These links open material published for public viewing. Some organizational knowledge is
+          protected; <Link href="/login" className="font-medium text-amber-800 underline underline-offset-4 hover:text-amber-900">sign in first</Link> to
+          see the additional Wiki and Project knowledge available to you.
+        </p>
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {EXPLORE.map((item) => <Link key={item.title} href={item.href} className="group rounded-xl border border-zinc-200 bg-white p-5 hover:border-zinc-400 hover:shadow-sm"><h3 className="text-sm font-semibold text-zinc-950 group-hover:underline">{item.title} →</h3><p className="mt-2 text-sm leading-5 text-zinc-600">{item.description}</p></Link>)}
         </div>

@@ -1,7 +1,16 @@
 import 'server-only'
 import { AuthError, hasRequiredRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile, PortfolioCategory } from '@/types/database'
+import type {
+  ApprovalType,
+  ProjectRole,
+  ProjectType,
+  ProjectStatus,
+  ProjectMemberStatus,
+  PublicProjectProfile,
+  PortfolioCategory,
+  ProjectDiscoverability,
+} from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
@@ -160,6 +169,20 @@ export async function createProject(
 // creation itself.
 export async function attachKnowledgeBase(ctx: WorkbenchCallerContext, projectId: string, knowledgeBaseId: string) {
   await requireActiveKnowledgeBase(ctx.supabase, knowledgeBaseId)
+
+  // OR-036: the real gate, not just listAttachableKnowledgeBases' UI-level
+  // filter -- a project_private/selected_projects KB (e.g. "Zadara / Sandz")
+  // must never be attachable through this general self-serve path, since
+  // kb_vectors_select_scoped grants retrieval purely through
+  // project_knowledge_bases membership -- attaching it here would hand the
+  // attaching project's own members real content access to a KB meant to
+  // stay scoped elsewhere.
+  const { data: kb, error: kbError } = await ctx.supabase.from('knowledge_bases').select('visibility_scope').eq('id', knowledgeBaseId).maybeSingle()
+  if (kbError) throw kbError
+  if (!kb || (kb.visibility_scope !== 'platform' && kb.visibility_scope !== 'public')) {
+    throw new ProjectValidationError('This knowledge base is scoped to a specific project and cannot be attached here')
+  }
+
   const { error } = await ctx.supabase
     .from('project_knowledge_bases')
     .insert({ project_id: projectId, knowledge_base_id: knowledgeBaseId, attached_by: ctx.user.id })
@@ -329,6 +352,47 @@ export async function updateProjectPortfolioCategory(
   if (error) throw error
 }
 
+// Project directory opt-in (OR-036) -- same owner/curator/admin bar and
+// admin-client-after-explicit-check pattern as updateProjectStarterPrompt/
+// updateProjectPortfolioCategory above.
+export async function updateProjectDiscoverability(
+  ctx: WorkbenchCallerContext,
+  projectId: string,
+  discoverability: ProjectDiscoverability
+): Promise<void> {
+  if (ctx.profile.role !== 'admin') {
+    const role = await getActiveProjectRole(ctx, projectId)
+    if (role !== 'owner' && role !== 'curator') {
+      throw new AuthError('Requires this project\'s owner or curator role (or platform admin) to change its discoverability')
+    }
+  }
+  const admin = createAdminClient()
+  const { error } = await admin.from('projects').update({ discoverability }).eq('id', projectId)
+  if (error) throw error
+}
+
+// Every newly created account is auto-enrolled in the Organization Home
+// project (OR-036, Mike) -- makes it genuinely function as "everyone's home
+// base" without relying on discovery + a manual join request for the one
+// Project every user should always have. Called right after account
+// creation from both createAndAddProjectMember (below) and createUserAction
+// (src/app/actions/admin.ts). Takes an already-built admin client, not a
+// WorkbenchCallerContext -- this is an internal step of account creation,
+// not its own authorized action, and both call sites already have one.
+// on conflict do nothing: safe no-op if the caller happened to be adding
+// the user to the org-home project itself, and safe no-op (zero rows
+// matched) if no project is currently flagged as the org home.
+export async function enrollInOrganizationHome(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
+  const { data: homeProject, error: homeError } = await admin.from('projects').select('id').eq('is_organization_home', true).maybeSingle()
+  if (homeError) throw homeError
+  if (!homeProject) return
+
+  const { error } = await admin
+    .from('project_members')
+    .upsert({ project_id: homeProject.id, user_id: userId, role: 'viewer', status: 'active' }, { onConflict: 'project_id,user_id', ignoreDuplicates: true })
+  if (error) throw error
+}
+
 // Backs the Ember search_projects tool (docs/dev-request-ember-onboarding-
 // capability-gaps.md, item 1) -- lets Ember discover an existing project
 // before proposing to create a new one, closing the gap where she had no
@@ -436,6 +500,8 @@ export async function createAndAddProjectMember(
     .from('project_members')
     .insert({ project_id: input.projectId, user_id: created.user.id, role: input.projectRole, status: 'active' })
   if (memberError) throw memberError
+
+  await enrollInOrganizationHome(admin, created.user.id)
 }
 
 const EMAIL_LIKE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

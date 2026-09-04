@@ -147,7 +147,10 @@ describe('createProjectAction', () => {
 
 describe('attachKnowledgeBaseAction', () => {
   it('requires curator or above', async () => {
-    const supabase = createFakeSupabase({ project_knowledge_bases: [{ data: null, error: null }] })
+    const supabase = createFakeSupabase({
+      knowledge_bases: [{ data: { visibility_scope: 'platform' }, error: null }],
+      project_knowledge_bases: [{ data: null, error: null }],
+    })
     requireRoleMock.mockResolvedValue({ user: { id: 'user-1' }, supabase })
 
     await attachKnowledgeBaseAction('project-1', 'kb-1')

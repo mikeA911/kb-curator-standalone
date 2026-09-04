@@ -211,6 +211,16 @@ const TOOL_METADATA: Record<string, Pick<AssistantToolDescriptor, 'requiredPermi
     enforcement: 'kb_sandbox_enforced',
     enforcedBy: 'projects_update_managers row-level security (can_manage_project)',
   },
+  list_discoverable_projects: {
+    requiredPermission: 'Any signed-in (non-anonymous) account; returns only Projects marked discoverability=\'platform\', safe metadata only.',
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'src/lib/projects/directory.ts (explicit role check, admin client for a narrow safe-column projection -- not an RLS policy change)',
+  },
+  request_project_membership: {
+    requiredPermission: "Any signed-in (non-anonymous) account; the target Project must already be visible to the caller or discoverability='platform'.",
+    enforcement: 'kb_sandbox_enforced',
+    enforcedBy: 'project_join_requests_insert_self row-level security',
+  },
   create_project: {
     requiredPermission: 'Any signed-in (non-anonymous) account.',
     enforcement: 'kb_sandbox_enforced',

@@ -173,6 +173,19 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Exposure:** Not Ember-actionable; a candidate for a future caller-scoped MCP summary limited to the same safe fields.
 - **Verification:** `src/app/(app)/projects/portfolio/page.tsx`, `src/lib/projects/portfolio.ts`, `src/components/projects/OrganizationPortfolio.tsx`, `src/components/projects/RequestMembershipButton.tsx`, `src/app/actions/project-notes.ts` (`requestProjectMembershipAction`), `supabase/migrations/20260901120001_project_notes_request_membership.sql`; code verified 2026-08-30, admin-bypass and request-membership behavior verified 2026-09-01. Live-verified with `admin`/`curator` test accounts against real seed data: an admin non-member of a Project still gets "Open workspace" and a fully rendered workspace on click; a non-member curator's "Request membership" click inserts exactly one open `project_notes` row addressed to the owner, survives a page reload as "Request sent" with no way to re-click, and a second click (or a reload-then-click) does not insert a duplicate.
 
+### Browse the Project directory and request to join
+
+- **Intent:** Let any signed-in user find and request access to a Project they're not yet a member of, without exposing its private content, and give the client a real organization entry point instead of a dead end.
+- **Users and authority:** Any signed-in non-anonymous user can browse and request. Deciding a request (approve/decline) is the target Project's owner or curator, or a platform admin -- same bar as "Add or invite a member to a Project" below.
+- **Prerequisites:** Signed-in session. A Project only appears here if its owner/curator/admin has explicitly set it discoverable (opt-in, default is `members_only`) -- there is no way to browse every Project in the instance.
+- **Start:** `/projects/[id]` on the one Project flagged as the Organization Home (for this deployment, "Sandz — Organization Home") -- linked from the Project's own directory section, "Projects at Sandz."
+- **Navigation:** Open the Organization Home Project → **Projects at Sandz** section → for a Project the user isn't a member of, **Request to join**; for one they already belong to (or if the viewer is a platform admin), **Open workspace** instead. The requester sees "Request pending" after filing; the Project's owner/curator sees the request under **Pending join requests** on that Project's own page and can Approve or Decline.
+- **Outcome:** A pending request creates no membership by itself. Approval adds the requester as an active `viewer` on that Project -- never a higher role, and never platform authority. A genuinely non-discoverable Project stays completely invisible through this path, Ember, search, or direct navigation to a non-member.
+- **Ember guidance:** `list_discoverable_projects` returns safe metadata (name/type/objective/status/owner/membership state) for exactly the Projects a user is allowed to know exist; `request_project_membership` files a request for one where `viewerIsMember` is false. Always tell the user their request is pending an owner/curator decision -- never imply it grants immediate access. If asked about a Project not in that list, say it isn't currently discoverable rather than guessing whether it exists.
+- **Boundaries:** Never name or describe a non-discoverable Project to a non-member, through Ember or otherwise. A KB attached to a restricted Project may still show that Project's name on `/wiki`'s Knowledge Bases synopsis, but only when that Project is itself discoverable or the viewer is already a member -- see "Find approved guidance" in the Wiki section below.
+- **Exposure:** Ember-readable and Ember-actionable (`list_discoverable_projects`, `request_project_membership`); deciding a request is UI-only (`JoinRequestsReview.tsx`), not exposed to Ember.
+- **Verification:** `supabase/migrations/20260904140001_project_join_requests.sql`, `src/lib/projects/directory.ts`, `src/lib/projects/join-requests.ts`, `src/components/projects/{ProjectDirectory,RequestToJoinButton,JoinRequestsReview}.tsx`, `src/app/(app)/projects/[id]/page.tsx` (non-member discoverable fallback); code verified 2026-09-04.
+
 ### Work inside a project
 
 - **Intent:** Use project-specific sources and knowledge while preserving access boundaries and provenance.
@@ -327,9 +340,9 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Navigation:** Open **Wiki** → search or filter by category, status, or project → select an article.
 - **Outcome:** The user sees the approved version and available provenance, relationships, and source links they are authorized to access.
 - **Ember guidance:** Ember may search approved Wiki content, summarize it with citations, and offer an authorized article link.
-- **Boundaries:** Platform admin or curator status does not automatically grant access to approved private customer knowledge. Ember must not reveal the existence, title, excerpt, or source of inaccessible private articles.
+- **Boundaries:** Platform admin or curator status does not automatically grant access to approved private customer knowledge. Ember must not reveal the existence, title, excerpt, or source of inaccessible private articles. As of 2026-09-04, `/wiki`'s "Knowledge bases" synopsis section shows every active/approved KB's name and description to any signed-in user, plus which of the *viewer's own* Projects have it attached (a real link, no longer a dead end) -- for a KB scoped to a specific Project, it also names that Project (and its owner) only when the Project is itself discoverable or the viewer already belongs to it, never otherwise.
 - **Exposure:** Ember-readable; strong candidate for MCP read access with visibility enforcement.
-- **Verification:** `/wiki`, `/wiki/[slug]`, project visibility controls; code verified 2026-08-28.
+- **Verification:** `/wiki`, `/wiki/[slug]`, project visibility controls; code verified 2026-08-28, KB synopsis fix verified 2026-09-04.
 
 ### Create or curate Wiki knowledge
 

@@ -656,6 +656,13 @@ export interface Project {
   starter_prompt: string | null
   // See PortfolioCategory above -- 20260904120001_project_portfolio_category.sql.
   portfolio_category: PortfolioCategory
+  // OR-036 (20260904140001_project_join_requests.sql). See
+  // ProjectDiscoverability above -- default 'members_only', opt-in only.
+  discoverability: ProjectDiscoverability
+  // True for exactly one Project per single-tenant deployment (seeded, not
+  // yet UI-settable) -- makes the read-only "Projects at X" directory
+  // section render on that Project's own page. See ProjectDirectory.tsx.
+  is_organization_home: boolean
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -898,6 +905,29 @@ export interface ResourceAccessRequest {
   resource_id: string
   requester_id: string
   status: ResourceAccessRequestStatus
+  note_id: string | null
+  outcome_note_id: string | null
+  decided_by: string | null
+  decision_reason: string | null
+  decided_at: string | null
+  created_at: string
+}
+
+export type ProjectDiscoverability = 'platform' | 'members_only'
+export type ProjectJoinRequestStatus = 'pending' | 'approved' | 'declined' | 'cancelled'
+
+// A non-member requesting to join a Project (OR-036, 20260904140001) --
+// mirrors ResourceAccessRequest almost exactly, but for membership itself
+// rather than access to a specific resource, and insertable by someone who
+// is NOT yet a project member (the RLS insert policy allows this only when
+// the project is discoverability='platform' or already visible to them).
+// Decided by can_curate_project (owner-or-curator), not can_manage_project.
+// See src/lib/projects/join-requests.ts.
+export interface ProjectJoinRequest {
+  id: string
+  project_id: string
+  requester_id: string
+  status: ProjectJoinRequestStatus
   note_id: string | null
   outcome_note_id: string | null
   decided_by: string | null
@@ -1865,6 +1895,8 @@ export type ProjectInsert = Omit<
   | 'goal'
   | 'starter_prompt'
   | 'portfolio_category'
+  | 'discoverability'
+  | 'is_organization_home'
   | 'public_full_detail'
   | 'information_sensitivity'
   | 'created_via'
@@ -1931,6 +1963,13 @@ export type ResourceAccessRequestInsert = Omit<
 export type ResourceAccessRequestUpdate = Partial<
   Omit<ResourceAccessRequest, 'id' | 'project_id' | 'resource_type' | 'resource_id' | 'requester_id' | 'created_at'>
 >
+
+export type ProjectJoinRequestInsert = Omit<
+  ProjectJoinRequest,
+  'id' | 'created_at' | 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'
+> &
+  Partial<Pick<ProjectJoinRequest, 'status' | 'note_id' | 'outcome_note_id' | 'decided_by' | 'decision_reason' | 'decided_at'>>
+export type ProjectJoinRequestUpdate = Partial<Omit<ProjectJoinRequest, 'id' | 'project_id' | 'requester_id' | 'created_at'>>
 
 export type ProjectSourceSubmissionInsert = Omit<
   ProjectSourceSubmission,
@@ -2227,6 +2266,12 @@ export interface Database {
         Row: ResourceAccessRequest
         Insert: ResourceAccessRequestInsert
         Update: ResourceAccessRequestUpdate
+        Relationships: []
+      }
+      project_join_requests: {
+        Row: ProjectJoinRequest
+        Insert: ProjectJoinRequestInsert
+        Update: ProjectJoinRequestUpdate
         Relationships: []
       }
       project_source_submissions: {
