@@ -330,11 +330,25 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         {project.objective && <p className="mt-2 text-sm text-zinc-600">{project.objective}</p>}
         {Object.keys(project.details ?? {}).length > 0 && (
           <dl className="mt-3 flex flex-col gap-1 text-sm">
-            {Object.entries(project.details as Record<string, string>).map(([k, v]) =>
+            {/* details has no schema ("no template engine," per the Project
+                Model brief) -- a curator-authored seed can (and did, live,
+                2026-09-04: "Food Outlet AI-Readiness Showcase") put a nested
+                object under a key instead of a plain string. React throws
+                "Objects are not valid as a React child" (error #31) on a raw
+                object child, which took the whole page down with it -- this
+                must render *something* for any JSON value, never assume
+                string. */}
+            {Object.entries(project.details as Record<string, unknown>).map(([k, v]) =>
               v ? (
                 <div key={k} className="flex gap-2">
-                  <dt className="capitalize text-zinc-500">{k.replace(/_/g, ' ')}:</dt>
-                  <dd>{v}</dd>
+                  <dt className="shrink-0 capitalize text-zinc-500">{k.replace(/_/g, ' ')}:</dt>
+                  <dd>
+                    {typeof v === 'string' ? (
+                      v
+                    ) : (
+                      <pre className="whitespace-pre-wrap break-words font-mono text-xs text-zinc-600">{JSON.stringify(v, null, 2)}</pre>
+                    )}
+                  </dd>
                 </div>
               ) : null
             )}
