@@ -66,6 +66,15 @@ export interface ApproveChunkInput {
 // app (which logged-and-ignored a failed kb_vectors insert after approving).
 // Any failure here throws -- the chunk stays whatever it was before, not
 // silently marked approved without a vector.
+//
+// The reviewer UI has no status guard on Approve (rejectChunk's own comment
+// documents this: a chunk can be re-reviewed after already being approved),
+// so this must be idempotent -- upsert on kb_vectors' `unique (chunk_id)`
+// constraint, not insert. Before this fix, re-clicking Approve on an
+// already-approved chunk threw a raw Postgres 23505 duplicate-key error,
+// which production redacts to an opaque "Minified React error #441" with no
+// indication of what actually went wrong (caught live 2026-09-04 approving
+// sandz-general-company-profile.txt).
 export async function approveChunk(
   supabase: SupabaseClient<Database>,
   provider: AIProvider,
@@ -78,32 +87,43 @@ export async function approveChunk(
     .single()
   if (chunkError || !chunk) throw chunkError ?? new Error('Chunk not found')
 
+  // Re-approving an already-approved chunk (a deliberately allowed
+  // re-review, see this function's own comment above) must not double-count
+  // it -- only a genuine pending/rejected/etc -> approved transition
+  // increments the document's counter, same guard shape as rejectChunk's
+  // own wasApproved check below.
+  const wasAlreadyApproved = chunk.review_status === 'approved'
+
   const embedding = await provider.embed({ text: chunk.chunk_text })
 
-  const { error: vectorError } = await supabase.from('kb_vectors').insert({
-    chunk_id: chunk.id,
-    document_id: chunk.document_id,
-    content: chunk.chunk_text,
-    embedding: embedding.embedding,
-    embedding_model: embedding.model,
-    embedding_dim: embedding.dimensions,
-    doc_type: chunk.document?.doc_type ?? '',
-    topic: chunk.ai_metadata?.topic ?? null,
-    subtopic: chunk.ai_metadata?.subtopic ?? null,
-    use_cases: chunk.ai_metadata?.use_cases ?? null,
-    key_concepts: chunk.ai_metadata?.key_concepts ?? null,
-    relevance_score: chunk.ai_metadata?.relevance_score ?? null,
-    curator_notes: input.curatorNotes,
-    source_document: chunk.document?.filename ?? null,
-    source_page: chunk.source_page,
-    source_url: null,
-    domain: chunk.document?.doc_type ?? null,
-    curator_name: null,
-    tags: null,
-    chunk_index: chunk.chunk_index,
-    word_count: chunk.chunk_size,
-    approved_by: input.reviewedBy,
-  })
+  const { error: vectorError } = await supabase.from('kb_vectors').upsert(
+    {
+      chunk_id: chunk.id,
+      document_id: chunk.document_id,
+      content: chunk.chunk_text,
+      embedding: embedding.embedding,
+      embedding_model: embedding.model,
+      embedding_dim: embedding.dimensions,
+      doc_type: chunk.document?.doc_type ?? '',
+      topic: chunk.ai_metadata?.topic ?? null,
+      subtopic: chunk.ai_metadata?.subtopic ?? null,
+      use_cases: chunk.ai_metadata?.use_cases ?? null,
+      key_concepts: chunk.ai_metadata?.key_concepts ?? null,
+      relevance_score: chunk.ai_metadata?.relevance_score ?? null,
+      curator_notes: input.curatorNotes,
+      source_document: chunk.document?.filename ?? null,
+      source_page: chunk.source_page,
+      source_url: null,
+      domain: chunk.document?.doc_type ?? null,
+      curator_name: null,
+      tags: null,
+      chunk_index: chunk.chunk_index,
+      word_count: chunk.chunk_size,
+      approved_by: input.reviewedBy,
+      last_updated: new Date().toISOString(),
+    },
+    { onConflict: 'chunk_id' }
+  )
   if (vectorError) throw vectorError
 
   const { error: updateError } = await supabase
@@ -117,7 +137,7 @@ export async function approveChunk(
     .eq('id', input.chunkId)
   if (updateError) throw updateError
 
-  await supabase.rpc('increment_approved_chunks', { doc_id: chunk.document_id })
+  if (!wasAlreadyApproved) await supabase.rpc('increment_approved_chunks', { doc_id: chunk.document_id })
 }
 
 export interface RejectChunkInput {

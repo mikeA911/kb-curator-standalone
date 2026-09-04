@@ -19,23 +19,23 @@ const fakeProvider: AIProvider = {
   },
 }
 
+const chunkRow = (reviewStatus: string) => ({
+  id: 'chunk-1',
+  document_id: 'doc-1',
+  chunk_text: 'some text',
+  chunk_index: 0,
+  chunk_size: 2,
+  source_page: 3,
+  review_status: reviewStatus,
+  ai_metadata: { topic: 'Billing', use_cases: [], key_concepts: [] },
+  document: { doc_type: 'billing', filename: 'a.pdf' },
+})
+
 describe('approveChunk', () => {
   it('writes a kb_vectors row and marks the chunk approved with an audit trail', async () => {
     const supabase = createFakeSupabase({
       document_chunks: [
-        {
-          data: {
-            id: 'chunk-1',
-            document_id: 'doc-1',
-            chunk_text: 'some text',
-            chunk_index: 0,
-            chunk_size: 2,
-            source_page: 3,
-            ai_metadata: { topic: 'Billing', use_cases: [], key_concepts: [] },
-            document: { doc_type: 'billing', filename: 'a.pdf' },
-          },
-          error: null,
-        },
+        { data: chunkRow('pending'), error: null },
         { data: null, error: null }, // the update() call
       ],
       kb_vectors: [{ data: null, error: null }],
@@ -43,9 +43,32 @@ describe('approveChunk', () => {
 
     await approveChunk(supabase, fakeProvider, { chunkId: 'chunk-1', curatorNotes: 'looks good', reviewedBy: 'curator-1' })
 
-    expect((supabase as ReturnType<typeof createFakeSupabase>)._rpcCalls).toEqual([
-      { name: 'increment_approved_chunks', args: { doc_id: 'doc-1' } },
-    ])
+    const typedSupabase = supabase as ReturnType<typeof createFakeSupabase>
+    expect(typedSupabase._rpcCalls).toEqual([{ name: 'increment_approved_chunks', args: { doc_id: 'doc-1' } }])
+    // upsert, not insert -- kb_vectors has `unique (chunk_id)`, and the
+    // reviewer UI allows re-approving an already-approved chunk (see the
+    // idempotency test below), so a plain insert would throw a duplicate-key
+    // error on the second click.
+    const vectorWrite = typedSupabase._calls.find((c) => c.table === 'kb_vectors')
+    expect(vectorWrite?.method).toBe('upsert')
+  })
+
+  it('re-approving an already-approved chunk is idempotent: no duplicate-key throw, no double-counted approved_chunks', async () => {
+    const supabase = createFakeSupabase({
+      document_chunks: [
+        { data: chunkRow('approved'), error: null },
+        { data: null, error: null }, // the update() call
+      ],
+      kb_vectors: [{ data: null, error: null }],
+    }) as never
+
+    await expect(
+      approveChunk(supabase, fakeProvider, { chunkId: 'chunk-1', curatorNotes: 'still good', reviewedBy: 'curator-1' })
+    ).resolves.toBeUndefined()
+
+    // Already counted the first time it was approved -- re-approving must
+    // not increment the document's approved_chunks counter again.
+    expect((supabase as ReturnType<typeof createFakeSupabase>)._rpcCalls).toEqual([])
   })
 })
 
