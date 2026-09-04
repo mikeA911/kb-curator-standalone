@@ -88,6 +88,52 @@ export async function listKnowledgeBasesForProject(
   return kbs ?? []
 }
 
+export interface ProjectKnowledgeSource {
+  id: string
+  knowledgeBaseId: string
+  title: string
+  publisher: string | null
+  sourceUrl: string | null
+  versionNumber: number | null
+  lifecycleStatus: string
+}
+
+// Backs the project page's Knowledge section source list -- members asked to
+// see source metadata (title, publisher, version, URL) directly on the
+// project rather than only through Ember's answers or one-at-a-time via
+// /sources/[id]. Uses the caller's own RLS-scoped client throughout, same as
+// listKnowledgeBasesForProject above: knowledge_sources_select_staff_or_
+// owner_or_project_member (and has_evidence_access layered on top of it)
+// already scopes this correctly per-source -- a source an evidence-access
+// grant has restricted away from this caller just won't come back here,
+// with zero extra gating needed in this function.
+export async function listSourcesForKnowledgeBases(supabase: SupabaseClient<Database>, kbIds: string[]): Promise<ProjectKnowledgeSource[]> {
+  if (kbIds.length === 0) return []
+
+  const { data: sources, error: sourceError } = await supabase
+    .from('knowledge_sources')
+    .select('id, knowledge_base_id, title, publisher, source_url, current_version_id, lifecycle_status')
+    .in('knowledge_base_id', kbIds)
+    .order('title')
+  if (sourceError) throw sourceError
+
+  const versionIds = (sources ?? []).map((s) => s.current_version_id).filter((v): v is string => !!v)
+  const { data: versions, error: versionError } =
+    versionIds.length > 0 ? await supabase.from('documents').select('id, version_number').in('id', versionIds) : { data: [], error: null }
+  if (versionError) throw versionError
+  const versionNumberById = new Map((versions ?? []).map((v) => [v.id, v.version_number]))
+
+  return (sources ?? []).map((s) => ({
+    id: s.id,
+    knowledgeBaseId: s.knowledge_base_id,
+    title: s.title,
+    publisher: s.publisher,
+    sourceUrl: s.source_url,
+    versionNumber: s.current_version_id ? (versionNumberById.get(s.current_version_id) ?? null) : null,
+    lifecycleStatus: s.lifecycle_status,
+  }))
+}
+
 export interface ProjectKnowledgeSummary {
   id: string
   name: string

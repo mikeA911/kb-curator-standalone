@@ -566,6 +566,14 @@ export type ProjectNoteReplyInsert = Omit<ProjectNoteReply, 'id' | 'created_at'>
 
 export type ProjectType = 'learning' | 'experiment' | 'consulting' | 'transformation' | 'knowledge'
 export type ProjectStatus = 'draft' | 'active' | 'review' | 'completed' | 'archived'
+// "My Projects" list grouping (2026-09-04) -- a separate axis from
+// ProjectType (see 20260904120001_project_portfolio_category.sql's own
+// comment for why the two don't line up). Mike's "Suggested categorization
+// of existing Projects" scheme (20260904130001_project_portfolio_category_v2.sql).
+// 'other' is the safe default for every new project until its owner/curator
+// classifies it -- 'sandz' names today's one real client literally rather
+// than generically; revisit once a second real client exists.
+export type PortfolioCategory = 'sandz' | 'foundation' | 'showcases' | 'builder_lab' | 'templates' | 'legacy_test' | 'archived' | 'other'
 
 // Written only from the service layer (src/lib/workbench/projects.ts), never
 // a database trigger -- actor_id needs the real acting user, which a
@@ -646,6 +654,8 @@ export interface Project {
   // gated by the same RLS as the rest of this row (see that function's
   // comment). 20260904110001_project_starter_prompt.sql.
   starter_prompt: string | null
+  // See PortfolioCategory above -- 20260904120001_project_portfolio_category.sql.
+  portfolio_category: PortfolioCategory
   // Provenance -- who/what created this row. 'ui' is the default (and the
   // only value possible before M6D); 'assistant' is stamped by the chat
   // tool-calling loop (src/lib/chat/loop.ts) as a follow-up update after
@@ -1854,6 +1864,7 @@ export type ProjectInsert = Omit<
   | 'published_by'
   | 'goal'
   | 'starter_prompt'
+  | 'portfolio_category'
   | 'public_full_detail'
   | 'information_sensitivity'
   | 'created_via'
@@ -1870,6 +1881,7 @@ export type ProjectInsert = Omit<
       | 'published_by'
       | 'goal'
       | 'starter_prompt'
+      | 'portfolio_category'
       | 'public_full_detail'
       | 'information_sensitivity'
       | 'created_via'

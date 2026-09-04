@@ -10,7 +10,7 @@ import { ProjectStatusSection } from '@/components/projects/ProjectStatusSection
 import { listWorkstreams } from '@/lib/projects/workstreams'
 import { listProjectNotes } from '@/lib/projects/notes'
 import { listAttachableKnowledgeBases } from '@/lib/knowledge-bases'
-import { listKnowledgeBasesForProject } from '@/lib/projects/queries'
+import { listKnowledgeBasesForProject, listSourcesForKnowledgeBases } from '@/lib/projects/queries'
 import { listArticlesForProject } from '@/lib/wiki/project-links'
 import { KnowledgeBaseAttachManager, KnowledgeBaseDetachButton } from '@/components/projects/KnowledgeBaseAttachManager'
 import { listRecentConversations } from '@/lib/chat/conversations'
@@ -19,6 +19,7 @@ import { getOrganizationExplorer } from '@/lib/projects/explorer'
 import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer'
 import { SubmitSourceForm } from '@/components/projects/SubmitSourceForm'
 import { SourceSubmissionsReview } from '@/components/projects/SourceSubmissionsReview'
+import { ProjectCategorySelector } from '@/components/projects/ProjectCategorySelector'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -213,6 +214,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }
   }
 
+  // Any project member gets this, not just canManage -- RLS on
+  // knowledge_sources already scopes it correctly per-source (see
+  // listSourcesForKnowledgeBases' own comment).
+  const sourcesByKbId = new Map<string, Awaited<ReturnType<typeof listSourcesForKnowledgeBases>>>()
+  if (user && effectiveKnowledgeBases.length > 0) {
+    const sources = await listSourcesForKnowledgeBases(
+      supabase,
+      effectiveKnowledgeBases.map((kb) => kb.id)
+    )
+    for (const source of sources) {
+      sourcesByKbId.set(source.knowledgeBaseId, [...(sourcesByKbId.get(source.knowledgeBaseId) ?? []), source])
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -245,7 +260,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             </Link>
           )}
         </div>
-        <p className="mt-1 text-sm text-zinc-500">{TYPE_LABELS[project.project_type] ?? project.project_type}</p>
+        <div className="mt-1 flex items-center gap-2">
+          <p className="text-sm text-zinc-500">{TYPE_LABELS[project.project_type] ?? project.project_type}</p>
+          <span className="text-zinc-300">·</span>
+          <ProjectCategorySelector projectId={project.id} category={project.portfolio_category} canEdit={canCurateWorkstreams} />
+        </div>
         {project.objective && <p className="mt-2 text-sm text-zinc-600">{project.objective}</p>}
         {Object.keys(project.details ?? {}).length > 0 && (
           <dl className="mt-3 flex flex-col gap-1 text-sm">
@@ -273,12 +292,39 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </p>
         {effectiveKnowledgeBases.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm">
-            {effectiveKnowledgeBases.map((kb) => (
-              <li key={kb.id} className="flex items-center gap-2">
-                Project Knowledge: {kb.name}
-                {canManage && <KnowledgeBaseDetachButton projectId={project.id} knowledgeBaseId={kb.id} />}
-              </li>
-            ))}
+            {effectiveKnowledgeBases.map((kb) => {
+              const sources = sourcesByKbId.get(kb.id) ?? []
+              return (
+                <li key={kb.id} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    Project Knowledge: {kb.name}
+                    {canManage && <KnowledgeBaseDetachButton projectId={project.id} knowledgeBaseId={kb.id} />}
+                  </div>
+                  {sources.length > 0 && (
+                    <ul className="ml-4 flex flex-col gap-0.5 text-xs text-zinc-600">
+                      {sources.map((s) => (
+                        <li key={s.id}>
+                          <Link href={`/sources/${s.id}`} className="underline">
+                            {s.title}
+                          </Link>
+                          {s.publisher && <span> -- {s.publisher}</span>}
+                          {s.versionNumber !== null && <span> -- v{s.versionNumber}</span>}
+                          {s.sourceUrl && (
+                            <>
+                              {' -- '}
+                              <a href={s.sourceUrl} target="_blank" rel="noreferrer" className="underline">
+                                source
+                              </a>
+                            </>
+                          )}
+                          {s.lifecycleStatus !== 'active' && <span> -- {s.lifecycleStatus}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         ) : (
           <p className="text-sm text-zinc-500">No project-specific knowledge base attached yet.</p>
