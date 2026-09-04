@@ -1,7 +1,7 @@
 import 'server-only'
 import { AuthError, hasRequiredRole } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile } from '@/types/database'
+import type { ApprovalType, ProjectRole, ProjectType, ProjectStatus, ProjectMemberStatus, PublicProjectProfile, PortfolioCategory } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
@@ -305,6 +305,27 @@ export async function updateProjectStarterPrompt(ctx: WorkbenchCallerContext, pr
   }
   const admin = createAdminClient()
   const { error } = await admin.from('projects').update({ starter_prompt: starterPrompt.trim() || null }).eq('id', projectId)
+  if (error) throw error
+}
+
+// "My Projects" list grouping (2026-09-04) -- same owner/curator/admin bar
+// and same admin-client-after-explicit-check pattern as
+// updateProjectStarterPrompt above, for the same reason: a project curator
+// should be able to (re)classify their own team's Project, not just its
+// owner (projects_update_managers/can_manage_project is owner-only).
+export async function updateProjectPortfolioCategory(
+  ctx: WorkbenchCallerContext,
+  projectId: string,
+  category: PortfolioCategory
+): Promise<void> {
+  if (ctx.profile.role !== 'admin') {
+    const role = await getActiveProjectRole(ctx, projectId)
+    if (role !== 'owner' && role !== 'curator') {
+      throw new AuthError('Requires this project\'s owner or curator role (or platform admin) to set its category')
+    }
+  }
+  const admin = createAdminClient()
+  const { error } = await admin.from('projects').update({ portfolio_category: category }).eq('id', projectId)
   if (error) throw error
 }
 

@@ -3,7 +3,7 @@
 **Purpose:** Living product-navigation knowledge for Ember, release documentation, future application discovery, and a possible KB Sandbox MCP interface  
 **Status:** Initial baseline — expand as workflows are verified  
 **Application version:** 0.1.0  
-**Last code verification:** 2026-08-31  
+**Last code verification:** 2026-09-04  
 
 ## How this document is used
 
@@ -147,6 +147,19 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Exposure:** Ember-readable and partly Ember-actionable; strong candidate for caller-scoped MCP read access. Creation or change requires identity, validation, and confirmation.
 - **Verification:** `/projects`, `/projects/new`, project membership and governance routes; code verified 2026-08-30.
 
+### Browse and categorize My Projects
+
+- **Intent:** Find a Project faster in a growing list by browsing it grouped into named categories instead of one flat grid.
+- **Users and authority:** Any signed-in user, scoped to their own active memberships (same as "Find or create a project" above). Changing a Project's own category is owner/curator/admin only.
+- **Prerequisites:** Signed-in session; at least one active Project membership to see any groups.
+- **Start:** `/projects`
+- **Navigation:** Projects page -- Projects now render under section headings (Sandz / Foundation / Showcases / Builder Lab / Templates / Legacy/Test / Archived / Others), each with a count; empty sections are hidden. To change a Project's own category, open it and use the selector next to its project type near the top of `/projects/[id]`.
+- **Outcome:** The same set of Projects the user could always see, organized into fewer, labeled groups instead of one long grid.
+- **Ember guidance:** Ember has no dedicated tool for this -- it is a page-level display only. If asked to categorize or find a Project by type, point the user to `/projects` rather than attempting to enumerate or sort Projects conversationally.
+- **Boundaries:** This is a separate axis from `project_type` (learning/experiment/consulting/transformation/knowledge) -- the two do not line up 1:1, so never explain a Project's category by restating its type. A brand-new Project always starts in "Others" until its owner/curator classifies it.
+- **Exposure:** UI-only; not Ember-actionable.
+- **Verification:** `src/app/(app)/projects/page.tsx`, `src/components/projects/ProjectCategorySelector.tsx`, `src/lib/workbench/projects.ts` (`updateProjectPortfolioCategory`), `supabase/migrations/20260904120001_project_portfolio_category.sql` + `..._v2.sql`; code verified 2026-09-04. Live-verified as a platform admin: `/projects` renders grouped sections with correct counts, and the per-project selector saves and persists after reload.
+
 ### View the organization portfolio (admin/curator)
 
 - **Intent:** Give platform admin/curator a safe, organization-wide view of every Project without granting content access merely by platform role.
@@ -250,6 +263,19 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Boundaries:** Human access and AI-processing sensitivity are separate axes -- changing one never implies the other. Project membership and resource-level access grants are separate axes too -- this page is the second one, never the first. All classification and grant changes are recorded in an audit log.
 - **Exposure:** Not an Ember-actionable tool; administrative page only, reached via navigation guidance.
 - **Verification:** `/projects/[id]/access`, `AccessEvidenceManager.tsx`; code verified 2026-08-29. Confirmed as a real, live Ember mistake in the Sandz onboarding experiment's Run 2 (`docs/test-reports/2026-08-30-ember-sandz-onboarding-experiment.md`) -- she read this entry correctly and still told the user to "invite" someone here, because the entry didn't say membership was a prerequisite until this fix.
+
+### See a Project's attached sources and their metadata
+
+- **Intent:** Let any Project member see what's actually in their Project's attached knowledge base(s) -- title, publisher, current version, and source link -- without asking Ember or needing curator/admin access.
+- **Users and authority:** Any active member of the Project, not just owner/curator/admin -- RLS on `knowledge_sources` already scopes each source correctly per-viewer, so a restricted source is simply absent from the list rather than specially hidden.
+- **Prerequisites:** Active membership in the Project.
+- **Start:** `/projects/[id]`
+- **Navigation:** Project page → Knowledge section → each attached knowledge base lists its sources underneath, each linking to its own `/sources/[id]` detail page.
+- **Outcome:** A read-only metadata list -- not the source's actual chunked/embedded content, which stays gated to platform curator/admin at `/review/[docId]`.
+- **Ember guidance:** Ember can already answer "what's in the KB" conversationally via `search_project_knowledge`/`search_wiki`; this page gives the same metadata a permanent, browsable home so the user doesn't have to ask every time. No new Ember tool -- point a user here if they want to browse rather than ask.
+- **Boundaries:** Never confuse this with the actual chunk/document content, which stays curator/admin-only. Never confuse it with the owner/admin-only Access & Evidence page, which manages classification/grants, not just displays metadata.
+- **Exposure:** UI-only; not Ember-actionable (Ember already covers the equivalent conversationally via existing search tools).
+- **Verification:** `src/lib/projects/queries.ts` (`listSourcesForKnowledgeBases`), `src/app/(app)/projects/[id]/page.tsx`; code verified 2026-09-04. Live-verified as both a platform admin and a `viewer`-role member with no manage rights against the real Sandz Pilot project -- the list rendered identically for both.
 
 ### Submit a candidate source for a Project
 

@@ -65,6 +65,19 @@ specifications, architecture documents, manuals, source repositories, research m
 web content, structured datasets, and other supported evidence types. Knowledge Sources are
 evidence, and should stay distinguishable from AI-generated interpretations of that evidence.
 
+**Knowledge Base (KB)** -- a governed collection of Knowledge Sources and their approved,
+retrievable content. A Knowledge Base can be attached to one or more Projects, subject to Project
+membership and source-level access controls. It supplies permission-filtered evidence to Ember and
+Workbench activities; it is not itself a Wiki and should not be described as one. A Project may
+have its own Knowledge Base and may also reuse other explicitly attached Knowledge Bases.
+
+**RAG / Retrieval-Augmented Generation** -- the process of finding information the current user is
+authorized to access at question time and providing it to an AI model as grounded context. In KBS,
+retrieval may find primary evidence from an attached Knowledge Base and curated guidance from an
+authorized Wiki article. RAG does not make a source true, approved, current, or accessible by
+itself; curation, version state, Project scope, and source permissions still govern what can be
+retrieved.
+
 **Project Knowledge** -- trusted knowledge made available within a specific Project. It may
 originate from uploaded sources, curated information, approved findings, promoted conversations, or
 other reviewed material. Project Knowledge provides Ember and Workbench activities with their
@@ -73,6 +86,62 @@ project-specific context.
 **Wiki / Handbook** -- curated, reusable knowledge intended to explain established concepts rather
 than merely preserve raw source material (e.g. this Workbench Handbook). The distinction: *Sources
 preserve evidence. Wikis explain what we know.*
+
+**Source--Wiki relationship** -- Sources and Wiki articles are related but do not automatically
+become copies of one another. A source may remain available only as retrieval evidence; several
+sources may support one synthesized Wiki article; one source may support several focused Wiki
+articles; and a Wiki article may be manually authored as approved organizational guidance. Wiki
+claims should retain links to their supporting sources where practical. A Wiki article must never
+broaden access to information taken from a restricted source. When a supporting source is replaced,
+superseded, restricted, or removed, dependent Wiki guidance should be flagged for review.
+
+For Ember, these layers have different jobs: **Knowledge Base retrieval supplies primary evidence;
+Wiki retrieval supplies curated organizational or platform guidance; the AI model reasons across
+the authorized material; and human governance determines what may be trusted or acted upon.** The
+response should identify those roles visibly rather than presenting every statement as equivalent.
+
+### Worked examples: what belongs where
+
+Knowledge Bases and Wiki articles complement one another, but neither is a mandatory copy of the
+other:
+
+```text
+Several sources  ---> one synthesized Wiki article
+One source       ---> several focused Wiki articles
+Source only      ---> retrieved directly as RAG evidence
+Wiki only        ---> manually authored organizational guidance
+```
+
+| Example | Appropriate home | Why |
+|---|---|---|
+| A 200-page Zadara product manual | Knowledge Source in a Project-attached Knowledge Base | The complete manual is primary evidence. Only the concepts people repeatedly need should normally be synthesized into focused Wiki guidance. |
+| “How Sandz staff should escalate a support case” | Project or organizational Wiki | This is concise, reusable operating guidance and may be manually authored even when no formal source document exists. It should identify its approver. |
+| A confidential customer pricing sheet | Restricted Knowledge Source | Ember may retrieve it only for authorized users and Projects. Its contents must not be copied into a broadly visible Wiki article. |
+| A Workbench Method | Workbench Handbook / Wiki | A Method is reusable procedural guidance. It does not need to originate from an uploaded document. |
+| Several approved policies summarized for new employees | Wiki article linked to its supporting sources | The Wiki provides an accessible explanation while the underlying policies remain the authoritative evidence. |
+
+RAG/source evidence commonly includes uploaded policies, manuals, proposals, contracts, product
+documentation, meeting records, approved Artifacts, detailed tables, technical references,
+document versions, and restricted Project information. Wiki articles commonly contain approved
+summaries, employee-facing explanations, Methods, procedural guidance, definitions, established
+decisions, lessons, and cross-document synthesis.
+
+Ember should search both where authorized, but present them differently:
+
+- **Source evidence** -- primary supporting material.
+- **Wiki guidance** -- curated interpretation, explanation, or procedure.
+
+A synthesized Wiki article should retain links to the sources supporting its factual claims. A
+manually authored article should identify itself as organizational guidance and preserve its human
+approval provenance. Removing, superseding, or restricting a supporting source should trigger a
+review warning on dependent Wiki guidance rather than silently leaving the interpretation looking
+current and supported.
+
+**FAQ Request** -- a user's request for an authorized curator to consider adding or improving a
+frequently asked question and its answer. An FAQ Request is feedback and evidence of an unmet
+knowledge need; it is not an approved FAQ, a Knowledge Source, or immediately retrievable guidance.
+The curator must resolve the answer against approved evidence, choose the appropriate Project/Wiki
+scope and visibility, and approve publication through the normal knowledge-governance process.
 
 **Promotion** -- the act of taking something discovered during work -- an important Ember
 conversation, a validated finding -- and turning it into persistent, reviewed knowledge (Ember
