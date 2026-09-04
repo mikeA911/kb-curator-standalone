@@ -10,6 +10,7 @@ const createConversationMock = vi.fn()
 const listMessagesMock = vi.fn()
 const appendMessageMock = vi.fn()
 const updateMock = vi.fn()
+const conversationBindUpdateMock = vi.fn()
 const getConversationSummaryMock = vi.fn()
 const maybeRefreshSummaryMock = vi.fn()
 const buildPersistedEnvelopeMock = vi.fn()
@@ -95,6 +96,15 @@ function fakeCtx(): WorkbenchCallerContext {
         if (table === 'ai_provider_sensitivity_eligibility') {
           return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }
         }
+        if (table === 'conversations') {
+          return {
+            update: (...args: unknown[]) => {
+              conversationBindUpdateMock(...args)
+              return { eq: () => ({ is: async () => ({ error: null }) }) }
+            },
+            select: () => ({ eq: () => ({ single: async () => ({ data: { id: 'conv-1', project_id: null }, error: null }) }) }),
+          }
+        }
         return {
           update: (...args: unknown[]) => updateMock(...args),
           eq: () => ({}),
@@ -127,6 +137,7 @@ beforeEach(() => {
   listMessagesMock.mockReset()
   appendMessageMock.mockReset()
   updateMock.mockReset()
+  conversationBindUpdateMock.mockReset()
   getConversationSummaryMock.mockReset()
   maybeRefreshSummaryMock.mockReset()
   buildPersistedEnvelopeMock.mockReset()
@@ -220,6 +231,10 @@ describe('runAssistantTurn', () => {
     expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ created_via: 'assistant', assistant_conversation_id: 'conv-1' })
     )
+    // A general conversation that just created a project becomes that
+    // project's own history -- bound going forward, not left as stray
+    // general chat.
+    expect(conversationBindUpdateMock).toHaveBeenCalledWith({ project_id: 'proj-1' })
     // Each persisted assistant message is stamped with the model that produced it.
     expect(appendMessageMock).toHaveBeenCalledWith(
       expect.anything(),

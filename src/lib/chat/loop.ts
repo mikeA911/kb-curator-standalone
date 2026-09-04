@@ -140,7 +140,19 @@ async function stampProvenance(
 ): Promise<void> {
   const stamp = { created_via: 'assistant', assistant_prompt_version: ASSISTANT_PROMPT_VERSION, assistant_conversation_id: conversationId }
   if (toolName === 'create_project' && output && typeof output === 'object' && 'projectId' in output) {
-    await ctx.supabase.from('projects').update(stamp).eq('id', (output as { projectId: string }).projectId)
+    const projectId = (output as { projectId: string }).projectId
+    await ctx.supabase.from('projects').update(stamp).eq('id', projectId)
+    // A general (unbound) conversation that just created a project IS now
+    // that project's own history, not stray general chat -- bind it so it
+    // shows up in the project's own scoped History (listProjectConversations)
+    // going forward. Only when currently unbound: conversations.project_id
+    // is immutable once set (conversations_project_id_immutable trigger,
+    // 20260824190001_conversations_project_binding.sql), by design, so a
+    // project created mid-conversation from within an *already* project-
+    // bound conversation must never get silently re-pointed to a different
+    // project -- the `.is('project_id', null)` filter makes that structurally
+    // impossible (the trigger never even fires for a row the WHERE excludes).
+    await ctx.supabase.from('conversations').update({ project_id: projectId }).eq('id', conversationId).is('project_id', null)
   } else if (toolName === 'create_workstream' && output && typeof output === 'object' && 'workstreamId' in output) {
     await ctx.supabase.from('project_workstreams').update(stamp).eq('id', (output as { workstreamId: string }).workstreamId)
   } else if (toolName === 'attach_workstream_artifact' && output && typeof output === 'object' && 'artifactId' in output) {
