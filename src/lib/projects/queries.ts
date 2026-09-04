@@ -62,6 +62,42 @@ export async function listMemberProjectOptions(supabase: SupabaseClient<Database
   return data ?? []
 }
 
+export interface DashboardProjectOption {
+  id: string
+  name: string
+  role: string
+  status: string
+}
+
+// Backs the admin/curator Workbench dashboard's "Your projects" section
+// (2026-09-04) -- the Ember-first home (isEmberFirst branch, dashboard/
+// page.tsx) already gives consultant/member a project picker plus recent
+// conversations so they never have to go searching; admin/curator had no
+// equivalent shortcut at all, landing on stat cards with no project list.
+// Same "own active memberships only" scope as listMemberProjectOptions --
+// this deliberately does not use any admin RLS bypass, so it stays "your
+// own projects," not an org-wide list (that's what /projects/portfolio is
+// for).
+export async function listActiveProjectsForDashboard(supabase: SupabaseClient<Database>, userId: string): Promise<DashboardProjectOption[]> {
+  const { data: memberships, error: membershipError } = await supabase
+    .from('project_members')
+    .select('project_id, role')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+  if (membershipError) throw membershipError
+  if ((memberships ?? []).length === 0) return []
+
+  const roleByProjectId = new Map((memberships ?? []).map((m) => [m.project_id, m.role]))
+  const { data: projects, error } = await supabase
+    .from('projects')
+    .select('id, name, status')
+    .in('id', [...roleByProjectId.keys()])
+    .order('name')
+  if (error) throw error
+
+  return (projects ?? []).map((p) => ({ id: p.id, name: p.name, status: p.status, role: roleByProjectId.get(p.id) ?? 'viewer' }))
+}
+
 export interface LinkedKnowledgeBase {
   id: string
   name: string

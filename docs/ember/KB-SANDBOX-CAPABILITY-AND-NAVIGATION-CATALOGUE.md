@@ -96,20 +96,20 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 ### Review current activity and navigate to work
 
 - **Intent:** Understand what exists, what needs attention, and where to continue.
-- **Users and authority:** Admin and curator. A signed-in `consultant` (an ordinary Project member) instead lands on the Ember-first home described in the next entry -- this summary view is no longer what that role sees at `/dashboard`.
+- **Users and authority:** Admin and curator. A signed-in `consultant` or `member` (an ordinary Project member) instead lands on the Ember-first home described in the next entry -- this summary view is no longer what that role sees at `/dashboard`.
 - **Prerequisites:** Signed-in admin or curator session.
 - **Start:** `/dashboard`
-- **Navigation:** Use the summary cards for Projects, Knowledge, Evaluations, Agents, or Trending; use **Sources & Curation** to open `/upload`.
-- **Outcome:** A role-aware summary of accessible work and direct links to the corresponding areas.
-- **Ember guidance:** Ember may explain the cards and provide stable links. It should mention that counts and attention items depend on access and role.
-- **Boundaries:** Wiki review queues and governance attention items are limited to curator/admin users. Shared links and personal notes are shown only to eligible signed-in users. Dashboard totals do not authorize access to an underlying item.
+- **Navigation:** Use the summary cards for Projects, Knowledge, Evaluations, Agents, or Trending; use **Sources & Curation** to open `/upload`. As of 2026-09-04, a **Continue where you left off** callout (the Project behind the viewer's most recent conversation) and a **Your projects** list (every active membership, role badge, most-recently-worked-on first) appear right below the summary cards -- the same "land somewhere useful, not just stats" shortcut the Ember-first home already had.
+- **Outcome:** A role-aware summary of accessible work and direct links to the corresponding areas, including straight back into the viewer's own Projects without a trip to `/projects`.
+- **Ember guidance:** Ember may explain the cards and provide stable links. It should mention that counts and attention items depend on access and role. Ember has no dedicated tool for "Your projects"/"Continue where you left off" -- point the user to `/dashboard` if asked how to get back to a Project quickly.
+- **Boundaries:** Wiki review queues and governance attention items are limited to curator/admin users. Shared links and personal notes are shown only to eligible signed-in users. Dashboard totals do not authorize access to an underlying item. "Your projects" only ever lists the viewer's own active memberships -- never an org-wide list (that stays `/projects/portfolio`'s job).
 - **Exposure:** Ember-readable; candidate for external MCP read access as a caller-scoped summary.
-- **Verification:** `src/app/(app)/dashboard/page.tsx`; code verified 2026-08-30 (role branch added).
+- **Verification:** `src/app/(app)/dashboard/page.tsx`, `src/components/dashboard/MyProjectsWidget.tsx`, `src/lib/projects/queries.ts` (`listActiveProjectsForDashboard`); code verified 2026-09-04. Live-verified as an admin persona with two active memberships and one recent conversation -- "Continue where you left off" named the correct Project, "Your projects" listed both with correct roles, the recent one sorted first.
 
 ### Ember-first home (ordinary members)
 
-- **Intent:** Give an ordinary Project member (platform role `consultant`) a working surface centered on Ember rather than platform-wide statistics.
-- **Users and authority:** Platform role `consultant` only. Admin and curator continue to see the standard Workbench summary described above.
+- **Intent:** Give an ordinary Project member (platform role `consultant` or `member`) a working surface centered on Ember rather than platform-wide statistics.
+- **Users and authority:** Platform role `consultant` or `member` only. Admin and curator continue to see the standard Workbench summary described above.
 - **Prerequisites:** Signed-in session.
 - **Start:** `/dashboard`
 - **Navigation:** Choose a Project from the selector (only the user's own active memberships appear, plus "General platform guidance") → **Ask Ember**. The choice is reflected in the page URL (`?ember=<projectId>`) so it survives a reload, and shows as a persistent "Using: <Project>" chip.

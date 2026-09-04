@@ -12,9 +12,10 @@ import { getTrendingStats, listRecentSharedLinks } from '@/lib/trending/queries'
 import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
 import { hasRequiredRole } from '@/lib/auth'
-import { listMemberProjectOptions } from '@/lib/projects/queries'
+import { listMemberProjectOptions, listActiveProjectsForDashboard } from '@/lib/projects/queries'
 import { listRecentConversations } from '@/lib/chat/conversations'
 import { EmberHome, type RecentConversationRow } from '@/components/dashboard/EmberHome'
+import { MyProjectsWidget } from '@/components/dashboard/MyProjectsWidget'
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ ember?: string }> }) {
   const { ember: initialProjectId } = await searchParams
@@ -50,6 +51,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     sharedLinks,
     emberProjects,
     emberRecentConversations,
+    myProjects,
+    myRecentConversations,
   ] = await Promise.all([
     canSeeWikiQueue ? listUnpublishedArticles(supabase) : Promise.resolve([]),
     getProjectStats(supabase),
@@ -62,6 +65,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     canSeeSharedLinks ? listRecentSharedLinks(supabase) : Promise.resolve([]),
     isEmberFirst ? listMemberProjectOptions(supabase, user!.id) : Promise.resolve([]),
     isEmberFirst ? listRecentConversations(supabase, user!.id, { limit: 5 }) : Promise.resolve([]),
+    // "Your projects" / "Continue where you left off" (2026-09-04) -- the
+    // admin/curator equivalent of the isEmberFirst branch's project picker
+    // and recent-conversations list just above, so that role tier also
+    // lands somewhere useful instead of a bare stat-card dashboard.
+    user && !isEmberFirst ? listActiveProjectsForDashboard(supabase, user.id) : Promise.resolve([]),
+    user && !isEmberFirst ? listRecentConversations(supabase, user.id, { limit: 10 }) : Promise.resolve([]),
   ])
 
   // Same "projects this user actually belongs to" query as trending/new/page.tsx
@@ -111,6 +120,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   const attentionItems = needsAttention.filter((item) => item.count > 0)
 
+  // The most recent conversation bound to a Project this viewer still
+  // belongs to -- listRecentConversations is already ordered newest-first,
+  // so the first project-bound one found is "last worked on." Sorted to the
+  // front of myProjects rather than shown only in the callout, so it's not
+  // duplicated work if the viewer scans the grid instead.
+  const lastWorkedProjectId = myRecentConversations.find((c) => c.project_id)?.project_id ?? null
+  const sortedMyProjects =
+    lastWorkedProjectId && myProjects.some((p) => p.id === lastWorkedProjectId)
+      ? [myProjects.find((p) => p.id === lastWorkedProjectId)!, ...myProjects.filter((p) => p.id !== lastWorkedProjectId)]
+      : myProjects
+
   return (
     <div className="flex flex-col gap-8">
       <SectionHero image="/images/sections/kb-sandbox.png" height="compact" priority />
@@ -135,6 +155,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </Link>
             ))}
           </div>
+
+          <MyProjectsWidget projects={sortedMyProjects} lastWorkedProjectId={lastWorkedProjectId} />
         </>
       )}
 
