@@ -13,7 +13,18 @@ import type { ToolSpec } from '@/lib/ai'
 // project_note added in Role-Aware Project Views Stage 4 -- resolves via
 // /projects/[id]/notes/[noteId], RLS-gated the same way as the underlying
 // project_notes row itself (see navigation-resolver.ts).
-export const NavigationTargetKindSchema = z.enum(['wiki_article', 'project', 'workstream', 'assessment', 'knowledge_source', 'project_note'])
+// working_knowledge added in Working Knowledge & Research Notebooks Stage
+// 1+2 -- resolves via /projects/[id]/working-knowledge/[itemId], RLS-gated
+// the same way (can_view_working_knowledge_item).
+export const NavigationTargetKindSchema = z.enum([
+  'wiki_article',
+  'project',
+  'workstream',
+  'assessment',
+  'knowledge_source',
+  'project_note',
+  'working_knowledge',
+])
 export type NavigationTargetKind = z.infer<typeof NavigationTargetKindSchema>
 
 // citations[].sourceType was pinned to 'wiki_article' while search_wiki was
@@ -21,7 +32,12 @@ export type NavigationTargetKind = z.infer<typeof NavigationTargetKindSchema>
 // search_project_knowledge (Stage 2) also retrieves knowledge_source chunks,
 // so this widens to match. list_project_notes still isn't evidence a reply
 // "cites" -- only real retrieval tools produce citable content.
-export const CitationSourceTypeSchema = z.enum(['wiki_article', 'knowledge_source'])
+// working_knowledge added in Working Knowledge & Research Notebooks Stage
+// 1+2 (search_my_working_knowledge/search_shared_working_knowledge) --
+// StructuredResponse.tsx renders this with a distinct "Working
+// research"/"Private working note"/"Project-shared research" badge that can
+// never be confused with the approved-evidence badge the other two get.
+export const CitationSourceTypeSchema = z.enum(['wiki_article', 'knowledge_source', 'working_knowledge'])
 export const AssistantResponseEnvelopeSchema = z.object({
   schemaVersion: z.literal('1.0'),
   message: z.string().min(1).max(8000),
@@ -90,7 +106,20 @@ export interface PersistedAssistantEnvelope {
   // knowledge tier the hit came from, documentVersionId is the specific
   // documents.id a knowledge_source citation actually resolved to (absent
   // for a wiki_article citation, which has no version/staleness concept).
-  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; layer?: 'project' | 'platform'; documentVersionId?: string }[]
+  // workingKnowledgeType/workingKnowledgeVisibility are the Working
+  // Knowledge equivalent -- also attached from real retrieval provenance,
+  // never the model -- StructuredResponse.tsx uses them to pick a distinct
+  // "Working research"/"Private working note"/"Project-shared research"
+  // badge that can never be confused with layer's approved-evidence badge.
+  citations?: {
+    label: string
+    sourceType: CitationSourceType
+    sourceId: string
+    layer?: 'project' | 'platform'
+    documentVersionId?: string
+    workingKnowledgeType?: 'research_notebook' | 'working_note'
+    workingKnowledgeVisibility?: 'private' | 'shared_selected' | 'shared_project'
+  }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }
@@ -115,6 +144,8 @@ export const PersistedAssistantEnvelopeSchema: z.ZodType<PersistedAssistantEnvel
         sourceId: z.string(),
         layer: z.enum(['project', 'platform']).optional(),
         documentVersionId: z.string().optional(),
+        workingKnowledgeType: z.enum(['research_notebook', 'working_note']).optional(),
+        workingKnowledgeVisibility: z.enum(['private', 'shared_selected', 'shared_project']).optional(),
       })
     )
     .optional(),
@@ -135,7 +166,16 @@ export interface VerifiedAssistantEnvelope {
   documents?: { label: string; documentType: string; artifactId: string; title: string; route: string | null }[]
   // stale: the source has a newer version than the one actually cited --
   // recomputed on every read (see resolveEnvelopeForDisplay), never cached.
-  citations?: { label: string; sourceType: CitationSourceType; sourceId: string; route: string; layer?: 'project' | 'platform'; stale?: boolean }[]
+  citations?: {
+    label: string
+    sourceType: CitationSourceType
+    sourceId: string
+    route: string
+    layer?: 'project' | 'platform'
+    stale?: boolean
+    workingKnowledgeType?: 'research_notebook' | 'working_note'
+    workingKnowledgeVisibility?: 'private' | 'shared_selected' | 'shared_project'
+  }[]
   nextSteps?: AssistantResponseEnvelope['nextSteps']
   suggestedPrompts?: string[]
 }

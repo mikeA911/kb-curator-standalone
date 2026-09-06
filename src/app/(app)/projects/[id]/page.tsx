@@ -13,8 +13,6 @@ import { listAttachableKnowledgeBases } from '@/lib/knowledge-bases'
 import { listKnowledgeBasesForProject, listSourcesForKnowledgeBases } from '@/lib/projects/queries'
 import { listArticlesForProject } from '@/lib/wiki/project-links'
 import { KnowledgeBaseAttachManager, KnowledgeBaseDetachButton } from '@/components/projects/KnowledgeBaseAttachManager'
-import { listRecentConversations } from '@/lib/chat/conversations'
-import { ProjectAssistantSection } from '@/components/projects/ProjectAssistantSection'
 import { getOrganizationExplorer } from '@/lib/projects/explorer'
 import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer'
 import { SubmitSourceForm } from '@/components/projects/SubmitSourceForm'
@@ -26,6 +24,8 @@ import { JoinRequestsReview } from '@/components/projects/JoinRequestsReview'
 import { ProjectDirectory } from '@/components/projects/ProjectDirectory'
 import { listDiscoverableProjects } from '@/lib/projects/directory'
 import { requireUser } from '@/lib/auth'
+import { listMyWorkingKnowledge, listSharedWorkingKnowledge } from '@/lib/projects/working-knowledge'
+import { WorkingKnowledgePanel } from '@/components/projects/WorkingKnowledgePanel'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -127,7 +127,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     { data: activeAuthorityAssignments },
     unattachedKnowledgeBases,
     linkedArticles,
-    projectConversations,
     { data: statusHistory },
     explorer,
     { data: activeMembers },
@@ -147,7 +146,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     supabase.from('project_authority_assignments').select('approval_type').eq('project_id', id).eq('status', 'active'),
     listAttachableKnowledgeBases(supabase, id),
     listArticlesForProject(supabase, id),
-    user ? listRecentConversations(supabase, user.id, { projectId: id }) : Promise.resolve([]),
     // RLS (project_status_history_select_curator) already limits this to
     // curator+ viewers -- an ungated fetch just returns empty for anyone
     // else, same as the rest of this page's queries.
@@ -465,6 +463,31 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         )}
       </section>
 
+      {/* Working Knowledge & Research Notebooks Stage 1+2 (2026-09-05) --
+          any active member can create/see their own; "shared with you" only
+          ever shows items explicitly shared or project-wide, never a
+          curator/admin "see everything" view (no such view exists). */}
+      {user && viewerMembership && (
+        <WorkingKnowledgePanel
+          projectId={project.id}
+          mine={(await listMyWorkingKnowledge(await requireUser(), project.id)).map((i) => ({
+            id: i.id,
+            title: i.title,
+            type: i.type,
+            visibility: i.visibility,
+            updatedAt: i.updated_at,
+          }))}
+          shared={(await listSharedWorkingKnowledge(await requireUser(), project.id)).map((i) => ({
+            id: i.id,
+            title: i.title,
+            type: i.type,
+            visibility: i.visibility,
+            updatedAt: i.updated_at,
+            ownerEmail: memberEmailById.get(i.owner_id) ?? null,
+          }))}
+        />
+      )}
+
       <OrganizationExplorer explorer={explorer} />
 
       <section className="flex flex-col gap-3">
@@ -537,8 +560,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-zinc-500">No approval requirements configured for this project.</p>
         )}
       </section>
-
-      {user && <ProjectAssistantSection projectId={project.id} recentConversations={projectConversations} />}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Status</h2>

@@ -23,8 +23,17 @@ export const env = {
   siteUrl: () => (optional('NEXT_PUBLIC_SITE_URL') ?? 'http://localhost:3000').replace(/\/$/, ''),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
   groqApiKey: () => optional('GROQ_API_KEY'),
+  // Ember's search_web tool (pre-sales/competitive web research). The tool
+  // is simply omitted from Ember's tool list when this is unset -- see
+  // src/lib/chat/loop.ts's tools-array assembly.
+  tavilyApiKey: () => optional('TAVILY_API_KEY'),
   // Generic lookup for openai_compatible provider rows, whose env var name
   // is admin-configured (ai_providers.api_key_env_var) rather than known at
   // build time.
   byName: (envVarName: string) => optional(envVarName),
+  // KB Sandbox Builder (docs/dev-request-kb-sandbox-builder-product.md) --
+  // a deployment-level mode switch, never user-selectable. One deployment
+  // runs in exactly one mode for its whole lifetime; this is not a per-
+  // request or per-user toggle.
+  productMode: () => (optional('KB_SANDBOX_PRODUCT_MODE') === 'builder' ? 'builder' : 'enterprise') as 'enterprise' | 'builder',
 }

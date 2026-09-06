@@ -290,6 +290,19 @@ The application logo links to `/about`. The signed-in profile and journal begin 
 - **Exposure:** UI-only; not Ember-actionable (Ember already covers the equivalent conversationally via existing search tools).
 - **Verification:** `src/lib/projects/queries.ts` (`listSourcesForKnowledgeBases`), `src/app/(app)/projects/[id]/page.tsx`; code verified 2026-09-04. Live-verified as both a platform admin and a `viewer`-role member with no manage rights against the real Sandz Pilot project -- the list rendered identically for both.
 
+### Have Ember research the web for a Project
+
+- **Intent:** Pre-sales/competitive research inside a Project -- checking out a prospective client or a competitor -- when the answer isn't in the Project's own knowledge or the Wiki.
+- **Users and authority:** Any active member, within a conversation already bound to that Project. Same authority bar as `search_project_knowledge`/`list_project_members` -- no elevated role required to search, but see Boundaries for who can make a finding real.
+- **Prerequisites:** The conversation must have a server-resolved Project binding (a general, unbound conversation never offers this tool). `TAVILY_API_KEY` must be configured on the deployment -- if it isn't, the tool is simply absent from Ember's tool list for every Project conversation, with no error surfaced to the user.
+- **Start:** Any project-bound Ember conversation.
+- **Navigation:** Ask Ember directly -- no page navigation involved.
+- **Outcome:** Ember calls `search_web` (Tavily) and can use the results to answer conversationally. At most 2 calls per turn. If the findings are worth keeping, Ember proposes a `research_dossier` workstream artifact (via `attach_workstream_artifact`, creating a workstream first if the Project has none) summarizing what it found with source URLs as plain links -- landing in the same `ready_for_review` state as any other Ember-created artifact.
+- **Ember guidance:** A web result is never treated as verified platform evidence -- it is never cited via `present_assistant_response`'s citations field (that field is reserved for real, server-verified internal retrieval), and Ember must never tell the user something is "in the knowledge base" or "confirmed" from a web search alone. A `research_dossier` artifact is a draft, not an addition to the knowledge base -- it still needs a curator/owner to review and approve it, then a member to **Submit a candidate source for a Project** (below) with it, before it's retrievable.
+- **Boundaries:** Read-only and reversible, so unlike the MCP Gateway's side-effecting actions (e.g. the OrderLunch showcase), `search_web` runs freely with no human confirmation gate. Turning a dossier into real Project knowledge still requires the same two human checkpoints as any other member-submitted source: artifact review/approval, then curator/owner decision on the source submission -- nothing this tool does writes into a knowledge base directly.
+- **Exposure:** Ember-actionable, Project-bound only, and only when `TAVILY_API_KEY` is configured.
+- **Verification:** `src/lib/chat/web-search-tool.ts`, `src/lib/chat/loop.ts` (`WEB_SEARCH_LIMIT`, `buildProjectPromptAddendum`), `supabase/migrations/20260904160001_workstream_artifact_type_research_dossier.sql`; code verified 2026-09-04.
+
 ### Submit a candidate source for a Project
 
 - **Intent:** Let an ordinary Project member propose knowledge for their Project -- a file, or an already-approved, content-bearing Ember-generated workstream artifact -- for their curator to decide on, closing the gap where only platform curator/admin could add anything to any knowledge base.

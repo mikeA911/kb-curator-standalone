@@ -29,6 +29,13 @@ describe('extractCreatedRecordRef', () => {
     })
   })
 
+  it('extracts a working_knowledge ref from a successful save_working_knowledge tool result', () => {
+    expect(extractCreatedRecordRef('save_working_knowledge', JSON.stringify({ itemId: 'wk1' }))).toEqual({
+      kind: 'working_knowledge',
+      id: 'wk1',
+    })
+  })
+
   it('returns null for a tool error result', () => {
     expect(extractCreatedRecordRef('create_project', JSON.stringify({ error: 'refused' }))).toBeNull()
   })
@@ -55,6 +62,13 @@ describe('resolveCreatedRecord', () => {
     const result = await resolveCreatedRecord({} as never, { kind: 'workstream_artifact', id: 'art1' })
     expect(resolveDocumentArtifactMock).toHaveBeenCalledWith({}, 'art1')
     expect(result).toEqual({ kind: 'workstream_artifact', id: 'art1', label: 'Design Note' })
+  })
+
+  it('resolves a working_knowledge ref via the navigation resolver', async () => {
+    resolveNavigationTargetMock.mockResolvedValue({ label: 'Acme Corp Research', route: '/projects/p1/working-knowledge/wk1' })
+    const result = await resolveCreatedRecord({} as never, { kind: 'working_knowledge', id: 'wk1' })
+    expect(resolveNavigationTargetMock).toHaveBeenCalledWith({}, { kind: 'working_knowledge', id: 'wk1' })
+    expect(result).toEqual({ kind: 'working_knowledge', id: 'wk1', label: 'Acme Corp Research' })
   })
 
   it('returns null when the underlying resolver cannot resolve the record', async () => {

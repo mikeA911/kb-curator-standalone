@@ -27,6 +27,7 @@ const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   findings: 'Findings',
   design_note: 'Design Note',
   implementation_handoff: 'Implementation Handoff',
+  research_dossier: 'Research Dossier',
   other: 'Other',
 }
 

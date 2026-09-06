@@ -561,6 +561,106 @@ export interface ProjectNoteReply {
 export type ProjectNoteReplyInsert = Omit<ProjectNoteReply, 'id' | 'created_at'>
 
 // ============================================
+// Working Knowledge & Research Notebooks
+// (docs/dev-request-project-scoped-working-knowledge-and-research-notebooks.md)
+// ============================================
+
+export type WorkingKnowledgeItemType = 'research_notebook' | 'working_note'
+export type WorkingKnowledgeVisibility = 'private' | 'shared_selected' | 'shared_project'
+// Only 'working'/'archived'/'superseded' are reachable via app logic this
+// increment -- 'submitted'/'returned'/'promoted' exist as forward-compatible
+// schema for the deferred Stage 3 (curation promotion).
+export type WorkingKnowledgeTrustStatus = 'working' | 'submitted' | 'returned' | 'promoted' | 'superseded' | 'archived'
+export type WorkingKnowledgeClaimStatus = 'unconfirmed' | 'corroborated' | 'conflicting' | 'customer_confirmed'
+
+export interface WorkingKnowledgeItem {
+  id: string
+  project_id: string
+  owner_id: string
+  type: WorkingKnowledgeItemType
+  title: string
+  objective: string | null
+  content: string
+  visibility: WorkingKnowledgeVisibility
+  trust_status: WorkingKnowledgeTrustStatus
+  source_conversation_id: string | null
+  source_workstream_id: string | null
+  source_artifact_id: string | null
+  synthesis_provider: string | null
+  synthesis_model: string | null
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  refresh_after: string | null
+  archived_at: string | null
+}
+export type WorkingKnowledgeItemInsert = Omit<
+  WorkingKnowledgeItem,
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'objective'
+  | 'visibility'
+  | 'trust_status'
+  | 'source_conversation_id'
+  | 'source_workstream_id'
+  | 'source_artifact_id'
+  | 'synthesis_provider'
+  | 'synthesis_model'
+  | 'last_used_at'
+  | 'refresh_after'
+  | 'archived_at'
+> &
+  Partial<
+    Pick<
+      WorkingKnowledgeItem,
+      | 'objective'
+      | 'visibility'
+      | 'trust_status'
+      | 'source_conversation_id'
+      | 'source_workstream_id'
+      | 'source_artifact_id'
+      | 'synthesis_provider'
+      | 'synthesis_model'
+      | 'last_used_at'
+      | 'refresh_after'
+      | 'archived_at'
+    >
+  >
+export type WorkingKnowledgeItemUpdate = Partial<Omit<WorkingKnowledgeItem, 'id' | 'created_at' | 'project_id' | 'owner_id'>>
+
+export interface WorkingKnowledgeSource {
+  id: string
+  item_id: string
+  url: string
+  domain: string | null
+  title: string | null
+  published_date: string | null
+  retrieved_at: string
+  excerpt: string | null
+  content_fingerprint: string | null
+  claim_status: WorkingKnowledgeClaimStatus | null
+  created_at: string
+}
+export type WorkingKnowledgeSourceInsert = Omit<WorkingKnowledgeSource, 'id' | 'created_at' | 'retrieved_at' | 'domain' | 'title' | 'published_date' | 'excerpt' | 'content_fingerprint' | 'claim_status'> &
+  Partial<Pick<WorkingKnowledgeSource, 'retrieved_at' | 'domain' | 'title' | 'published_date' | 'excerpt' | 'content_fingerprint' | 'claim_status'>>
+
+export interface WorkingKnowledgeShare {
+  id: string
+  item_id: string
+  recipient_user_id: string
+  status: 'active' | 'revoked'
+  granted_by: string | null
+  granted_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_reason: string | null
+}
+export type WorkingKnowledgeShareInsert = Omit<WorkingKnowledgeShare, 'id' | 'status' | 'granted_at' | 'revoked_by' | 'revoked_at' | 'revocation_reason'> &
+  Partial<Pick<WorkingKnowledgeShare, 'status' | 'granted_at' | 'revoked_by' | 'revoked_at' | 'revocation_reason'>>
+export type WorkingKnowledgeShareUpdate = Partial<Omit<WorkingKnowledgeShare, 'id' | 'item_id' | 'recipient_user_id'>>
+
+// ============================================
 // Evaluation
 // ============================================
 
@@ -936,7 +1036,7 @@ export interface ProjectJoinRequest {
   created_at: string
 }
 
-export type SourceSubmissionKind = 'file' | 'artifact'
+export type SourceSubmissionKind = 'file' | 'artifact' | 'working_knowledge'
 export type ProjectSourceSubmissionStatus = 'pending' | 'approved' | 'rejected'
 
 // Member-submitted knowledge sources, with project-curator approval
@@ -944,7 +1044,10 @@ export type ProjectSourceSubmissionStatus = 'pending' | 'approved' | 'rejected'
 // counterpart to ResourceAccessRequest above, but for *new* content rather
 // than access to existing content, and gated on can_curate_project
 // (owner-or-curator) rather than can_manage_project (owner-only). See
-// src/lib/workbench/source-submissions.ts.
+// src/lib/workbench/source-submissions.ts. 'working_knowledge' added by
+// 20260905110001 (KB Sandbox Builder MVP) -- a builder's own notebook
+// promoted for curator review, same snapshot-at-approval-time shape as
+// 'artifact'.
 export interface ProjectSourceSubmission {
   id: string
   project_id: string
@@ -953,6 +1056,7 @@ export interface ProjectSourceSubmission {
   title: string
   document_id: string | null
   workstream_artifact_id: string | null
+  working_knowledge_item_id: string | null
   submitted_by: string
   status: ProjectSourceSubmissionStatus
   decision_reason: string | null
@@ -1006,6 +1110,7 @@ export type ArtifactType =
   | 'findings'
   | 'design_note'
   | 'implementation_handoff'
+  | 'research_dossier'
   | 'other'
 
 // OL-010: status/review fields, additive on an otherwise-immutable row (see
@@ -1973,9 +2078,22 @@ export type ProjectJoinRequestUpdate = Partial<Omit<ProjectJoinRequest, 'id' | '
 
 export type ProjectSourceSubmissionInsert = Omit<
   ProjectSourceSubmission,
-  'id' | 'created_at' | 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'
+  | 'id'
+  | 'created_at'
+  | 'document_id'
+  | 'workstream_artifact_id'
+  | 'working_knowledge_item_id'
+  | 'status'
+  | 'decision_reason'
+  | 'decided_by'
+  | 'decided_at'
 > &
-  Partial<Pick<ProjectSourceSubmission, 'document_id' | 'workstream_artifact_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'>>
+  Partial<
+    Pick<
+      ProjectSourceSubmission,
+      'document_id' | 'workstream_artifact_id' | 'working_knowledge_item_id' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at'
+    >
+  >
 export type ProjectSourceSubmissionUpdate = Partial<
   Omit<ProjectSourceSubmission, 'id' | 'project_id' | 'knowledge_base_id' | 'source_kind' | 'title' | 'submitted_by' | 'created_at'>
 >
@@ -2229,6 +2347,19 @@ export interface Database {
       trending_wiki_links: { Row: TrendingWikiLink; Insert: TrendingWikiLinkInsert; Update: Partial<TrendingWikiLink>; Relationships: [] }
       project_notes: { Row: ProjectNote; Insert: ProjectNoteInsert; Update: ProjectNoteUpdate; Relationships: [] }
       project_note_replies: { Row: ProjectNoteReply; Insert: ProjectNoteReplyInsert; Update: Partial<ProjectNoteReply>; Relationships: [] }
+      working_knowledge_items: {
+        Row: WorkingKnowledgeItem
+        Insert: WorkingKnowledgeItemInsert
+        Update: WorkingKnowledgeItemUpdate
+        Relationships: []
+      }
+      working_knowledge_sources: { Row: WorkingKnowledgeSource; Insert: WorkingKnowledgeSourceInsert; Update: Partial<WorkingKnowledgeSource>; Relationships: [] }
+      working_knowledge_shares: {
+        Row: WorkingKnowledgeShare
+        Insert: WorkingKnowledgeShareInsert
+        Update: WorkingKnowledgeShareUpdate
+        Relationships: []
+      }
       eval_datasets: { Row: EvalDataset; Insert: EvalDatasetInsert; Update: EvalDatasetUpdate; Relationships: [] }
       eval_cases: { Row: EvalCase; Insert: EvalCaseInsert; Update: EvalCaseUpdate; Relationships: [] }
       eval_runs: { Row: EvalRun; Insert: EvalRunInsert; Update: EvalRunUpdate; Relationships: [] }

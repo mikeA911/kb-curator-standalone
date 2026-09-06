@@ -23,7 +23,11 @@ vi.mock('@/lib/ai', () => ({ getActiveEmbeddingProvider: (...args: unknown[]) =>
 const requireActiveKnowledgeBaseMock = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/lib/knowledge-bases', () => ({ requireActiveKnowledgeBase: (...args: unknown[]) => requireActiveKnowledgeBaseMock(...args) }))
 
-const { submitFileSource, submitArtifactSource, approveSourceSubmission, rejectSourceSubmission } = await import('./source-submissions')
+const getWorkingKnowledgeItemMock = vi.fn()
+vi.mock('@/lib/projects/working-knowledge', () => ({ getWorkingKnowledgeItem: (...args: unknown[]) => getWorkingKnowledgeItemMock(...args) }))
+
+const { submitFileSource, submitArtifactSource, submitWorkingKnowledgeSource, approveSourceSubmission, rejectSourceSubmission } =
+  await import('./source-submissions')
 
 beforeEach(() => {
   createAdminClientMock.mockReset()
@@ -33,6 +37,7 @@ beforeEach(() => {
   approveChunkMock.mockReset()
   getActiveEmbeddingProviderMock.mockClear()
   requireActiveKnowledgeBaseMock.mockClear()
+  getWorkingKnowledgeItemMock.mockReset()
 })
 
 function ctxWith(supabase: unknown, opts: { userId?: string; platformRole?: string } = {}): WorkbenchCallerContext {
@@ -134,6 +139,58 @@ describe('submitArtifactSource', () => {
   })
 })
 
+describe('submitWorkingKnowledgeSource', () => {
+  it('rejects a caller with no active membership on the target project', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: null, error: null }] })
+    await expect(
+      submitWorkingKnowledgeSource(ctxWith(supabase), { projectId: 'org-home', knowledgeBaseId: 'kb-1', workingKnowledgeItemId: 'wk-1' })
+    ).rejects.toThrow('active member of this project')
+    expect(getWorkingKnowledgeItemMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a notebook the caller does not own', async () => {
+    const supabase = createFakeSupabase({
+      project_members: [{ data: { role: 'viewer' }, error: null }],
+      project_knowledge_bases: [{ data: { knowledge_base_id: 'kb-1' }, error: null }],
+    })
+    getWorkingKnowledgeItemMock.mockResolvedValue({ id: 'wk-1', owner_id: 'someone-else', title: 'X', trust_status: 'working' })
+    await expect(
+      submitWorkingKnowledgeSource(ctxWith(supabase), { projectId: 'org-home', knowledgeBaseId: 'kb-1', workingKnowledgeItemId: 'wk-1' })
+    ).rejects.toThrow("notebook's own owner")
+  })
+
+  it('rejects an archived notebook', async () => {
+    const supabase = createFakeSupabase({
+      project_members: [{ data: { role: 'viewer' }, error: null }],
+      project_knowledge_bases: [{ data: { knowledge_base_id: 'kb-1' }, error: null }],
+    })
+    getWorkingKnowledgeItemMock.mockResolvedValue({ id: 'wk-1', owner_id: 'user-1', title: 'X', trust_status: 'archived' })
+    await expect(
+      submitWorkingKnowledgeSource(ctxWith(supabase), { projectId: 'org-home', knowledgeBaseId: 'kb-1', workingKnowledgeItemId: 'wk-1' })
+    ).rejects.toThrow('archived notebook')
+  })
+
+  it('lets the owner (any active project role, e.g. an auto-enrolled viewer) submit their own notebook', async () => {
+    const supabase = createFakeSupabase({
+      project_members: [{ data: { role: 'viewer' }, error: null }],
+      project_knowledge_bases: [{ data: { knowledge_base_id: 'kb-1' }, error: null }],
+      project_source_submissions: [{ data: { id: 'sub-1' }, error: null }],
+    })
+    getWorkingKnowledgeItemMock.mockResolvedValue({ id: 'wk-1', owner_id: 'user-1', title: 'Chunking overlap tradeoffs', trust_status: 'working' })
+
+    const result = await submitWorkingKnowledgeSource(ctxWith(supabase), { projectId: 'org-home', knowledgeBaseId: 'kb-1', workingKnowledgeItemId: 'wk-1' })
+
+    expect(result).toEqual({ submissionId: 'sub-1' })
+    const insert = supabase._calls.find((c) => c.table === 'project_source_submissions' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({
+      source_kind: 'working_knowledge',
+      title: 'Chunking overlap tradeoffs',
+      working_knowledge_item_id: 'wk-1',
+      submitted_by: 'user-1',
+    })
+  })
+})
+
 describe('approveSourceSubmission', () => {
   it('rejects a caller who is not this project\'s owner/curator/admin', async () => {
     const supabase = createFakeSupabase({
@@ -195,6 +252,27 @@ describe('approveSourceSubmission', () => {
     )
     expect(processDocumentMock).toHaveBeenCalledWith(admin, 'doc-synth-1')
   })
+
+  it('for a working_knowledge-kind submission, synthesizes a document from the notebook content', async () => {
+    const supabase = createFakeSupabase({
+      project_source_submissions: [
+        { data: { id: 'sub-1', project_id: 'org-home', status: 'pending', source_kind: 'working_knowledge', document_id: null, working_knowledge_item_id: 'wk-1', knowledge_base_id: 'kb-1', submitted_by: 'builder-1' }, error: null },
+        { data: [{ id: 'sub-1' }], error: null },
+      ],
+      project_members: [{ data: { role: 'curator' }, error: null }],
+    })
+    const admin = createFakeSupabase({
+      working_knowledge_items: [{ data: { title: 'Chunking overlap tradeoffs', content: 'Real notebook content' }, error: null }],
+      document_chunks: [{ data: [], error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+    createUploadedDocumentMock.mockResolvedValue({ id: 'doc-synth-2' })
+
+    await approveSourceSubmission(ctxWith(supabase), 'sub-1')
+
+    expect(createUploadedDocumentMock).toHaveBeenCalledWith(admin, expect.objectContaining({ docType: 'kb-1', uploadedBy: 'builder-1' }))
+    expect(processDocumentMock).toHaveBeenCalledWith(admin, 'doc-synth-2')
+  })
 })
 
 describe('rejectSourceSubmission', () => {
@@ -229,6 +307,20 @@ describe('rejectSourceSubmission', () => {
     const supabase = createFakeSupabase({
       project_source_submissions: [
         { data: { id: 'sub-1', project_id: 'proj-1', status: 'pending', source_kind: 'artifact', document_id: null }, error: null },
+        { data: [{ id: 'sub-1' }], error: null },
+      ],
+      project_members: [{ data: { role: 'curator' }, error: null }],
+    })
+
+    await rejectSourceSubmission(ctxWith(supabase), 'sub-1')
+
+    expect(deleteDocumentByIdMock).not.toHaveBeenCalled()
+  })
+
+  it('does not attempt to delete a document for a rejected working_knowledge-kind submission (none was ever created)', async () => {
+    const supabase = createFakeSupabase({
+      project_source_submissions: [
+        { data: { id: 'sub-1', project_id: 'org-home', status: 'pending', source_kind: 'working_knowledge', document_id: null }, error: null },
         { data: [{ id: 'sub-1' }], error: null },
       ],
       project_members: [{ data: { role: 'curator' }, error: null }],

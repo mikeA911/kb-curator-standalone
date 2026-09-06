@@ -5,6 +5,18 @@ import path from 'node:path'
 // Static SQL-shape assertions -- same pattern as workstream-rls.test.ts and
 // src/lib/trending-rls.test.ts. No live database in this suite.
 const sql = fs.readFileSync(path.join(process.cwd(), 'supabase/migrations/20260814120001_project_notes.sql'), 'utf-8')
+// Live-verified gap (found while auditing this exact pattern in Working
+// Knowledge, see 20260905100003): project_notes_select_own and
+// project_notes_resolve's author_id branch originally checked only
+// author_id = auth.uid(), never whether that author was STILL a currently
+// active Project member -- so a removed author could keep reading and
+// resolving their own note via these fallback branches. This follow-up
+// migration supersedes both policies' original schemaSql definitions, so it
+// -- not the original file -- is this suite's source of truth for them.
+const authorMembershipFixSql = fs.readFileSync(
+  path.join(process.cwd(), 'supabase/migrations/20260905100004_project_notes_author_policies_require_active_membership.sql'),
+  'utf-8'
+)
 
 describe('can_view_project_note helper', () => {
   it('requires project membership before any recipient branch is even considered', () => {
@@ -32,10 +44,10 @@ describe('project_notes RLS', () => {
     expect(section).toMatch(/for select using \(can_view_project_note\(id, auth\.uid\(\)\)\)/)
   })
 
-  it('has a subquery-free author policy alongside can_view_project_note -- INSERT...RETURNING cannot see a row through a same-table subquery mid-statement', () => {
-    const start = sql.indexOf('"project_notes_select_own"')
-    const section = sql.slice(start, start + 150)
-    expect(section).toMatch(/for select using \(author_id = auth\.uid\(\)\)/)
+  it('has a subquery-free author policy alongside can_view_project_note -- INSERT...RETURNING cannot see a row through a same-table subquery mid-statement -- and (per the 100004 fix) still requires active project membership', () => {
+    const start = authorMembershipFixSql.indexOf('"project_notes_select_own"')
+    const section = authorMembershipFixSql.slice(start, start + 250)
+    expect(section).toMatch(/author_id = auth\.uid\(\) and is_project_member_strict\(project_id, auth\.uid\(\)\)/)
   })
 
   it('insert requires author_id to match the caller, project membership, and -- when addressed to a specific user -- that user to also be a member', () => {
@@ -46,10 +58,10 @@ describe('project_notes RLS', () => {
     expect(section).toMatch(/recipient_type != 'user' or is_project_member\(project_id, recipient_user_id\)/)
   })
 
-  it('resolve is allowed for author, the addressed recipient, or a curator/admin -- not just the author', () => {
-    const start = sql.indexOf('"project_notes_resolve"')
-    const section = sql.slice(start, start + 700)
-    expect(section).toMatch(/author_id = auth\.uid\(\)/)
+  it('resolve is allowed for author, the addressed recipient, or a curator/admin -- not just the author -- and (per the 100004 fix) the author branch specifically requires active project membership', () => {
+    const start = authorMembershipFixSql.indexOf('"project_notes_resolve"')
+    const section = authorMembershipFixSql.slice(start, start + 900)
+    expect(section).toMatch(/author_id = auth\.uid\(\) and is_project_member_strict\(project_id, auth\.uid\(\)\)/)
     expect(section).toMatch(/recipient_type = 'user' and recipient_user_id = auth\.uid\(\)/)
     expect(section).toMatch(/can_curate_project\(project_id, auth\.uid\(\)\)/)
     expect(section).toMatch(/is_admin\(auth\.uid\(\)\)/)

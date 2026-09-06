@@ -13,14 +13,29 @@ export interface RetrievedHitInfo {
   documentVersionId: string | null
 }
 
+// Working Knowledge & Research Notebooks Stage 1+2: a working-knowledge hit
+// has no project/platform "layer" (that's an approved-KB concept) -- what a
+// citation badge actually needs is which item type it was (a research
+// notebook vs a plain working note) and its visibility, so
+// StructuredResponse.tsx can render "Working research"/"Private working
+// note"/"Project-shared research" instead of ever touching the
+// approved-evidence badge.
+export interface RetrievedWorkingKnowledgeHitInfo {
+  itemType: 'research_notebook' | 'working_note'
+  visibility: 'private' | 'shared_selected' | 'shared_project'
+}
+
 // This turn's real retrieval provenance, keyed by citation sourceType --
 // citations are checked against this, never against what the model merely
 // asserts. wikiArticleSlugs covers both search_wiki and
 // search_project_knowledge's wiki-layer hits; knowledgeSourceIds covers
-// search_project_knowledge's source-layer hits (Stage 2).
+// search_project_knowledge's source-layer hits (Stage 2); workingKnowledgeIds
+// covers search_my_working_knowledge/search_shared_working_knowledge hits
+// (Working Knowledge Stage 1+2).
 export interface RetrievedProvenance {
   wikiArticleSlugs: ReadonlyMap<string, RetrievedHitInfo>
   knowledgeSourceIds: ReadonlyMap<string, RetrievedHitInfo>
+  workingKnowledgeIds: ReadonlyMap<string, RetrievedWorkingKnowledgeHitInfo>
 }
 
 // Turns a model-submitted, schema-validated envelope into what actually
@@ -56,15 +71,27 @@ export async function buildPersistedEnvelope(
   const resolvedDocuments = documents.filter((d): d is NonNullable<typeof d> => d !== null)
   if (resolvedDocuments.length) persisted.documents = resolvedDocuments
 
-  // Stage 3: layer/documentVersionId are attached here from this turn's own
-  // retrieval, never from the model -- same "don't trust the model with a
-  // fact it might hallucinate" principle as the sourceId verification
-  // itself.
+  // Stage 3: layer/documentVersionId (or, for working_knowledge,
+  // itemType/visibility) are attached here from this turn's own retrieval,
+  // never from the model -- same "don't trust the model with a fact it
+  // might hallucinate" principle as the sourceId verification itself. A real
+  // switch, not a ternary -- the previous two-way ternary silently
+  // mis-verified anything that wasn't exactly 'knowledge_source' as a wiki
+  // lookup, which would have falsely "verified" a working_knowledge citation
+  // against the wrong map (or, being a real bug even before this feature,
+  // any future third sourceType) instead of actually failing closed.
   const verifiedCitations = (parsed.citations ?? [])
     .map((c) => {
-      const info = c.sourceType === 'knowledge_source' ? retrieved.knowledgeSourceIds.get(c.sourceId) : retrieved.wikiArticleSlugs.get(c.sourceId)
-      if (!info) return null
-      return { ...c, layer: info.layer, documentVersionId: info.documentVersionId ?? undefined }
+      if (c.sourceType === 'knowledge_source') {
+        const info = retrieved.knowledgeSourceIds.get(c.sourceId)
+        return info ? { ...c, layer: info.layer, documentVersionId: info.documentVersionId ?? undefined } : null
+      }
+      if (c.sourceType === 'working_knowledge') {
+        const info = retrieved.workingKnowledgeIds.get(c.sourceId)
+        return info ? { ...c, workingKnowledgeType: info.itemType, workingKnowledgeVisibility: info.visibility } : null
+      }
+      const info = retrieved.wikiArticleSlugs.get(c.sourceId)
+      return info ? { ...c, layer: info.layer, documentVersionId: info.documentVersionId ?? undefined } : null
     })
     .filter((c): c is NonNullable<typeof c> => c !== null)
   if (verifiedCitations.length) persisted.citations = verifiedCitations
@@ -120,6 +147,8 @@ export async function resolveEnvelopeForDisplay(
           route: resolved.route,
           layer: citation.layer,
           ...(stale !== undefined ? { stale } : {}),
+          ...(citation.workingKnowledgeType ? { workingKnowledgeType: citation.workingKnowledgeType } : {}),
+          ...(citation.workingKnowledgeVisibility ? { workingKnowledgeVisibility: citation.workingKnowledgeVisibility } : {}),
         }
       })
     ),
