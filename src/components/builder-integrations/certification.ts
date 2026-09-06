@@ -36,3 +36,43 @@ export const RISK_LABELS: Record<string, string> = {
   consequential_write: 'Consequential write',
   administrative: 'Administrative',
 }
+
+// Builder Capability Promotion -- fixed order matching the doc's own
+// numbering (docs/dev-request-builder-capability-promotion-evaluation-
+// templates.md). Six templates always shown, whether or not a
+// capability_evaluations row exists for them yet.
+export const CAPABILITY_TEMPLATE_ORDER = [
+  'scope_evidence',
+  'functional_contract',
+  'identity_permissions',
+  'human_decision',
+  'customer_acceptance',
+  'production_readiness',
+] as const
+
+export const CAPABILITY_TEMPLATE_LABELS: Record<string, string> = {
+  scope_evidence: 'Intended Scope and Evidence',
+  functional_contract: 'Functional Contract and Repeatability',
+  identity_permissions: 'Identity, Permissions and Data Handling',
+  human_decision: 'Human Decision and Transaction Safety',
+  customer_acceptance: 'Customer Acceptance and Usability',
+  production_readiness: 'Production Readiness and Continuing Fitness',
+}
+
+export const CAPABILITY_EVALUATION_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  ready_for_review: 'Ready for review',
+  pass: 'Pass',
+  conditional_pass: 'Conditional pass',
+  fail: 'Fail',
+  not_applicable: 'Not applicable',
+}
+
+export const CAPABILITY_EVALUATION_STATUS_STYLES: Record<string, string> = {
+  draft: 'bg-zinc-100 text-zinc-700',
+  ready_for_review: 'bg-amber-100 text-amber-800',
+  pass: 'bg-green-100 text-green-800',
+  conditional_pass: 'bg-blue-100 text-blue-700',
+  fail: 'bg-red-100 text-red-800',
+  not_applicable: 'bg-zinc-200 text-zinc-500',
+}

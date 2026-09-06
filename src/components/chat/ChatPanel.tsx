@@ -73,20 +73,22 @@ const SHORT_WELCOME = "Welcome back — would you like to continue where we left
 
 // KB Sandbox Builder (docs/dev-request-kb-sandbox-builder-product.md) --
 // the same three empty-state copy slots as above, framed around the
-// builder's actual question rather than general platform exploration. An
-// "opportunity" here is just a Project (see working-knowledge.ts's own
-// notes on this) -- Ember doesn't need special vocabulary beyond that.
+// builder's actual question rather than general platform exploration. Each
+// builder has exactly one Project (auto-provisioned at account creation,
+// see provisionBuilderProject in projects.ts); a new client is a Workstream
+// on that Project, not a new Project -- Ember should point there, never
+// suggest "starting a new project."
 const ONBOARDING_GREETING_BUILDER =
-  "Hi! I’m Ember. Let’s figure out what you’re trying to help this customer accomplish — I can help you discover the workflow, research the context, pick the right Method, and prepare architecture and specs. Start a new opportunity to keep each customer's work separate, or tell me what you're working on now.\n\nYour conversations and saved notes are private to you. What are you trying to help this customer accomplish?"
+  "Hi! I’m Ember. Let’s figure out what you’re trying to help this customer accomplish — I can help you discover the workflow, research the context, pick the right Method, and prepare architecture and specs. Start a new workstream to keep each customer's work separate, or tell me what you're working on now.\n\nYour conversations and saved notes are private to you. What are you trying to help this customer accomplish?"
 
 const STARTER_PROMPTS_BUILDER = [
   'What are you trying to help this customer accomplish?',
   'Help me pick the right Method for this problem.',
-  'Help me start a new opportunity.',
+  'Help me start a new workstream for a customer.',
   'Show me what KB Sandbox Builder can do.',
 ]
 
-const SHORT_WELCOME_BUILDER = "Welcome back — continue this opportunity, or start a new one?"
+const SHORT_WELCOME_BUILDER = "Welcome back — continue an existing workstream, or start a new one?"
 
 // A resumed conversation whose pending_turn_started_at is older than this is
 // treated as abandoned (the tab that started it is long gone), not polled
@@ -939,10 +941,10 @@ export function ChatSession({
                 ? 'Tell Ember about it below.'
                 : projectId
                   ? productMode === 'builder'
-                    ? `Ask about ${projectContext?.name ?? 'this opportunity'}'s own notes, or what you're trying to help this customer accomplish.`
+                    ? `Ask about a customer's workstream, your saved notes, or what you're trying to help them accomplish.`
                     : `Ask about ${projectContext?.name ?? 'this project'}'s own knowledge first, or general platform guidance.`
                   : productMode === 'builder'
-                    ? 'What are you trying to help this customer accomplish? Or ask me to start a new opportunity.'
+                    ? 'What are you trying to help this customer accomplish? Or ask me to start a new workstream.'
                     : 'Ask about the platform, search the Wiki, or ask me to create a project or workstream.'}
             </p>
             {projectStarterPromptChip}

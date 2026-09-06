@@ -3,6 +3,8 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type {
   BuilderIntegrationKind,
   BuilderIntegrationRiskClassification,
+  CapabilityEvaluation,
+  CapabilityEvaluationTemplateId,
   ExternalAgentCertificationStatus,
   ExternalAgentProtocol,
 } from '@/types/database'
@@ -23,6 +25,51 @@ const CERTIFICATION_STATUSES: ExternalAgentCertificationStatus[] = [
 // certain tiers carry an accountable approver -- experimental/sandbox_tested
 // are self-serve-adjacent milestones, not something staff sign off on.
 const APPROVED_FROM: ExternalAgentCertificationStatus[] = ['security_reviewed', 'outlet_accepted', 'production_approved']
+
+// Builder Capability Promotion (docs/dev-request-builder-capability-
+// promotion-evaluation-templates.md): reuses risk_classification directly
+// as the doc's own risk-profile concept (read_only<->Low,
+// reversible_write<->Moderate, administrative<->High,
+// consequential_write<->Transactional -- consequential_write's own
+// definition, "creates/changes/submits data," is exactly the doc's
+// Transactional definition) rather than adding a second, overlapping
+// taxonomy. PROFILE_REQUIRED_TEMPLATES encodes the doc's own risk-profile
+// table (Low skips identity_permissions entirely; only Transactional
+// requires human_decision); TRANSITION_TEMPLATES encodes which templates
+// are semantically tied to advancing to a given certification stage (the
+// doc's own "Used at" annotations). The intersection of the two is what's
+// actually required for a specific version to advance to a specific stage.
+const PROFILE_REQUIRED_TEMPLATES: Record<BuilderIntegrationRiskClassification, CapabilityEvaluationTemplateId[]> = {
+  read_only: ['scope_evidence', 'functional_contract', 'customer_acceptance', 'production_readiness'],
+  reversible_write: ['scope_evidence', 'functional_contract', 'identity_permissions', 'customer_acceptance', 'production_readiness'],
+  administrative: ['scope_evidence', 'functional_contract', 'identity_permissions', 'customer_acceptance', 'production_readiness'],
+  consequential_write: [
+    'scope_evidence',
+    'functional_contract',
+    'identity_permissions',
+    'human_decision',
+    'customer_acceptance',
+    'production_readiness',
+  ],
+}
+
+const TRANSITION_TEMPLATES: Partial<Record<ExternalAgentCertificationStatus, CapabilityEvaluationTemplateId[]>> = {
+  sandbox_tested: ['scope_evidence'],
+  security_reviewed: ['functional_contract', 'identity_permissions'],
+  outlet_accepted: ['customer_acceptance', 'human_decision'],
+  production_approved: ['production_readiness'],
+}
+
+function requiredTemplatesForTransition(
+  risk: BuilderIntegrationRiskClassification,
+  target: ExternalAgentCertificationStatus
+): CapabilityEvaluationTemplateId[] {
+  const forTransition = TRANSITION_TEMPLATES[target] ?? []
+  const forProfile = new Set(PROFILE_REQUIRED_TEMPLATES[risk])
+  return forTransition.filter((t) => forProfile.has(t))
+}
+
+const SATISFIED_STATUSES = new Set(['pass', 'conditional_pass', 'not_applicable'])
 
 function slugify(name: string): string {
   return (
@@ -188,6 +235,31 @@ export async function updateCertificationStatus(
     throw new BuilderIntegrationValidationError(`Invalid certification status: ${newStatus}`)
   }
 
+  // Capability Promotion gate: a version cannot advance to a stage whose
+  // required evaluation templates (per its own risk_classification) aren't
+  // yet pass/conditional_pass/not_applicable. Deprecated/suspended are
+  // exits, not advances -- no template gate applies to those.
+  if (newStatus !== 'deprecated' && newStatus !== 'suspended') {
+    const { data: version } = await supabase.from('builder_integration_versions').select('risk_classification').eq('id', versionId).single()
+    if (!version) throw new BuilderIntegrationValidationError('Version not found')
+
+    const required = requiredTemplatesForTransition(version.risk_classification, newStatus)
+    if (required.length > 0) {
+      const { data: evaluations } = await supabase
+        .from('capability_evaluations')
+        .select('template_id, status')
+        .eq('builder_integration_version_id', versionId)
+        .in('template_id', required)
+      const satisfied = new Set((evaluations ?? []).filter((e) => SATISFIED_STATUSES.has(e.status)).map((e) => e.template_id))
+      const missing = required.filter((t) => !satisfied.has(t))
+      if (missing.length > 0) {
+        throw new BuilderIntegrationValidationError(
+          `Cannot advance to ${newStatus} -- required evaluation template(s) not yet satisfied: ${missing.join(', ')}`
+        )
+      }
+    }
+  }
+
   const update: { certification_status: ExternalAgentCertificationStatus; approved_by?: string; approved_at?: string } = {
     certification_status: newStatus,
   }
@@ -197,6 +269,97 @@ export async function updateCertificationStatus(
   }
 
   const { error } = await supabase.from('builder_integration_versions').update(update).eq('id', versionId)
+  if (error) throw error
+}
+
+// --- Capability Promotion evaluations -------------------------------------
+// Same authorization shape as requireIntegrationManager below (registering
+// builder or staff), just resolved from a version id rather than an
+// integration id directly.
+async function requireIntegrationManagerForVersion(ctx: WorkbenchCallerContext, versionId: string): Promise<void> {
+  const { user, profile, supabase } = ctx
+  const { data: version, error: versionError } = await supabase
+    .from('builder_integration_versions')
+    .select('builder_integration_id')
+    .eq('id', versionId)
+    .single()
+  if (versionError || !version) throw versionError ?? new BuilderIntegrationValidationError('Version not found')
+  const { data: integration, error: integrationError } = await supabase
+    .from('builder_integrations')
+    .select('created_by')
+    .eq('id', version.builder_integration_id)
+    .single()
+  if (integrationError || !integration) throw integrationError ?? new BuilderIntegrationValidationError('Integration not found')
+  if (integration.created_by !== user.id && profile.role !== 'curator' && profile.role !== 'admin') {
+    throw new BuilderIntegrationValidationError('Only the registering builder or staff may manage evaluation evidence')
+  }
+}
+
+export async function listCapabilityEvaluations(ctx: WorkbenchCallerContext, versionId: string): Promise<CapabilityEvaluation[]> {
+  const { data, error } = await ctx.supabase.from('capability_evaluations').select('*').eq('builder_integration_version_id', versionId)
+  if (error) throw error
+  return data ?? []
+}
+
+// Combined evidence note per template (confirmed with Mike -- not itemized
+// per-check tracking). Upsert on (version, template) -- always leaves the
+// row at 'ready_for_review' so a revision after a 'fail'/'conditional_pass'
+// re-enters review, matching "reopen affected templates when a material
+// change occurs" loosely (full automatic re-evaluation-trigger detection is
+// explicitly deferred). Only ever writes evidence_notes/status -- never the
+// terminal decision fields, both by convention here and enforced for real
+// by capability_evaluations_update_owner_evidence's own WITH CHECK.
+export async function upsertCapabilityEvidence(
+  ctx: WorkbenchCallerContext,
+  versionId: string,
+  templateId: CapabilityEvaluationTemplateId,
+  evidenceNotes: string
+): Promise<void> {
+  await requireIntegrationManagerForVersion(ctx, versionId)
+
+  const { data: existing, error: existingError } = await ctx.supabase
+    .from('capability_evaluations')
+    .select('id')
+    .eq('builder_integration_version_id', versionId)
+    .eq('template_id', templateId)
+    .maybeSingle()
+  if (existingError) throw existingError
+
+  if (existing) {
+    const { error } = await ctx.supabase
+      .from('capability_evaluations')
+      .update({ evidence_notes: evidenceNotes, status: 'ready_for_review' })
+      .eq('id', existing.id)
+    if (error) throw error
+  } else {
+    const { error } = await ctx.supabase.from('capability_evaluations').insert({
+      builder_integration_version_id: versionId,
+      template_id: templateId,
+      evidence_notes: evidenceNotes,
+      status: 'ready_for_review',
+      created_by: ctx.user.id,
+    })
+    if (error) throw error
+  }
+}
+
+// curator/admin only -- same bar as updateCertificationStatus. A Builder's
+// platform role is always 'consultant', so this already excludes them from
+// deciding their own evaluation; capability_evaluations_decide_staff (RLS)
+// is the backstop.
+export async function decideCapabilityEvaluation(
+  ctx: WorkbenchCallerContext,
+  evaluationId: string,
+  status: 'pass' | 'conditional_pass' | 'fail' | 'not_applicable',
+  rationale?: string
+): Promise<void> {
+  if (ctx.profile.role !== 'curator' && ctx.profile.role !== 'admin') {
+    throw new BuilderIntegrationValidationError('Only curator/admin staff may decide a capability evaluation')
+  }
+  const { error } = await ctx.supabase
+    .from('capability_evaluations')
+    .update({ status, rationale: rationale?.trim() || null, reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString() })
+    .eq('id', evaluationId)
   if (error) throw error
 }
 

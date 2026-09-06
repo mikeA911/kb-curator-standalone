@@ -3,7 +3,13 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser } from '@/lib/auth'
 import * as registry from '@/lib/builder-integrations/registry'
-import type { BuilderIntegrationKind, BuilderIntegrationRiskClassification, ExternalAgentCertificationStatus, ExternalAgentProtocol } from '@/types/database'
+import type {
+  BuilderIntegrationKind,
+  BuilderIntegrationRiskClassification,
+  CapabilityEvaluationTemplateId,
+  ExternalAgentCertificationStatus,
+  ExternalAgentProtocol,
+} from '@/types/database'
 
 export async function registerBuilderIntegrationAction(input: {
   name: string
@@ -50,6 +56,28 @@ export async function updateCertificationStatusAction(integrationId: string, ver
   await registry.updateCertificationStatus(ctx, versionId, newStatus)
   revalidatePath(`/agent-registry/${integrationId}`)
   revalidatePath('/agent-registry')
+}
+
+export async function upsertCapabilityEvidenceAction(
+  integrationId: string,
+  versionId: string,
+  templateId: CapabilityEvaluationTemplateId,
+  evidenceNotes: string
+) {
+  const ctx = await requireUser()
+  await registry.upsertCapabilityEvidence(ctx, versionId, templateId, evidenceNotes)
+  revalidatePath(`/agent-registry/${integrationId}`)
+}
+
+export async function decideCapabilityEvaluationAction(
+  integrationId: string,
+  evaluationId: string,
+  status: 'pass' | 'conditional_pass' | 'fail' | 'not_applicable',
+  rationale?: string
+) {
+  const ctx = await requireUser()
+  await registry.decideCapabilityEvaluation(ctx, evaluationId, status, rationale)
+  revalidatePath(`/agent-registry/${integrationId}`)
 }
 
 export async function grantProjectAvailabilityAction(integrationId: string, projectId: string) {

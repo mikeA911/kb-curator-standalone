@@ -7,6 +7,9 @@ import {
   grantProjectAvailability,
   revokeProjectAvailability,
   listProjectAvailability,
+  listCapabilityEvaluations,
+  upsertCapabilityEvidence,
+  decideCapabilityEvaluation,
 } from './registry'
 import { BuilderIntegrationValidationError } from './errors'
 
@@ -210,9 +213,12 @@ describe('updateCertificationStatus', () => {
     ).rejects.toThrow(BuilderIntegrationValidationError)
   })
 
-  it('sets approved_by/approved_at when moving to security_reviewed or beyond', async () => {
+  it('sets approved_by/approved_at when moving to security_reviewed or beyond (required templates satisfied)', async () => {
     const fakeSupabase = createFakeSupabase({
-      builder_integration_versions: [{ data: null, error: null }], // update
+      // read_only (default) profile at security_reviewed only requires
+      // functional_contract -- identity_permissions is skipped for Low risk.
+      builder_integration_versions: [{ data: { risk_classification: 'read_only' }, error: null }, { data: null, error: null }],
+      capability_evaluations: [{ data: [{ template_id: 'functional_contract', status: 'pass' }], error: null }],
     })
 
     await updateCertificationStatus(
@@ -228,13 +234,150 @@ describe('updateCertificationStatus', () => {
 
   it('does not set approved_by/approved_at for pre-review tiers (experimental, sandbox_tested)', async () => {
     const fakeSupabase = createFakeSupabase({
-      builder_integration_versions: [{ data: null, error: null }],
+      builder_integration_versions: [{ data: { risk_classification: 'read_only' }, error: null }, { data: null, error: null }],
+      capability_evaluations: [{ data: [{ template_id: 'scope_evidence', status: 'pass' }], error: null }],
     })
 
     await updateCertificationStatus({ ...ctx({ role: 'curator' }), supabase: fakeSupabase as never } as never, 'version-1', 'sandbox_tested')
 
     const update = fakeSupabase._calls.find((c) => c.table === 'builder_integration_versions' && c.method === 'update')
     expect(update?.args).toEqual({ certification_status: 'sandbox_tested' })
+  })
+
+  // Builder Capability Promotion gating.
+  it('blocks advancing to sandbox_tested when scope_evidence is not yet satisfied', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: { risk_classification: 'read_only' }, error: null }],
+      capability_evaluations: [{ data: [], error: null }],
+    })
+
+    await expect(
+      updateCertificationStatus({ ...ctx({ role: 'curator' }), supabase: fakeSupabase as never } as never, 'version-1', 'sandbox_tested')
+    ).rejects.toThrow('scope_evidence')
+    expect(fakeSupabase._calls.find((c) => c.table === 'builder_integration_versions' && c.method === 'update')).toBeUndefined()
+  })
+
+  it('varies required templates by risk_classification -- Low skips identity_permissions, Transactional requires it', async () => {
+    const lowRisk = createFakeSupabase({
+      builder_integration_versions: [{ data: { risk_classification: 'read_only' }, error: null }, { data: null, error: null }],
+      capability_evaluations: [{ data: [{ template_id: 'functional_contract', status: 'pass' }], error: null }],
+    })
+    await expect(
+      updateCertificationStatus({ ...ctx({ role: 'admin' }), supabase: lowRisk as never } as never, 'version-1', 'security_reviewed')
+    ).resolves.toBeUndefined()
+
+    const transactionalRisk = createFakeSupabase({
+      builder_integration_versions: [{ data: { risk_classification: 'consequential_write' }, error: null }],
+      capability_evaluations: [{ data: [{ template_id: 'functional_contract', status: 'pass' }], error: null }],
+    })
+    await expect(
+      updateCertificationStatus({ ...ctx({ role: 'admin' }), supabase: transactionalRisk as never } as never, 'version-1', 'security_reviewed')
+    ).rejects.toThrow('identity_permissions')
+  })
+
+  it('requires human_decision before outlet_accepted only for consequential_write (Transactional) risk', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: { risk_classification: 'consequential_write' }, error: null }],
+      capability_evaluations: [{ data: [{ template_id: 'customer_acceptance', status: 'pass' }], error: null }],
+    })
+
+    await expect(
+      updateCertificationStatus({ ...ctx({ role: 'admin' }), supabase: fakeSupabase as never } as never, 'version-1', 'outlet_accepted')
+    ).rejects.toThrow('human_decision')
+  })
+
+  it('skips the template gate entirely for deprecated/suspended (exits, not advances)', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: null, error: null }], // update only -- no version/risk lookup expected
+    })
+
+    await updateCertificationStatus({ ...ctx({ role: 'admin' }), supabase: fakeSupabase as never } as never, 'version-1', 'suspended')
+
+    const update = fakeSupabase._calls.find((c) => c.table === 'builder_integration_versions' && c.method === 'update')
+    expect(update?.args).toEqual({ certification_status: 'suspended' })
+  })
+})
+
+describe('Capability Promotion evidence and decisions', () => {
+  it('upsertCapabilityEvidence rejects a caller who is neither the registering builder nor staff', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: { builder_integration_id: 'integration-1' }, error: null }],
+      builder_integrations: [{ data: { created_by: 'someone-else' }, error: null }],
+    })
+
+    await expect(
+      upsertCapabilityEvidence(
+        { ...ctx({ userId: 'user-1', role: 'consultant' }), supabase: fakeSupabase as never } as never,
+        'version-1',
+        'scope_evidence',
+        'notes'
+      )
+    ).rejects.toThrow(BuilderIntegrationValidationError)
+  })
+
+  it('upsertCapabilityEvidence inserts a fresh row at ready_for_review when none exists yet', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: { builder_integration_id: 'integration-1' }, error: null }],
+      builder_integrations: [{ data: { created_by: 'user-1' }, error: null }],
+      capability_evaluations: [{ data: null, error: null }], // no existing row
+    })
+
+    await upsertCapabilityEvidence({ ...ctx({ userId: 'user-1' }), supabase: fakeSupabase as never } as never, 'version-1', 'scope_evidence', 'My evidence')
+
+    const insert = fakeSupabase._calls.find((c) => c.table === 'capability_evaluations' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({
+      builder_integration_version_id: 'version-1',
+      template_id: 'scope_evidence',
+      evidence_notes: 'My evidence',
+      status: 'ready_for_review',
+      created_by: 'user-1',
+    })
+  })
+
+  it('upsertCapabilityEvidence updates the existing row (revision resets to ready_for_review)', async () => {
+    const fakeSupabase = createFakeSupabase({
+      builder_integration_versions: [{ data: { builder_integration_id: 'integration-1' }, error: null }],
+      builder_integrations: [{ data: { created_by: 'user-1' }, error: null }],
+      capability_evaluations: [{ data: { id: 'eval-1' }, error: null }],
+    })
+
+    await upsertCapabilityEvidence({ ...ctx({ userId: 'user-1' }), supabase: fakeSupabase as never } as never, 'version-1', 'scope_evidence', 'Revised evidence')
+
+    const update = fakeSupabase._calls.find((c) => c.table === 'capability_evaluations' && c.method === 'update')
+    expect(update?.args).toEqual({ evidence_notes: 'Revised evidence', status: 'ready_for_review' })
+  })
+
+  it('decideCapabilityEvaluation rejects a non-staff caller -- a Builder cannot decide their own gate', async () => {
+    const fakeSupabase = createFakeSupabase({})
+
+    await expect(
+      decideCapabilityEvaluation({ ...ctx({ role: 'consultant' }), supabase: fakeSupabase as never } as never, 'eval-1', 'pass')
+    ).rejects.toThrow(BuilderIntegrationValidationError)
+  })
+
+  it('decideCapabilityEvaluation records status/rationale/reviewer for staff', async () => {
+    const fakeSupabase = createFakeSupabase({
+      capability_evaluations: [{ data: null, error: null }],
+    })
+
+    await decideCapabilityEvaluation(
+      { ...ctx({ role: 'curator', userId: 'curator-1' }), supabase: fakeSupabase as never } as never,
+      'eval-1',
+      'conditional_pass',
+      'Acceptable with monitoring'
+    )
+
+    const update = fakeSupabase._calls.find((c) => c.table === 'capability_evaluations' && c.method === 'update')
+    expect(update?.args).toMatchObject({ status: 'conditional_pass', rationale: 'Acceptable with monitoring', reviewed_by: 'curator-1' })
+  })
+
+  it('listCapabilityEvaluations returns every row for a version', async () => {
+    const fakeSupabase = createFakeSupabase({
+      capability_evaluations: [{ data: [{ id: 'eval-1', template_id: 'scope_evidence' }], error: null }],
+    })
+
+    const result = await listCapabilityEvaluations({ ...ctx(), supabase: fakeSupabase as never } as never, 'version-1')
+    expect(result).toEqual([{ id: 'eval-1', template_id: 'scope_evidence' }])
   })
 })
 

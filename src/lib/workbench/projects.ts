@@ -13,6 +13,7 @@ import type {
 } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
+import { env } from '@/lib/env'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
@@ -64,6 +65,21 @@ export async function createProject(
   }
   if (!hasRequiredRole(profile.role, 'consultant')) {
     throw new AuthError('Your account needs to be a consultant or above to start a project')
+  }
+  // KB Sandbox Builder: a builder (consultant role) gets exactly one
+  // Project, auto-provisioned at account creation (provisionBuilderProject)
+  // -- new clients are Workstreams on it, not new Projects (see that
+  // function's own comment). Curator/admin (operator staff) are unaffected
+  // -- they aren't builders and may need several Projects for programme
+  // administration. 'member' role is already excluded by the role check
+  // above in both modes, so no separate case is needed there.
+  if (env.productMode() === 'builder' && profile.role === 'consultant') {
+    const { data: existing } = await supabase.from('projects').select('id').eq('owner_id', user.id).limit(1).maybeSingle()
+    if (existing) {
+      throw new ProjectValidationError(
+        'Builders work from one Project -- start a new Workstream there for each customer instead of creating another Project.'
+      )
+    }
   }
   if (input.knowledgeBaseId) await requireActiveKnowledgeBase(supabase, input.knowledgeBaseId)
 
@@ -390,6 +406,30 @@ export async function enrollInOrganizationHome(admin: ReturnType<typeof createAd
   const { error } = await admin
     .from('project_members')
     .upsert({ project_id: homeProject.id, user_id: userId, role: 'viewer', status: 'active' }, { onConflict: 'project_id,user_id', ignoreDuplicates: true })
+  if (error) throw error
+}
+
+// KB Sandbox Builder (docs/dev-request-kb-sandbox-builder-product.md): each
+// builder gets exactly one Project, auto-provisioned once at account
+// creation -- not one Project per client/opportunity. A new client is a
+// Workstream on this same Project (already has status/goal/deliverables and
+// its own workstream_artifacts evidence trail -- no new schema needed for
+// that), and the builder's own free-form research/CRM notes are a Working
+// Knowledge item on it. Called from createUserAction (app/actions/admin.ts)
+// only when the deployment is in builder mode and the new account's
+// platform role is 'consultant' -- gating lives at the call site, this
+// function is unconditional (same separation as enrollInOrganizationHome
+// above). The projects_create_owner_membership trigger handles adding the
+// builder as 'owner' -- no separate project_members insert needed here.
+export async function provisionBuilderProject(admin: ReturnType<typeof createAdminClient>, userId: string, email: string): Promise<void> {
+  const label = email.split('@')[0] || 'Builder'
+  const { error } = await admin.from('projects').insert({
+    name: `${label} — Builder Workspace`,
+    project_type: 'consulting',
+    owner_id: userId,
+    portfolio_category: 'builder_lab',
+    discoverability: 'members_only',
+  })
   if (error) throw error
 }
 
