@@ -16,6 +16,11 @@ import { BrandingSettings } from '@/components/admin/BrandingSettings'
 import { getBrandingUrls } from '@/lib/branding'
 import { BlogPostsList } from '@/components/admin/BlogPostsList'
 import { listAllPosts } from '@/lib/blog/posts'
+import { WorkstreamPromotionsReview } from '@/components/projects/WorkstreamPromotionsReview'
+import { listPendingWorkstreamPromotions } from '@/lib/workbench/workstream-promotions'
+import { BuilderOperationsReview } from '@/components/admin/BuilderOperationsReview'
+import { listBuilderOperationsRows } from '@/lib/workbench/builder-progress-updates'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -54,6 +59,21 @@ export default async function AdminPage() {
     listStructuredOutputCapableModels(supabase),
     listAllPosts(supabase),
   ])
+
+  // Workstream Promotion works the same in either deployment mode (a
+  // Builder's solo Project or an ordinary Enterprise team Project) -- this
+  // is the platform-wide overview; an ordinary team's own curator instead
+  // reviews from their Project's own page, needing no /admin access.
+  // listPendingWorkstreamPromotions only ever touches ctx.supabase, so this
+  // profile/user pair (already validated admin above) is a valid
+  // WorkbenchCallerContext for it.
+  const callerCtx = { user, profile, supabase } as unknown as WorkbenchCallerContext
+  const pendingWorkstreamPromotions = await listPendingWorkstreamPromotions(callerCtx)
+
+  // Builder Operations only makes sense in a builder-mode deployment --
+  // there's no "builder_lab" Project category to review in Enterprise mode.
+  const isBuilderMode = env.productMode() === 'builder'
+  const builderOperationsRows = isBuilderMode ? await listBuilderOperationsRows(callerCtx) : []
 
   // Checked server-side only -- reports Configured/Missing, never the value.
   const configuredByProvider = Object.fromEntries(aiProviders.map((p) => [p.id, Boolean(env.byName(p.api_key_env_var))]))
@@ -103,6 +123,20 @@ export default async function AdminPage() {
           },
           { id: 'branding', label: 'Branding', content: <BrandingSettings current={brandingUrls} /> },
           { id: 'blog', label: 'Blog', content: <BlogPostsList posts={blogPosts} emailById={emailById} /> },
+          {
+            id: 'promotions',
+            label: 'Workstream Promotions',
+            content: <WorkstreamPromotionsReview promotions={pendingWorkstreamPromotions} />,
+          },
+          ...(isBuilderMode
+            ? [
+                {
+                  id: 'builder-operations',
+                  label: 'Builder Operations',
+                  content: <BuilderOperationsReview rows={builderOperationsRows} />,
+                },
+              ]
+            : []),
         ]}
       />
 

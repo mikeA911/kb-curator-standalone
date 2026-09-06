@@ -17,6 +17,9 @@ import { getOrganizationExplorer } from '@/lib/projects/explorer'
 import { OrganizationExplorer } from '@/components/projects/OrganizationExplorer'
 import { SubmitSourceForm } from '@/components/projects/SubmitSourceForm'
 import { SourceSubmissionsReview } from '@/components/projects/SourceSubmissionsReview'
+import { WorkstreamPromotionsReview } from '@/components/projects/WorkstreamPromotionsReview'
+import { listPendingWorkstreamPromotionsForProject } from '@/lib/workbench/workstream-promotions'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { ProjectCategorySelector } from '@/components/projects/ProjectCategorySelector'
 import { ProjectDiscoverabilitySelector } from '@/components/projects/ProjectDiscoverabilitySelector'
 import { RequestToJoinButton } from '@/components/projects/RequestToJoinButton'
@@ -216,6 +219,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
   const canCurateWorkstreams = canManage || viewerMembership?.role === 'curator'
+
+  // Workstream Promotion: this Project's own curator/owner/admin reviews
+  // promotions submitted from this Project's own workstreams -- the
+  // primary review path for an ordinary team's own curator (e.g. an HR
+  // Manager), who may have no /admin access at all.
+  const pendingWorkstreamPromotions =
+    canCurateWorkstreams && user && viewerProfile
+      ? await listPendingWorkstreamPromotionsForProject(
+          { user, profile: viewerProfile, supabase } as unknown as WorkbenchCallerContext,
+          project.id
+        )
+      : []
   // Same bar as approveProjectAction's own check -- curator or admin, by
   // either role system (platform role, or project role on this project).
   const canApprove =
@@ -537,6 +552,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-zinc-500">No workstreams defined yet.</p>
         )}
       </section>
+
+      {canCurateWorkstreams && pendingWorkstreamPromotions.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Pending workstream promotions</h2>
+          <WorkstreamPromotionsReview promotions={pendingWorkstreamPromotions} projectId={project.id} />
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">

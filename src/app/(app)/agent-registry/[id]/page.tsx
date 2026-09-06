@@ -2,8 +2,9 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { CertificationActions } from '@/components/builder-integrations/CertificationActions'
 import { ProjectAvailability } from '@/components/builder-integrations/ProjectAvailability'
+import { CapabilityEvaluations } from '@/components/builder-integrations/CapabilityEvaluations'
 import { CERTIFICATION_LABELS, KIND_LABELS, RISK_LABELS } from '@/components/builder-integrations/certification'
-import { listProjectAvailability } from '@/lib/builder-integrations/registry'
+import { listProjectAvailability, listCapabilityEvaluations } from '@/lib/builder-integrations/registry'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
 export default async function AgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,6 +47,15 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
     canManageAvailability && user && profile ? await listProjectAvailability({ user, profile, supabase } as WorkbenchCallerContext, id) : []
   const { data: allProjects } = canManageAvailability ? await supabase.from('projects').select('id, name').order('name') : { data: [] }
 
+  // Builder Capability Promotion: visible whenever the viewer can see this
+  // page at all (select is any authenticated non-anonymous user, same bar
+  // as the registry itself) -- editing evidence vs. deciding a template are
+  // the two separately-gated actions inside the component itself.
+  const capabilityEvaluations =
+    activeVersion && user && profile
+      ? await listCapabilityEvaluations({ user, profile, supabase } as WorkbenchCallerContext, activeVersion.id)
+      : []
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -59,6 +69,16 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
 
       {activeVersion && isStaff && (
         <CertificationActions integrationId={integration.id} versionId={activeVersion.id} currentStatus={activeVersion.certification_status} />
+      )}
+
+      {activeVersion && (
+        <CapabilityEvaluations
+          integrationId={integration.id}
+          versionId={activeVersion.id}
+          evaluations={capabilityEvaluations}
+          canEditEvidence={canManageAvailability}
+          isStaff={isStaff}
+        />
       )}
 
       {canManageAvailability && (

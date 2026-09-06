@@ -1142,6 +1142,48 @@ export interface WorkstreamArtifact {
   reviewed_at: string | null
 }
 
+// KB Sandbox Builder: workstream promotion (business-process handoff,
+// docs/dev-request-builder-operations-and-progress-updates.md's own note
+// "Each Builder has one private Project"). See
+// 20260906100001_workstream_promotions_schema.sql -- distinct from
+// docs/dev-request-builder-capability-promotion-evaluation-templates.md's
+// separate technical certification ladder for a *built capability*.
+export type WorkstreamPromotionStatus = 'pending' | 'approved' | 'rejected'
+
+export interface WorkstreamPromotion {
+  id: string
+  workstream_id: string
+  submitted_by: string
+  status: WorkstreamPromotionStatus
+  decision_reason: string | null
+  decided_by: string | null
+  decided_at: string | null
+  created_project_id: string | null
+  created_at: string
+}
+
+// Builder Operations and Progress Updates (docs/dev-request-builder-
+// operations-and-progress-updates.md) -- one row per Workstream; "replace"
+// updates this same row, "withdraw" flips status. See
+// 20260906120001_builder_progress_updates_schema.sql.
+export type BuilderProgressConfidence = 'on_track' | 'at_risk' | 'blocked'
+export type BuilderProgressUpdateStatus = 'active' | 'withdrawn'
+
+export interface BuilderProgressUpdate {
+  id: string
+  workstream_id: string
+  submitted_by: string
+  current_stage: string
+  opportunity_label: string | null
+  progress: string
+  next_step: string
+  help_requested: string | null
+  confidence: BuilderProgressConfidence
+  status: BuilderProgressUpdateStatus
+  created_at: string
+  updated_at: string
+}
+
 // ============================================
 // Chat / Conversational Workbench Assistant (M6D)
 // ============================================
@@ -1900,6 +1942,32 @@ export interface BuilderIntegrationProjectAvailability {
   created_at: string
 }
 
+// Builder Capability Promotion (docs/dev-request-builder-capability-
+// promotion-evaluation-templates.md) -- one evidence row per template per
+// version. See 20260906110001_capability_evaluations_schema.sql.
+export type CapabilityEvaluationTemplateId =
+  | 'scope_evidence'
+  | 'functional_contract'
+  | 'identity_permissions'
+  | 'human_decision'
+  | 'customer_acceptance'
+  | 'production_readiness'
+export type CapabilityEvaluationStatus = 'draft' | 'ready_for_review' | 'pass' | 'conditional_pass' | 'fail' | 'not_applicable'
+
+export interface CapabilityEvaluation {
+  id: string
+  builder_integration_version_id: string
+  template_id: CapabilityEvaluationTemplateId
+  status: CapabilityEvaluationStatus
+  evidence_notes: string | null
+  rationale: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // Agent Gateway, Milestone 1 -- audit trail AND pending-confirmation state
 // machine for one attempted call to a registered integration's tool. A
 // read-only call goes straight to 'executed'; a gated (reversible_write+)
@@ -2100,6 +2168,19 @@ export type ProjectSourceSubmissionUpdate = Partial<
 
 export type ProjectStatusHistoryEntryInsert = Omit<ProjectStatusHistoryEntry, 'id' | 'created_at'>
 
+export type WorkstreamPromotionInsert = Omit<
+  WorkstreamPromotion,
+  'id' | 'created_at' | 'status' | 'decision_reason' | 'decided_by' | 'decided_at' | 'created_project_id'
+> &
+  Partial<Pick<WorkstreamPromotion, 'status' | 'decision_reason' | 'decided_by' | 'decided_at' | 'created_project_id'>>
+export type WorkstreamPromotionUpdate = Partial<Omit<WorkstreamPromotion, 'id' | 'workstream_id' | 'submitted_by' | 'created_at'>>
+
+export type BuilderProgressUpdateInsert = Omit<BuilderProgressUpdate, 'id' | 'created_at' | 'updated_at' | 'status'> &
+  Partial<Pick<BuilderProgressUpdate, 'status'>>
+export type BuilderProgressUpdateUpdate = Partial<
+  Omit<BuilderProgressUpdate, 'id' | 'workstream_id' | 'submitted_by' | 'created_at'>
+>
+
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
 // roadmap-and-ember-feedback-board.md). Authorization is a hardcoded
 // two-identity allowlist (platform_owners), deliberately independent of
@@ -2266,6 +2347,15 @@ export type BuilderIntegrationVersionUpdate = Pick<BuilderIntegrationVersion, 'c
 
 export type BuilderIntegrationProjectAvailabilityInsert = Omit<BuilderIntegrationProjectAvailability, 'id' | 'created_at'>
 
+export type CapabilityEvaluationInsert = Omit<
+  CapabilityEvaluation,
+  'id' | 'created_at' | 'updated_at' | 'status' | 'rationale' | 'reviewed_by' | 'reviewed_at'
+> &
+  Partial<Pick<CapabilityEvaluation, 'status' | 'rationale' | 'reviewed_by' | 'reviewed_at'>>
+export type CapabilityEvaluationUpdate = Partial<
+  Omit<CapabilityEvaluation, 'id' | 'builder_integration_version_id' | 'template_id' | 'created_by' | 'created_at'>
+>
+
 export type BuilderIntegrationInvocationInsert = Omit<
   BuilderIntegrationInvocation,
   'id' | 'created_at' | 'confirmed_at' | 'confirmed_by' | 'executed_at' | 'status' | 'output' | 'error' | 'correlated_amount'
@@ -2411,6 +2501,18 @@ export interface Database {
         Update: ProjectSourceSubmissionUpdate
         Relationships: []
       }
+      workstream_promotions: {
+        Row: WorkstreamPromotion
+        Insert: WorkstreamPromotionInsert
+        Update: WorkstreamPromotionUpdate
+        Relationships: []
+      }
+      builder_progress_updates: {
+        Row: BuilderProgressUpdate
+        Insert: BuilderProgressUpdateInsert
+        Update: BuilderProgressUpdateUpdate
+        Relationships: []
+      }
       ai_provider_sensitivity_eligibility: {
         Row: AiProviderSensitivityEligibility
         Insert: AiProviderSensitivityEligibilityInsert
@@ -2453,6 +2555,12 @@ export interface Database {
         Row: BuilderIntegrationProjectAvailability
         Insert: BuilderIntegrationProjectAvailabilityInsert
         Update: never
+        Relationships: []
+      }
+      capability_evaluations: {
+        Row: CapabilityEvaluation
+        Insert: CapabilityEvaluationInsert
+        Update: CapabilityEvaluationUpdate
         Relationships: []
       }
       builder_integration_invocations: {

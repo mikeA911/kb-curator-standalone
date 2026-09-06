@@ -10,7 +10,10 @@ import { WorkstreamSummaryForm } from '@/components/projects/WorkstreamSummaryFo
 import { SystemUnderstandingCard } from '@/components/projects/SystemUnderstandingCard'
 import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
 import { ArtifactStatusBadge, ArtifactReviewActions } from '@/components/projects/ArtifactReviewActions'
+import { WorkstreamPromotionForm } from '@/components/projects/WorkstreamPromotionForm'
+import { ShareBuilderUpdateForm, type ExistingBuilderUpdate } from '@/components/projects/ShareBuilderUpdateForm'
 import { Markdown } from '@/components/shared/Markdown'
+import { env } from '@/lib/env'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   capability_inventory: 'Capability Inventory',
@@ -46,14 +49,57 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
 
   let canEdit = false // curator+ -- define scope, mark deliverables done
   let canAttach = false // consultant+ -- attach evidence
+  let isActiveMember = false // Workstream Promotion: any active member of this workstream's Project may submit it for promotion
+  let isProjectOwner = false // Builder Operations: Share Builder Update is owner-only (can_manage_project), no curator branch
   if (user) {
     const [{ data: viewerProfile }, { data: viewerMembership }] = await Promise.all([
       supabase.from('profiles').select('role').eq('id', user.id).single(),
       supabase.from('project_members').select('role').eq('project_id', id).eq('user_id', user.id).maybeSingle(),
     ])
     const isAdmin = viewerProfile?.role === 'admin'
+    isActiveMember = isAdmin || !!viewerMembership
+    isProjectOwner = isAdmin || viewerMembership?.role === 'owner'
     canEdit = isAdmin || viewerMembership?.role === 'owner' || viewerMembership?.role === 'curator'
     canAttach = isAdmin || canEdit || viewerMembership?.role === 'consultant'
+  }
+
+  // Offer promotion only when it would actually be accepted by
+  // submitWorkstreamForPromotion -- an active member, completed, at least
+  // one approved artifact, and nothing already in flight for it. Works the
+  // same in Builder mode (the solo builder) or an ordinary Enterprise team
+  // Project (any member, not just its owner/curator).
+  let canOfferPromotion = false
+  if (isActiveMember && workstream.status === 'completed' && artifacts.some((a) => a.status === 'approved')) {
+    const { data: existingPromotion } = await supabase
+      .from('workstream_promotions')
+      .select('id')
+      .eq('workstream_id', workstreamId)
+      .in('status', ['pending', 'approved'])
+      .maybeSingle()
+    canOfferPromotion = !existingPromotion
+  }
+
+  // Builder Operations: only meaningful in builder-mode deployments, and
+  // only for this workstream's own Project owner.
+  const canOfferBuilderUpdate = env.productMode() === 'builder' && isProjectOwner
+  let existingBuilderUpdate: ExistingBuilderUpdate | null = null
+  if (canOfferBuilderUpdate) {
+    const { data } = await supabase
+      .from('builder_progress_updates')
+      .select('current_stage, opportunity_label, progress, next_step, help_requested, confidence')
+      .eq('workstream_id', workstreamId)
+      .eq('status', 'active')
+      .maybeSingle()
+    existingBuilderUpdate = data
+      ? {
+          currentStage: data.current_stage,
+          opportunityLabel: data.opportunity_label,
+          progress: data.progress,
+          nextStep: data.next_step,
+          helpRequested: data.help_requested,
+          confidence: data.confidence,
+        }
+      : null
   }
 
   const completedCount = workstream.deliverables.filter((d) => d.completed).length
@@ -190,6 +236,17 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
 
         {canAttach && <AttachArtifactForm workstreamId={workstream.id} />}
       </section>
+
+      {canOfferBuilderUpdate && (
+        <ShareBuilderUpdateForm
+          projectId={id}
+          workstreamId={workstream.id}
+          existing={existingBuilderUpdate}
+          defaultStage={workstream.status}
+        />
+      )}
+
+      {canOfferPromotion && <WorkstreamPromotionForm projectId={id} workstreamId={workstream.id} />}
     </div>
   )
 }
