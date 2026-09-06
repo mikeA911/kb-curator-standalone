@@ -330,6 +330,43 @@ interface ExecuteResult {
   error?: string
 }
 
+// The tool-result message persisted for the ORIGINAL gated call (see
+// runGatewayToolCall/runOrderLunchRequestApproval/runOrderLunchCancelOrder
+// above) is frozen forever at "awaiting_human_confirmation" -- appendMessage
+// writes it once, when the model first proposed the call, and nothing ever
+// touches it again. On every later turn, the model reloads this exact
+// conversation history as its own context and sees its own tool call still
+// "pending," with no way to know a human already confirmed/cancelled it out
+// of band via GatewayInvocationCard -- so it dutifully keeps telling the
+// user to go confirm a card that was already confirmed, sometimes proposing
+// a brand-new duplicate invocation instead. Caught live 2026-09-04: a real
+// user stuck in exactly this loop trying to browse the OrderLunch menu.
+//
+// Fix: once a confirmation is resolved (executed, failed, or cancelled),
+// overwrite that same persisted tool-result row with the real outcome, so
+// the next turn's reloaded history shows what actually happened instead of
+// the stale "still waiting" placeholder. Located by conversation_id + role
+// 'tool' + the invocationId embedded in the original JSON content (chat_
+// messages.content is plain text, not JSONB, so this is a substring match,
+// not a JSON query) -- best-effort: a miss (e.g. the row was somehow never
+// written, or a future refactor changes the JSON shape) silently updates
+// zero rows rather than failing the confirm/cancel action itself, same
+// "never let bookkeeping block the real action" posture as this file's
+// other admin-client follow-up writes.
+async function syncToolMessageForInvocation(
+  admin: ReturnType<typeof createAdminClient>,
+  conversationId: string,
+  invocationId: string,
+  resolvedContent: Record<string, unknown>
+): Promise<void> {
+  await admin
+    .from('chat_messages')
+    .update({ content: JSON.stringify(resolvedContent) })
+    .eq('conversation_id', conversationId)
+    .eq('role', 'tool')
+    .ilike('content', `%"invocationId":"${invocationId}"%`)
+}
+
 async function requireProjectAccess(ctx: WorkbenchCallerContext, projectId: string): Promise<void> {
   if (ctx.profile.role === 'curator' || ctx.profile.role === 'admin') return
   const { data: membership } = await ctx.supabase
@@ -389,6 +426,11 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
       .from('builder_integration_invocations')
       .update({ status: 'failed', error: spendingCheck.reason, confirmed_at: new Date().toISOString(), confirmed_by: ctx.user.id })
       .eq('id', invocationId)
+    await syncToolMessageForInvocation(admin, invocation.conversation_id, invocationId, {
+      status: 'failed',
+      error: spendingCheck.reason,
+      message: 'The human declined or this action failed at confirmation time -- it did not happen. Do not retry it silently; explain the failure to the user.',
+    })
     return { error: spendingCheck.reason }
   }
 
@@ -439,6 +481,11 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
         executed_at: new Date().toISOString(),
       })
       .eq('id', invocationId)
+    await syncToolMessageForInvocation(admin, invocation.conversation_id, invocationId, {
+      status: 'confirmed_and_executed',
+      result: output,
+      message: 'The human confirmed this action and it has now actually happened -- use this real result, do not ask for confirmation again.',
+    })
     return { output }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -446,6 +493,11 @@ export async function executeConfirmedInvocation(ctx: WorkbenchCallerContext, in
       .from('builder_integration_invocations')
       .update({ status: 'failed', error: message, confirmed_at: new Date().toISOString(), confirmed_by: ctx.user.id })
       .eq('id', invocationId)
+    await syncToolMessageForInvocation(admin, invocation.conversation_id, invocationId, {
+      status: 'failed',
+      error: message,
+      message: 'The human confirmed this action, but it failed when actually attempted. Do not claim it succeeded -- explain the failure to the user.',
+    })
     return { error: message }
   }
 }
@@ -489,7 +541,11 @@ export async function resolvePendingInvocation(ctx: WorkbenchCallerContext, invo
 
 export async function cancelInvocation(ctx: WorkbenchCallerContext, invocationId: string): Promise<void> {
   const admin = createAdminClient()
-  const { data: invocation, error } = await admin.from('builder_integration_invocations').select('project_id, status').eq('id', invocationId).single()
+  const { data: invocation, error } = await admin
+    .from('builder_integration_invocations')
+    .select('project_id, conversation_id, status')
+    .eq('id', invocationId)
+    .single()
   if (error || !invocation) throw error ?? new Error('Gateway invocation not found')
   if (invocation.status !== 'proposed') throw new Error(`This action is no longer pending confirmation (status: ${invocation.status})`)
 
@@ -497,4 +553,9 @@ export async function cancelInvocation(ctx: WorkbenchCallerContext, invocationId
 
   const { error: updateError } = await admin.from('builder_integration_invocations').update({ status: 'cancelled' }).eq('id', invocationId)
   if (updateError) throw updateError
+
+  await syncToolMessageForInvocation(admin, invocation.conversation_id, invocationId, {
+    status: 'cancelled_by_user',
+    message: 'The human cancelled this action -- it did not happen. Do not retry it unless the user explicitly asks again.',
+  })
 }

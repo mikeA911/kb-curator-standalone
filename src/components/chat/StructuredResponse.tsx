@@ -118,6 +118,19 @@ const LAYER_LABEL: Record<'project' | 'platform', string> = {
   platform: 'Platform guidance',
 }
 
+// Working Knowledge & Research Notebooks Stage 1+2: a distinct code path,
+// not a value threaded into LAYER_LABEL, so a working-knowledge citation can
+// never accidentally render the approved-evidence badge -- checked first in
+// the badge lookup below, before layer is even consulted. Combines the dev
+// request's three named labels ("Working research" / "Private working
+// note" / "Project-shared research") with the one combination it doesn't
+// explicitly name (a shared plain note) by the same pattern.
+function workingKnowledgeBadgeLabel(type?: 'research_notebook' | 'working_note', visibility?: 'private' | 'shared_selected' | 'shared_project'): string {
+  const isNote = type === 'working_note'
+  if (visibility === 'private' || !visibility) return isNote ? 'Private working note' : 'Working research'
+  return isNote ? 'Project-shared note' : 'Project-shared research'
+}
+
 export function CitationsList({ citations }: { citations?: NonNullable<VerifiedAssistantEnvelope['citations']> }) {
   if (!citations?.length) return null
   return (
@@ -128,7 +141,11 @@ export function CitationsList({ citations }: { citations?: NonNullable<VerifiedA
           <Link href={c.route} className="text-blue-700 underline hover:text-blue-900">
             {c.label}
           </Link>
-          {c.layer ? (
+          {c.sourceType === 'working_knowledge' ? (
+            <span className="ml-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+              {workingKnowledgeBadgeLabel(c.workingKnowledgeType, c.workingKnowledgeVisibility)}
+            </span>
+          ) : c.layer ? (
             <span className="ml-1 rounded-full border border-zinc-200 px-1.5 py-0.5 text-[10px] text-zinc-500">{LAYER_LABEL[c.layer]}</span>
           ) : null}
           {c.stale ? (
@@ -139,6 +156,33 @@ export function CitationsList({ citations }: { citations?: NonNullable<VerifiedA
           {i < citations.length - 1 ? ',' : ''}
         </span>
       ))}
+    </div>
+  )
+}
+
+// Compact "Knowledge used" disclosure (docs/dev-request-project-scoped-
+// working-knowledge-and-research-notebooks.md's trust-presentation
+// section) -- computed purely client-side from citations already flowing
+// through (no schema change needed for the summary itself). webResultCount
+// is a sibling prop since web results are deliberately never citable (see
+// loop.ts's search_web guidance) and so have no citation entries to count.
+export function KnowledgeUsedSummary({
+  citations,
+  webResultCount,
+}: {
+  citations?: NonNullable<VerifiedAssistantEnvelope['citations']>
+  webResultCount?: number
+}) {
+  const approvedCount = citations?.filter((c) => c.sourceType === 'wiki_article' || c.sourceType === 'knowledge_source').length ?? 0
+  const workingCount = citations?.filter((c) => c.sourceType === 'working_knowledge').length ?? 0
+  if (approvedCount === 0 && workingCount === 0 && !webResultCount) return null
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] text-zinc-500">
+      <span className="font-medium text-zinc-600">Knowledge used</span>
+      {approvedCount > 0 && <span>Approved {approvedCount}</span>}
+      {workingCount > 0 && <span className="text-amber-700">Working {workingCount}</span>}
+      {!!webResultCount && <span>Web {webResultCount}</span>}
     </div>
   )
 }

@@ -17,7 +17,13 @@ import { composeWorkingContext } from './context'
 import { getConversationSummary, maybeRefreshSummary } from './summary'
 import { AssistantResponseEnvelopeSchema, PRESENT_RESPONSE_TOOL, PRESENT_RESPONSE_TOOL_NAME } from './response-envelope'
 import type { VerifiedAssistantEnvelope } from './response-envelope'
-import { buildPersistedEnvelope, resolveEnvelopeForDisplay, type RetrievedProvenance, type RetrievedHitInfo } from './envelope-resolution'
+import {
+  buildPersistedEnvelope,
+  resolveEnvelopeForDisplay,
+  type RetrievedProvenance,
+  type RetrievedHitInfo,
+  type RetrievedWorkingKnowledgeHitInfo,
+} from './envelope-resolution'
 import { resolveCreatedRecord, type CreatedRecordRef, type ResolvedCreatedRecord } from './created-records'
 import { getProjectContext, describeProjectKnowledgeScope } from './project-context'
 import {
@@ -29,6 +35,21 @@ import {
 import { SUBMIT_FEEDBACK_REPORT_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL_NAME, runSubmitFeedbackReport } from './feedback-tool'
 import { LIST_PROJECT_MEMBERS_TOOL, LIST_PROJECT_MEMBERS_TOOL_NAME, runListProjectMembers } from './project-members-tool'
 import { SEND_PROJECT_NOTE_TOOL, SEND_PROJECT_NOTE_TOOL_NAME, runSendProjectNote } from './project-note-tool'
+import { SEARCH_WEB_TOOL, SEARCH_WEB_TOOL_NAME, runSearchWeb } from './web-search-tool'
+import { LIST_WORKSTREAMS_TOOL, LIST_WORKSTREAMS_TOOL_NAME, runListWorkstreams } from './workstream-list-tool'
+import {
+  SEARCH_MY_WORKING_KNOWLEDGE_TOOL,
+  SEARCH_MY_WORKING_KNOWLEDGE_TOOL_NAME,
+  SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL,
+  SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL_NAME,
+  SAVE_WORKING_KNOWLEDGE_TOOL,
+  SAVE_WORKING_KNOWLEDGE_TOOL_NAME,
+  runSearchMyWorkingKnowledge,
+  runSearchSharedWorkingKnowledge,
+  runSaveWorkingKnowledge,
+  type WorkingKnowledgeHit,
+} from './working-knowledge-tool'
+import { env } from '@/lib/env'
 import { listAvailableTools, GATEWAY_TOOL_PREFIX } from '@/lib/mcp-gateway/discovery'
 import { runGatewayToolCall, type PendingGatewayInvocation } from '@/lib/mcp-gateway/execute'
 import type { FeedbackType } from '@/types/database'
@@ -38,7 +59,7 @@ import type { FeedbackType } from '@/types/database'
 // changes meaningfully enough that old provenance is worth distinguishing
 // from new. Not tied to a package/app version; this is specifically about
 // "which assistant behavior produced this row."
-export const ASSISTANT_PROMPT_VERSION = 'm7-v7'
+export const ASSISTANT_PROMPT_VERSION = 'm7-v10'
 
 const SYSTEM_PROMPT = `You are the KB Sandbox Workbench Assistant. You help users navigate and operate the platform: search the Wiki, look up project notes, create projects and workstreams, and attach evidence artifacts.
 
@@ -81,8 +102,8 @@ export function getSystemPromptText(): string {
 // (search_project_knowledge's own code-enforced project-first ordering is
 // the real guarantee; this just tells the model to actually call it) and
 // the "don't silently merge conflicting evidence" requirement.
-function buildProjectPromptAddendum(context: { name: string; goal: string | null }, knowledgeScope: string): string {
-  return `\n\nThis conversation is bound to the KB Sandbox project "${context.name}"${context.goal ? ` (goal: ${context.goal})` : ''}. Its own knowledge scope: ${knowledgeScope}.
+function buildProjectPromptAddendum(context: { name: string; goal: string | null }, knowledgeScope: string, webSearchAvailable: boolean): string {
+  const base = `\n\nThis conversation is bound to the KB Sandbox project "${context.name}"${context.goal ? ` (goal: ${context.goal})` : ''}. Its own knowledge scope: ${knowledgeScope}.
 
 You have an additional tool, search_project_knowledge, that searches this project's own attached knowledge first. Call it before search_wiki when you need evidence -- its results are tagged layer:'project' (this project's own approved evidence -- prefer this, it wins over general platform guidance when the two conflict) or layer:'platform' (general shared knowledge, used only to fill a genuine gap). If project evidence and platform guidance materially conflict, say so explicitly rather than silently merging them. If the project has no relevant attached knowledge for this question, say that plainly instead of presenting platform guidance as if it were project-specific evidence.
 
@@ -90,7 +111,23 @@ Some evidence in this project may be access-restricted to specific people (e.g. 
 
 You also have list_project_members (no Project ID needed) for questions like who's working on this project, who owns it, or who handles a specific approval responsibility. Always call it fresh -- never guess from earlier in this conversation, and never copy its results into a saved summary. Project role, business function, and approval responsibility are three separate things: don't conflate them, and knowing someone is a member never tells you what evidence they're personally authorized to see.
 
-If the user asks you to send someone a Project Note (e.g. "send Maria a note about X"), first call list_project_members to find the exact person. Then state the exact recipient, subject and body you're about to send in your reply and wait for the user's explicit confirmation in their next message -- only call send_project_note once they've clearly agreed to that exact content, never in the same turn you proposed it.`
+If the user asks you to send someone a Project Note (e.g. "send Maria a note about X"), first call list_project_members to find the exact person. Then state the exact recipient, subject and body you're about to send in your reply and wait for the user's explicit confirmation in their next message -- only call send_project_note once they've clearly agreed to that exact content, never in the same turn you proposed it.
+
+You also have list_workstreams (no Project ID needed) for this project's existing workstreams with their real ids. Call it before attach_workstream_artifact whenever you need to reference an existing workstream -- a workstream's display name (e.g. "Phase 1 -- Showcase") is never a valid workstreamId, and guessing one will fail.
+
+You also have search_my_working_knowledge and search_shared_working_knowledge (no Project ID needed) -- Working Knowledge is the current user's own private research notebooks and working notes in this project (plus, for the "shared" tool, notebooks other members have explicitly shared with them), used for continuity across conversations (e.g. "continue my research from yesterday"). It is NOT approved organizational knowledge and must never be presented as such -- always call it out as working/unverified material when you use it, and if it conflicts with search_project_knowledge's approved evidence, disclose the conflict explicitly rather than silently preferring one. A working-knowledge result CAN be cited (sourceType 'working_knowledge', sourceId is that result's id) -- it just renders with a distinct "working" badge, never the approved-evidence one.
+
+When the user wants to keep research or notes for later (most commonly after web research, but also a plain note), call save_working_knowledge rather than attach_workstream_artifact -- it's private to them by default and exactly what Working Knowledge is for. Tell them plainly it's private by default, marked working/unverified, and that they manage sharing or submitting it for curation from the project page -- never claim it's already approved or visible to anyone else.`
+
+  // Only described when actually offered this turn (webSearchAvailable
+  // mirrors the same env.tavilyApiKey() check that gates the tool out of
+  // the tools array) -- describing a tool the model can't actually call
+  // would just teach it to hallucinate the call.
+  const webSearchAddendum = webSearchAvailable
+    ? `\n\nYou also have search_web, for public web research -- useful for pre-sales or competitive-intelligence questions about a prospective client or competitor that project knowledge and the Wiki can't answer (e.g. "what does this company publicly say about their current infrastructure"). You are allowed at most ${WEB_SEARCH_LIMIT} search_web calls per turn. A web result is NOT project knowledge and NOT a citation -- never cite it via present_assistant_response's citations field, and never tell the user something is "in the knowledge base" or "confirmed" based on a web search alone. If web research turns up something worth keeping, call save_working_knowledge (type 'research_notebook') with your synthesis and the source URLs/titles as its sources -- not attach_workstream_artifact, which isn't private-by-default the way Working Knowledge is. Tell the user it's saved privately, marked working/unverified, and that a curator only sees it if they later choose to submit it.`
+    : ''
+
+  return base + webSearchAddendum
 }
 
 const FEEDBACK_CATEGORY_LABELS: Record<FeedbackType, string> = {
@@ -160,6 +197,25 @@ async function stampProvenance(
   }
 }
 
+// A Postgrest error -- what supabase-js actually throws/returns for a DB
+// failure -- is a plain object shaped like { message, details, hint, code },
+// never a real Error instance. Every catch block below used to do
+// `err instanceof Error ? err.message : String(err)`, which silently fell
+// through to String(err) for a Postgrest error and produced the literal
+// text "[object Object]" as the tool result -- observed live 2026-09-04
+// when attach_workstream_artifact got an invalid-UUID workstreamId and its
+// resulting Postgrest error rendered this way instead of the real "invalid
+// input syntax for type uuid" message. Extracts .message from anything that
+// has one (a real Error, a Postgrest error, a Zod-ish error), falling back
+// to String(err) only for a genuinely message-less throw.
+function toolErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message
+  }
+  return String(err)
+}
+
 // Raised from 5 (M6D's original value) after live testing under M7's
 // requirement-resolution reasoning: a small model legitimately wanting two
 // search_wiki calls plus its final reply was exhausting 5 iterations before
@@ -172,6 +228,12 @@ export const MAX_TOOL_ITERATIONS = 8
 // exported and displayed as a real guardrail value on the Agent Flow page,
 // instead of being restated there as a second hard-coded literal.
 export const SEARCH_WIKI_LIMIT = 2
+
+// Tavily is a metered/paid external API (unlike search_wiki/search_project_
+// knowledge, both free internal RPCs) -- capped lower than SEARCH_WIKI_LIMIT
+// to bound per-turn cost while still allowing one query plus one refinement
+// (e.g. broaden after an empty/irrelevant first result).
+export const WEB_SEARCH_LIMIT = 2
 
 export interface ModelSelection {
   providerName: string
@@ -316,15 +378,36 @@ export async function runAssistantTurn(
   const gatewayDiscovery = resolvedProjectId
     ? await listAvailableTools(ctx.supabase, resolvedProjectId, { userId: ctx.user.id, platformRole: ctx.profile.role })
     : { toolSpecs: [], contextByToolName: new Map() }
+  // search_web only exists when Tavily is actually configured -- omitted
+  // from the tools array entirely rather than offered-but-erroring, same
+  // "only offer what's actually usable" principle as resolveChatProvider
+  // only offering providers with a configured key. Computed before
+  // systemPrompt so the addendum's own text can match what's actually
+  // offered this turn -- describing a tool that isn't in the tools array
+  // would just teach the model to hallucinate calling it.
+  const webSearchAvailable = Boolean(env.tavilyApiKey())
+  const webSearchTools = webSearchAvailable ? [SEARCH_WEB_TOOL] : []
   const systemPrompt = feedbackContext
     ? buildFeedbackSystemPrompt(feedbackContext)
     : projectContext
-      ? SYSTEM_PROMPT + buildProjectPromptAddendum(projectContext, describeProjectKnowledgeScope(projectContext))
+      ? SYSTEM_PROMPT + buildProjectPromptAddendum(projectContext, describeProjectKnowledgeScope(projectContext), webSearchAvailable)
       : SYSTEM_PROMPT
   const tools = feedbackContext
     ? [PRESENT_RESPONSE_TOOL, SUBMIT_FEEDBACK_REPORT_TOOL]
     : projectContext
-      ? [...getToolSpecs(), SEARCH_PROJECT_KNOWLEDGE_TOOL, LIST_PROJECT_MEMBERS_TOOL, SEND_PROJECT_NOTE_TOOL, ...gatewayDiscovery.toolSpecs, PRESENT_RESPONSE_TOOL]
+      ? [
+          ...getToolSpecs(),
+          SEARCH_PROJECT_KNOWLEDGE_TOOL,
+          LIST_PROJECT_MEMBERS_TOOL,
+          SEND_PROJECT_NOTE_TOOL,
+          LIST_WORKSTREAMS_TOOL,
+          SEARCH_MY_WORKING_KNOWLEDGE_TOOL,
+          SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL,
+          SAVE_WORKING_KNOWLEDGE_TOOL,
+          ...webSearchTools,
+          ...gatewayDiscovery.toolSpecs,
+          PRESENT_RESPONSE_TOOL,
+        ]
       : [...getToolSpecs(), PRESENT_RESPONSE_TOOL]
   const toolsUsed = new Set<string>()
   try {
@@ -336,6 +419,7 @@ export async function runAssistantTurn(
   // running -- the model gets a clear signal to stop searching and answer,
   // rather than a silent no-op.
   let searchWikiCalls = 0
+  let webSearchCalls = 0
   // Recomputed each iteration -- cheap (pure, in-memory) and the current
   // turn keeps growing as tool round-trips are appended to `history`.
   // Sticky across iterations: once truncation has happened once this turn,
@@ -352,6 +436,7 @@ export async function runAssistantTurn(
   // (it's the general tool, never project-tagged) with no version concept.
   const retrievedWikiArticleSlugs = new Map<string, RetrievedHitInfo>()
   const retrievedKnowledgeSourceIds = new Map<string, RetrievedHitInfo>()
+  const retrievedWorkingKnowledgeIds = new Map<string, RetrievedWorkingKnowledgeHitInfo>()
   const createdRecordRefs: CreatedRecordRef[] = []
   const pendingGatewayInvocations: PendingGatewayInvocation[] = []
 
@@ -405,7 +490,11 @@ export async function runAssistantTurn(
       return finishTurn(content, null)
     }
 
-    const retrieved: RetrievedProvenance = { wikiArticleSlugs: retrievedWikiArticleSlugs, knowledgeSourceIds: retrievedKnowledgeSourceIds }
+    const retrieved: RetrievedProvenance = {
+      wikiArticleSlugs: retrievedWikiArticleSlugs,
+      knowledgeSourceIds: retrievedKnowledgeSourceIds,
+      workingKnowledgeIds: retrievedWorkingKnowledgeIds,
+    }
     const persisted = await buildPersistedEnvelope(ctx, parsed.data, retrieved)
     await appendMessage(ctx.supabase, {
       conversationId: conversation.id,
@@ -569,7 +658,7 @@ export async function runAssistantTurn(
               newlyRetrieved.push({ resourceType: hit.sourceType, resourceId: hit.sourceId })
             }
           } catch (err) {
-            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }
         }
       } else if (toolCall.name === LIST_PROJECT_MEMBERS_TOOL_NAME) {
@@ -583,7 +672,68 @@ export async function runAssistantTurn(
             const output = await runListProjectMembers(ctx, resolvedProjectId, toolCall.arguments)
             toolResultText = JSON.stringify(output)
           } catch (err) {
-            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === LIST_WORKSTREAMS_TOOL_NAME) {
+        // Not in src/lib/mcp/tools.ts's general registry -- same
+        // interception pattern as list_project_members. Closes the gap that
+        // let the model hallucinate a workstreamId from a display name
+        // (e.g. "Phase 1 -- Showcase") when calling attach_workstream_artifact
+        // -- give it a way to look up the real id instead of guessing one.
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'list_workstreams is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runListWorkstreams(ctx, resolvedProjectId)
+            toolResultText = JSON.stringify(output)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === SEARCH_MY_WORKING_KNOWLEDGE_TOOL_NAME || toolCall.name === SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL_NAME) {
+        // Not in src/lib/mcp/tools.ts's general registry -- same
+        // interception pattern as search_project_knowledge. Working
+        // Knowledge retrieval is deliberately NOT pushed into
+        // newlyRetrieved/retrieved_resources (unlike wiki/knowledge_source
+        // hits) -- that array feeds getEffectiveSensitivity's classification
+        // manifest, and working_knowledge_items has no resource_access_
+        // policies row concept at all (not part of that system this
+        // increment). retrievedWorkingKnowledgeIds below is the complete,
+        // correct provenance record for THIS turn's own citation
+        // verification, which is all that's needed.
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: `${toolCall.name} is only available in a project-bound conversation.` })
+        } else {
+          try {
+            const output =
+              toolCall.name === SEARCH_MY_WORKING_KNOWLEDGE_TOOL_NAME
+                ? await runSearchMyWorkingKnowledge(ctx, resolvedProjectId, toolCall.arguments)
+                : await runSearchSharedWorkingKnowledge(ctx, resolvedProjectId, toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+            for (const hit of output.results as WorkingKnowledgeHit[]) {
+              retrievedWorkingKnowledgeIds.set(hit.id, {
+                itemType: hit.type,
+                visibility: hit.visibility as 'private' | 'shared_selected' | 'shared_project',
+              })
+            }
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === SAVE_WORKING_KNOWLEDGE_TOOL_NAME) {
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'save_working_knowledge is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runSaveWorkingKnowledge(ctx, resolvedProjectId, conversation.id, toolCall.arguments, {
+              providerName: chatProvider.providerName,
+              modelId: chatProvider.modelId,
+            })
+            toolResultText = JSON.stringify(output)
+            createdRecordRefs.push({ kind: 'working_knowledge', id: output.itemId })
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }
         }
       } else if (toolCall.name === SEND_PROJECT_NOTE_TOOL_NAME) {
@@ -599,7 +749,27 @@ export async function runAssistantTurn(
             // the structured link back to the note actually surfaces.
             createdRecordRefs.push({ kind: 'project_note', id: output.noteId })
           } catch (err) {
-            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === SEARCH_WEB_TOOL_NAME) {
+        // Not in src/lib/mcp/tools.ts's general registry -- same
+        // interception pattern as search_project_knowledge, both because
+        // it's only offered in a project-bound conversation and because it
+        // needs its own per-turn call cap (Tavily is a metered/paid API,
+        // unlike search_wiki's free internal RPC).
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'search_web is only available in a project-bound conversation.' })
+        } else if (++webSearchCalls > WEB_SEARCH_LIMIT) {
+          toolResultText = JSON.stringify({
+            error: `search_web has already been called ${WEB_SEARCH_LIMIT} times this turn. Do not search again -- work with what you already found, or ask the user to narrow the request.`,
+          })
+        } else {
+          try {
+            const output = await runSearchWeb(toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }
         }
       } else if (toolCall.name.startsWith(GATEWAY_TOOL_PREFIX)) {
@@ -624,7 +794,7 @@ export async function runAssistantTurn(
             toolResultText = JSON.stringify(outcome.resultForModel)
             if (outcome.pending) pendingGatewayInvocations.push(outcome.pending)
           } catch (err) {
-            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }
         }
       } else if (toolCall.name === SUBMIT_FEEDBACK_REPORT_TOOL_NAME) {
@@ -643,12 +813,27 @@ export async function runAssistantTurn(
             )
             toolResultText = JSON.stringify(output)
           } catch (err) {
-            toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }
         }
       } else {
         try {
-          const output = await callTool(ctx, toolCall.name, toolCall.arguments)
+          // create_workstream takes a model-supplied projectId (it's in the
+          // general registry, reused outside chat too, so it can't be
+          // server-resolved-only the way search_project_knowledge etc. are).
+          // Live-observed 2026-09-04: nothing ever told the model the
+          // current project's real UUID, so it guessed a slug derived from
+          // the project's name and the call failed against the real column.
+          // In a project-bound conversation there is exactly one correct
+          // project for this call regardless of what the model passed --
+          // force it, same "never trust a model-supplied id when a server-
+          // resolved one exists" principle every other tool in this file
+          // already follows.
+          const toolArguments =
+            toolCall.name === 'create_workstream' && resolvedProjectId
+              ? { ...toolCall.arguments, projectId: resolvedProjectId }
+              : toolCall.arguments
+          const output = await callTool(ctx, toolCall.name, toolArguments)
           await stampProvenance(ctx, toolCall.name, output, conversation.id)
           toolResultText = JSON.stringify(output)
 
@@ -665,7 +850,7 @@ export async function runAssistantTurn(
             createdRecordRefs.push({ kind: 'workstream_artifact', id: (output as { artifactId: string }).artifactId })
           }
         } catch (err) {
-          toolResultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+          toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
         }
       }
 

@@ -12,13 +12,14 @@ import { getTrendingStats, listRecentSharedLinks } from '@/lib/trending/queries'
 import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
 import { hasRequiredRole } from '@/lib/auth'
+import { env } from '@/lib/env'
 import { listMemberProjectOptions, listActiveProjectsForDashboard } from '@/lib/projects/queries'
 import { listRecentConversations } from '@/lib/chat/conversations'
-import { EmberHome, type RecentConversationRow } from '@/components/dashboard/EmberHome'
+import { EmberHome } from '@/components/dashboard/EmberHome'
 import { MyProjectsWidget } from '@/components/dashboard/MyProjectsWidget'
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ ember?: string }> }) {
-  const { ember: initialProjectId } = await searchParams
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  const { view } = await searchParams
   const supabase = await createClient()
 
   const {
@@ -33,11 +34,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // above, per the doc's own acceptance criterion #1.
   const canSeeSharedLinks = !!user && profile?.role !== 'anonymous'
   const isAdmin = profile?.role === 'admin'
-  // Ember-first home (docs/dev-request-role-aware-project-views-and-ember-
-  // first-workspace.md, View 3) -- ordinary members only. Admin/curator keep
-  // today's Workbench dashboard unchanged. 'member' (OL-007) is exactly the
-  // "ordinary member" case this was already named for.
-  const isEmberFirst = profile?.role === 'consultant' || profile?.role === 'member'
+  // Ember-first home (docs/dev-request-ember-role-directed-product-
+  // experience.md, refining docs/dev-request-role-aware-project-views-and-
+  // ember-first-workspace.md's View 3) -- ordinary members and consultants
+  // land here instead of the Workbench dashboard. Admin/curator keep
+  // today's Workbench dashboard, but can deliberately open the same Ember
+  // experience via ?view=ember ("Open Ember as a team member" below)
+  // without it changing their actual role.
+  const isEmberFirst = profile?.role === 'consultant' || profile?.role === 'member' || view === 'ember'
 
   const [
     unpublishedWikiArticles,
@@ -50,7 +54,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     notesForUser,
     sharedLinks,
     emberProjects,
-    emberRecentConversations,
     myProjects,
     myRecentConversations,
   ] = await Promise.all([
@@ -64,11 +67,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
     canSeeSharedLinks ? listRecentSharedLinks(supabase) : Promise.resolve([]),
     isEmberFirst ? listMemberProjectOptions(supabase, user!.id) : Promise.resolve([]),
-    isEmberFirst ? listRecentConversations(supabase, user!.id, { limit: 5 }) : Promise.resolve([]),
     // "Your projects" / "Continue where you left off" (2026-09-04) -- the
     // admin/curator equivalent of the isEmberFirst branch's project picker
-    // and recent-conversations list just above, so that role tier also
-    // lands somewhere useful instead of a bare stat-card dashboard.
+    // (EmberHome/ChatSession fetch their own recent-conversations History
+    // client-side, so there's nothing to fetch server-side for that branch
+    // any more), so that role tier also lands somewhere useful instead of a
+    // bare stat-card dashboard.
     user && !isEmberFirst ? listActiveProjectsForDashboard(supabase, user.id) : Promise.resolve([]),
     user && !isEmberFirst ? listRecentConversations(supabase, user.id, { limit: 10 }) : Promise.resolve([]),
   ])
@@ -90,17 +94,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     projectIds.length > 0 ? await supabase.from('projects').select('id, name').in('id', projectIds) : { data: [] }
   const projectNameById = new Map((noteProjects ?? []).map((p) => [p.id, p.name]))
 
-  // Same "resolve project names for a list of conversations" pattern as
-  // notesForYou just above -- emberProjects already covers every currently
-  // active membership, so a conversation bound to a Project the viewer has
-  // since lost is simply labeled with whatever emberProjects doesn't have.
-  const emberProjectNameById = new Map(emberProjects.map((p) => [p.id, p.name]))
-  const emberRecentConversationRows: RecentConversationRow[] = emberRecentConversations.map((c) => ({
-    id: c.id,
-    title: c.title,
-    projectId: c.project_id,
-    projectName: c.project_id ? (emberProjectNameById.get(c.project_id) ?? null) : null,
-  }))
   const notesForYou: NoteForYouRow[] = notesForUser.map((n) => ({
     id: n.id,
     projectId: n.project_id,
@@ -136,14 +129,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <SectionHero image="/images/sections/kb-sandbox.png" height="compact" priority />
 
       {isEmberFirst ? (
-        <EmberHome projects={emberProjects} recentConversations={emberRecentConversationRows} initialProjectId={initialProjectId} />
+        <EmberHome projects={emberProjects} productMode={env.productMode()} />
       ) : (
         <>
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-semibold">Workbench</h1>
-            <Link href="/upload" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
-              Sources &amp; Curation
-            </Link>
+            <div className="flex items-center gap-3">
+              {/* Ember Role-Directed Product Experience, Experience 3 --
+                  lets a curator/admin deliberately experience/validate the
+                  member journey without changing their actual role; the
+                  page's own isEmberFirst check above (`view === 'ember'`)
+                  is what makes this link actually render the Ember-first
+                  branch instead of this Workbench one. */}
+              <Link href="/dashboard?view=ember" className="text-sm underline">
+                Open Ember as a team member
+              </Link>
+              <Link href="/upload" className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
+                Sources &amp; Curation
+              </Link>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">

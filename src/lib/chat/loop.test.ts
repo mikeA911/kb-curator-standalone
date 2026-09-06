@@ -16,7 +16,32 @@ const maybeRefreshSummaryMock = vi.fn()
 const buildPersistedEnvelopeMock = vi.fn()
 const resolveEnvelopeForDisplayMock = vi.fn()
 const resolveCreatedRecordMock = vi.fn()
+const runSearchWebMock = vi.fn()
+const tavilyApiKeyMock = vi.fn()
+const runSearchMyWorkingKnowledgeMock = vi.fn()
+const runSearchSharedWorkingKnowledgeMock = vi.fn()
+const runSaveWorkingKnowledgeMock = vi.fn()
 
+vi.mock('./web-search-tool', () => ({
+  SEARCH_WEB_TOOL: { name: 'search_web', description: '', parameters: {} },
+  SEARCH_WEB_TOOL_NAME: 'search_web',
+  runSearchWeb: (...args: unknown[]) => runSearchWebMock(...args),
+}))
+vi.mock('./working-knowledge-tool', () => ({
+  SEARCH_MY_WORKING_KNOWLEDGE_TOOL: { name: 'search_my_working_knowledge', description: '', parameters: {} },
+  SEARCH_MY_WORKING_KNOWLEDGE_TOOL_NAME: 'search_my_working_knowledge',
+  SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL: { name: 'search_shared_working_knowledge', description: '', parameters: {} },
+  SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL_NAME: 'search_shared_working_knowledge',
+  SAVE_WORKING_KNOWLEDGE_TOOL: { name: 'save_working_knowledge', description: '', parameters: {} },
+  SAVE_WORKING_KNOWLEDGE_TOOL_NAME: 'save_working_knowledge',
+  runSearchMyWorkingKnowledge: (...args: unknown[]) => runSearchMyWorkingKnowledgeMock(...args),
+  runSearchSharedWorkingKnowledge: (...args: unknown[]) => runSearchSharedWorkingKnowledgeMock(...args),
+  runSaveWorkingKnowledge: (...args: unknown[]) => runSaveWorkingKnowledgeMock(...args),
+}))
+// Only tavilyApiKey is used by loop.ts itself -- runSearchWeb's own env
+// lookup lives inside the mocked ./web-search-tool module above, so it
+// never actually runs here.
+vi.mock('@/lib/env', () => ({ env: { tavilyApiKey: () => tavilyApiKeyMock() } }))
 vi.mock('@/lib/ai', async () => {
   const actual = await vi.importActual<typeof import('@/lib/ai')>('@/lib/ai')
   return {
@@ -143,6 +168,14 @@ beforeEach(() => {
   buildPersistedEnvelopeMock.mockReset()
   resolveEnvelopeForDisplayMock.mockReset()
   resolveCreatedRecordMock.mockReset()
+  runSearchWebMock.mockReset()
+  tavilyApiKeyMock.mockReset()
+  runSearchMyWorkingKnowledgeMock.mockReset()
+  runSearchSharedWorkingKnowledgeMock.mockReset()
+  runSaveWorkingKnowledgeMock.mockReset()
+  // Unset by default -- matches most tests' expectation that search_web is
+  // simply absent unless a test opts in.
+  tavilyApiKeyMock.mockReturnValue(undefined)
 
   resolveChatProviderMock.mockResolvedValue({ provider: { generateChat: generateChatMock }, ...RESOLVED_CHAT_PROVIDER })
   getDefaultModelMock.mockResolvedValue({ provider: { name: 'gemini' }, model: { display_name: 'Gemini Embedding' } })
@@ -563,6 +596,7 @@ describe('runAssistantTurn -- project-bound member tools', () => {
     const generalTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
     expect(generalTools).not.toContain('list_project_members')
     expect(generalTools).not.toContain('send_project_note')
+    expect(generalTools).not.toContain('list_workstreams')
 
     generateChatMock.mockClear()
     const ctx = fakeCtx()
@@ -586,6 +620,423 @@ describe('runAssistantTurn -- project-bound member tools', () => {
     const projectTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
     expect(projectTools).toContain('list_project_members')
     expect(projectTools).toContain('send_project_note')
+    expect(projectTools).toContain('list_workstreams')
+  })
+})
+
+// Two live-observed failure modes (2026-09-04), fixed together since both
+// stem from the model never being told a real database id and the
+// resulting error being unreadable: (1) create_workstream is in the general
+// callTool registry and takes a model-supplied projectId, but nothing told
+// the model the current project's real UUID, so it guessed a slug from the
+// project's name; (2) the Postgrest error that guess produced is a plain
+// object (never an Error instance), which every catch block's old
+// `err instanceof Error ? err.message : String(err)` rendered as the
+// literal string "[object Object]" instead of the real message.
+describe('runAssistantTurn -- create_workstream projectId and tool error messages', () => {
+  function projectBoundCtx(): WorkbenchCallerContext {
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { id: 'proj-1', name: 'Test Project', goal: null, information_sensitivity: null }, error: null }) }),
+          }),
+        }
+      }
+      if (table === 'project_knowledge_bases' || table === 'project_wiki_articles') {
+        return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+    createConversationMock.mockResolvedValueOnce({ id: 'conv-1', project_id: 'proj-1' })
+    return ctx
+  }
+
+  it('overrides a hallucinated create_workstream projectId with the conversation\'s resolved project', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            {
+              id: 'call-1',
+              name: 'create_workstream',
+              // A model-guessed slug, not the real project id -- exactly
+              // what was observed live instead of 'proj-1'.
+              arguments: { projectId: 'test-project', name: 'Research', slug: 'research', deliverables: [] },
+            },
+          ],
+        },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Created it.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+    callToolMock.mockResolvedValue({ workstreamId: 'ws-1' })
+
+    await runAssistantTurn(projectBoundCtx(), null, 'Create a workstream for research', undefined, 'proj-1')
+
+    expect(callToolMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'create_workstream',
+      expect.objectContaining({ projectId: 'proj-1' })
+    )
+  })
+
+  it('leaves projectId untouched for create_workstream in a general (non-project-bound) conversation', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call-1', name: 'create_workstream', arguments: { projectId: 'proj-explicit', name: 'Research', slug: 'research', deliverables: [] } }],
+        },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Created it.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+    callToolMock.mockResolvedValue({ workstreamId: 'ws-1' })
+
+    await runAssistantTurn(fakeCtx(), null, 'Create a workstream for research')
+
+    expect(callToolMock).toHaveBeenCalledWith(expect.anything(), 'create_workstream', expect.objectContaining({ projectId: 'proj-explicit' }))
+  })
+
+  it('surfaces a thrown Postgrest-shaped error\'s real message instead of "[object Object]"', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            { id: 'call-1', name: 'attach_workstream_artifact', arguments: { workstreamId: 'Phase 1 -- Showcase', artifactType: 'findings', title: 'x', content: 'y' } },
+          ],
+        },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'That failed.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+    // A Postgrest error is a plain object, never an actual Error instance --
+    // this is what supabase-js actually throws/returns on a DB failure.
+    callToolMock.mockRejectedValue({ message: 'invalid input syntax for type uuid: "Phase 1 -- Showcase"', code: '22P02' })
+
+    await runAssistantTurn(fakeCtx(), null, 'Attach my findings to Phase 1 -- Showcase')
+
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toEqual({ error: 'invalid input syntax for type uuid: "Phase 1 -- Showcase"' })
+  })
+
+  it('falls back to String(err) for a genuinely message-less throw', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_wiki', arguments: { query: 'x' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+    callToolMock.mockRejectedValue('a plain string throw')
+
+    await runAssistantTurn(fakeCtx(), null, 'search for x')
+
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toEqual({ error: 'a plain string throw' })
+  })
+})
+
+// Ember web research for pre-sales, feeding a project's KB. search_web is
+// project-scoped (like list_project_members/send_project_note above) AND
+// gated on TAVILY_API_KEY being configured -- omitted entirely rather than
+// offered-but-erroring, mirroring how resolveChatProvider only offers
+// providers with a configured key.
+describe('runAssistantTurn -- search_web', () => {
+  function projectBoundCtx(): WorkbenchCallerContext {
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { id: 'proj-1', name: 'Test Project', goal: null, information_sensitivity: null }, error: null }) }),
+          }),
+        }
+      }
+      if (table === 'project_knowledge_bases' || table === 'project_wiki_articles') {
+        return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+    createConversationMock.mockResolvedValueOnce({ id: 'conv-1', project_id: 'proj-1' })
+    return ctx
+  }
+
+  it('offers search_web in a project-bound conversation only when TAVILY_API_KEY is configured', async () => {
+    generateChatMock.mockResolvedValue({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    await runAssistantTurn(projectBoundCtx(), null, 'hi', undefined, 'proj-1')
+    const unconfiguredTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(unconfiguredTools).not.toContain('search_web')
+
+    generateChatMock.mockClear()
+    tavilyApiKeyMock.mockReturnValue('fake-tavily-key')
+
+    await runAssistantTurn(projectBoundCtx(), null, 'hi', undefined, 'proj-1')
+    const configuredTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(configuredTools).toContain('search_web')
+  })
+
+  it('never offers search_web in a general (non-project-bound) conversation, even when configured', async () => {
+    tavilyApiKeyMock.mockReturnValue('fake-tavily-key')
+    generateChatMock.mockResolvedValue({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    await runAssistantTurn(fakeCtx(), null, 'hi')
+
+    const tools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(tools).not.toContain('search_web')
+  })
+
+  it('dispatches a search_web tool call to runSearchWeb and round-trips its result', async () => {
+    tavilyApiKeyMock.mockReturnValue('fake-tavily-key')
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_web', arguments: { query: 'Acme Corp' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: 'Found some background on Acme Corp.' },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+    runSearchWebMock.mockResolvedValue({ results: [{ title: 'Acme Corp', url: 'https://acme.example', content: 'About Acme.', score: 0.9, publishedDate: null }], answer: null })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'Research Acme Corp for me', undefined, 'proj-1')
+
+    expect(result.reply).toBe('Found some background on Acme Corp.')
+    expect(result.toolsUsed).toContain('search_web')
+    expect(runSearchWebMock).toHaveBeenCalledWith({ query: 'Acme Corp' })
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toMatchObject({ results: [{ title: 'Acme Corp' }] })
+  })
+
+  it('refuses a 3rd search_web call in the same turn without invoking the real tool', async () => {
+    tavilyApiKeyMock.mockReturnValue('fake-tavily-key')
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_web', arguments: { query: 'first' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-2', name: 'search_web', arguments: { query: 'second' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-3', name: 'search_web', arguments: { query: 'third' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: 'Answering with what I found.' },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+    runSearchWebMock.mockResolvedValue({ results: [], answer: null })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'Research this thoroughly', undefined, 'proj-1')
+
+    expect(result.reply).toBe('Answering with what I found.')
+    expect(runSearchWebMock).toHaveBeenCalledTimes(2)
+    const refusalMessage = appendMessageMock.mock.calls.map(([, args]) => args).find((args) => args.toolCallId === 'call-3')
+    expect(refusalMessage.content).toContain('already been called 2 times')
+  })
+
+  it('catches a runSearchWeb failure and surfaces it as a tool-result error instead of failing the turn', async () => {
+    tavilyApiKeyMock.mockReturnValue('fake-tavily-key')
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_web', arguments: { query: 'Acme Corp' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: 'Web research is unavailable right now.' },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+    runSearchWebMock.mockRejectedValue(new Error('Tavily search failed (500): server error'))
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'Research Acme Corp for me', undefined, 'proj-1')
+
+    expect(result.reply).toBe('Web research is unavailable right now.')
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toEqual({ error: 'Tavily search failed (500): server error' })
+  })
+})
+
+// Working Knowledge & Research Notebooks Stage 1+2
+// (docs/dev-request-project-scoped-working-knowledge-and-research-notebooks.md).
+// Unlike search_web these three tools are NOT gated behind any env
+// configuration -- always offered in a project-bound conversation,
+// mirroring search_project_knowledge/list_workstreams.
+describe('runAssistantTurn -- working knowledge tools', () => {
+  function projectBoundCtx(): WorkbenchCallerContext {
+    const ctx = fakeCtx()
+    const originalFrom = ctx.supabase.from.bind(ctx.supabase)
+    ctx.supabase.from = ((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { id: 'proj-1', name: 'Test Project', goal: null, information_sensitivity: null }, error: null }) }),
+          }),
+        }
+      }
+      if (table === 'project_knowledge_bases' || table === 'project_wiki_articles') {
+        return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+      }
+      return originalFrom(table)
+    }) as typeof ctx.supabase.from
+    createConversationMock.mockResolvedValueOnce({ id: 'conv-1', project_id: 'proj-1' })
+    return ctx
+  }
+
+  it('offers all three working-knowledge tools in a project-bound conversation, never in general chat', async () => {
+    generateChatMock.mockResolvedValue({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    await runAssistantTurn(fakeCtx(), null, 'hi')
+    const generalTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(generalTools).not.toContain('search_my_working_knowledge')
+    expect(generalTools).not.toContain('search_shared_working_knowledge')
+    expect(generalTools).not.toContain('save_working_knowledge')
+
+    generateChatMock.mockClear()
+    await runAssistantTurn(projectBoundCtx(), null, 'hi', undefined, 'proj-1')
+    const projectTools = (generateChatMock.mock.calls[0][0] as { tools: { name: string }[] }).tools.map((t) => t.name)
+    expect(projectTools).toContain('search_my_working_knowledge')
+    expect(projectTools).toContain('search_shared_working_knowledge')
+    expect(projectTools).toContain('save_working_knowledge')
+  })
+
+  it('refuses all three tools outside a project-bound conversation without invoking the real implementation', async () => {
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            { id: 'call-1', name: 'search_my_working_knowledge', arguments: {} },
+            { id: 'call-2', name: 'search_shared_working_knowledge', arguments: {} },
+            { id: 'call-3', name: 'save_working_knowledge', arguments: { type: 'working_note', title: 'x', content: 'y' } },
+          ],
+        },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'ok' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    await runAssistantTurn(fakeCtx(), null, 'hi')
+
+    expect(runSearchMyWorkingKnowledgeMock).not.toHaveBeenCalled()
+    expect(runSearchSharedWorkingKnowledgeMock).not.toHaveBeenCalled()
+    expect(runSaveWorkingKnowledgeMock).not.toHaveBeenCalled()
+    for (const [id, message] of [
+      ['call-1', 'search_my_working_knowledge'],
+      ['call-2', 'search_shared_working_knowledge'],
+      ['call-3', 'save_working_knowledge'],
+    ]) {
+      const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === id)
+      expect(JSON.parse(toolAppend?.[1].content)).toEqual({ error: `${message} is only available in a project-bound conversation.` })
+    }
+  })
+
+  it('dispatches search_my_working_knowledge, reports it used, and threads its hits into buildPersistedEnvelope for citation verification', async () => {
+    runSearchMyWorkingKnowledgeMock.mockResolvedValue({
+      results: [{ id: 'wk-1', type: 'research_notebook', title: 'Acme research', trustStatus: 'working', visibility: 'private', content: '...', lastUsedAt: null, sourceCount: 1 }],
+    })
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_my_working_knowledge', arguments: { query: 'Acme' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-2', name: 'present_assistant_response', arguments: { schemaVersion: '1.0', message: 'Found your notes.' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'What did I find on Acme?', undefined, 'proj-1')
+
+    expect(result.toolsUsed).toContain('search_my_working_knowledge')
+    expect(runSearchMyWorkingKnowledgeMock).toHaveBeenCalledWith(expect.anything(), 'proj-1', { query: 'Acme' })
+    expect(buildPersistedEnvelopeMock).toHaveBeenCalledTimes(1)
+    const retrieved = buildPersistedEnvelopeMock.mock.calls[0][2]
+    expect(retrieved.workingKnowledgeIds.get('wk-1')).toEqual({ itemType: 'research_notebook', visibility: 'private' })
+  })
+
+  it('dispatches search_shared_working_knowledge and round-trips its result', async () => {
+    runSearchSharedWorkingKnowledgeMock.mockResolvedValue({
+      results: [{ id: 'wk-2', type: 'working_note', title: 'Shared note', trustStatus: 'working', visibility: 'shared_project', content: '...', ownerLabel: 'colleague@example.com', lastUsedAt: null, sourceCount: 0 }],
+    })
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'search_shared_working_knowledge', arguments: {} }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Found a shared note.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'What has been shared with me?', undefined, 'proj-1')
+
+    expect(result.reply).toBe('Found a shared note.')
+    expect(result.toolsUsed).toContain('search_shared_working_knowledge')
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toMatchObject({ results: [{ id: 'wk-2', ownerLabel: 'colleague@example.com' }] })
+  })
+
+  it('dispatches save_working_knowledge and pushes a createdRecordRefs entry the Created Records panel resolves', async () => {
+    runSaveWorkingKnowledgeMock.mockResolvedValue({ itemId: 'wk-3' })
+    resolveCreatedRecordMock.mockImplementation(async (_ctx, ref) =>
+      ref.kind === 'working_knowledge' ? { kind: 'working_knowledge', id: 'wk-3', label: 'My research', href: '/projects/proj-1/working-knowledge/wk-3' } : null
+    )
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'save_working_knowledge', arguments: { type: 'research_notebook', title: 'My research', content: 'Findings...' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Saved it privately.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'Save this research', undefined, 'proj-1')
+
+    expect(runSaveWorkingKnowledgeMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'proj-1',
+      'conv-1',
+      { type: 'research_notebook', title: 'My research', content: 'Findings...' },
+      { providerName: 'groq', modelId: 'openai/gpt-oss-20b' }
+    )
+    expect(resolveCreatedRecordMock).toHaveBeenCalledWith(expect.anything(), { kind: 'working_knowledge', id: 'wk-3' })
+    expect(result.createdRecords).toEqual([{ kind: 'working_knowledge', id: 'wk-3', label: 'My research', href: '/projects/proj-1/working-knowledge/wk-3' }])
+  })
+
+  it('catches a runSaveWorkingKnowledge failure and surfaces it as a tool-result error instead of failing the turn', async () => {
+    runSaveWorkingKnowledgeMock.mockRejectedValue(new Error('Title is required'))
+    generateChatMock
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call-1', name: 'save_working_knowledge', arguments: { type: 'working_note', title: '', content: 'y' } }] },
+        model: 'test-model',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({ message: { role: 'assistant', content: 'Could not save that.' }, model: 'test-model', usage: { inputTokens: 1, outputTokens: 1 } })
+
+    const result = await runAssistantTurn(projectBoundCtx(), null, 'Save this note', undefined, 'proj-1')
+
+    expect(result.reply).toBe('Could not save that.')
+    const toolAppend = appendMessageMock.mock.calls.find(([, arg]) => arg.toolCallId === 'call-1')
+    expect(JSON.parse(toolAppend?.[1].content)).toEqual({ error: 'Title is required' })
   })
 })
 

@@ -32,6 +32,7 @@ const ArtifactTypeSchema = z.enum([
   'findings',
   'design_note',
   'implementation_handoff',
+  'research_dossier',
   'other',
 ])
 
@@ -377,7 +378,7 @@ const tools: Record<string, ToolDefinition<any, any>> = {
 
   create_workstream: {
     description:
-      "Create a new workstream on a project. Only usable by that project's owner or curator, or a platform admin -- fails otherwise for an ordinary project member (e.g. a consultant). If you don't know the caller's project role, ask or check with list_project_members before presenting this as a ready action -- don't offer to create a workstream and let the user discover the permission failure themselves.",
+      "Create a new workstream on a project. Only usable by that project's owner or curator, or a platform admin -- fails otherwise for an ordinary project member (e.g. a consultant). If you don't know the caller's project role, ask or check with list_project_members before presenting this as a ready action -- don't offer to create a workstream and let the user discover the permission failure themselves. In a project-bound conversation, projectId is automatically corrected to the current project regardless of what you pass -- you don't need to know the real id there, but do supply the real project id from search_projects/create_project's own result when this is a general (non-project-bound) conversation.",
     inputSchema: z.object({
       projectId: z.string(),
       name: z.string(),
@@ -406,7 +407,7 @@ const tools: Record<string, ToolDefinition<any, any>> = {
 
   attach_workstream_artifact: {
     description:
-      "Attach an artifact (evidence) to a workstream. Saving the row always succeeds if the call itself succeeds, but that is NOT the same as the artifact being complete or correct -- check the returned status. For artifactType 'openapi_spec', the content is automatically checked for required sections (openapi/info/paths/responses) and status will be 'validation_failed' (with validationNotes listing exactly what's missing) or 'ready_for_review'. Every other artifact type has no automated check yet and is always 'ready_for_review'. Never tell the user the artifact was 'successfully attached' as if that means it's done -- report the actual status, and if it's 'validation_failed', relay the specific validationNotes so they know what to fix.",
+      "Attach an artifact (evidence) to a workstream. workstreamId must be a real workstream id -- if you're in a project-bound conversation and don't already know it, call list_workstreams first rather than guessing one from a display name (a name/slug is not a valid id and the call will fail). Saving the row always succeeds if the call itself succeeds, but that is NOT the same as the artifact being complete or correct -- check the returned status. For artifactType 'openapi_spec', the content is automatically checked for required sections (openapi/info/paths/responses) and status will be 'validation_failed' (with validationNotes listing exactly what's missing) or 'ready_for_review'. Every other artifact type has no automated check yet and is always 'ready_for_review'. Never tell the user the artifact was 'successfully attached' as if that means it's done -- report the actual status, and if it's 'validation_failed', relay the specific validationNotes so they know what to fix.",
     inputSchema: z.object({
       workstreamId: z.string(),
       artifactType: ArtifactTypeSchema,

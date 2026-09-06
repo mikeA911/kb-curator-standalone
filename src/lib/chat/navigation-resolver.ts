@@ -64,6 +64,15 @@ export async function resolveNavigationTarget(
         if (!note) return null
         return { label: note.subject, route: `/projects/${note.project_id}/notes/${note.id}` }
       }
+      case 'working_knowledge': {
+        // RLS (working_knowledge_items_select_visible/..._select_own, via
+        // can_view_working_knowledge_item) is the actual access check -- a
+        // notebook the viewer can no longer see (revoked share, removed
+        // membership) simply returns null here, same as every other case.
+        const { data: item } = await ctx.supabase.from('working_knowledge_items').select('id, project_id, title').eq('id', target.id).maybeSingle()
+        if (!item) return null
+        return { label: item.title, route: `/projects/${item.project_id}/working-knowledge/${item.id}` }
+      }
     }
   } catch {
     // A query error (malformed id, transient failure) is treated the same

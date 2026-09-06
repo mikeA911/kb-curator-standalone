@@ -28,7 +28,7 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       parsed,
-      { wikiArticleSlugs: new Map([['real-slug', { layer: 'platform', documentVersionId: null }]]), knowledgeSourceIds: new Map() }
+      { wikiArticleSlugs: new Map([['real-slug', { layer: 'platform', documentVersionId: null }]]), knowledgeSourceIds: new Map(), workingKnowledgeIds: new Map() }
     )
 
     expect(persisted.citations).toEqual([
@@ -46,7 +46,7 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       parsed,
-      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'project', documentVersionId: 'doc-v1' }]]) }
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'project', documentVersionId: 'doc-v1' }]]), workingKnowledgeIds: new Map() }
     )
 
     expect(persisted.citations).toEqual([
@@ -67,7 +67,7 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       parsed,
-      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'platform', documentVersionId: null }]]) }
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map([['source-1', { layer: 'platform', documentVersionId: null }]]), workingKnowledgeIds: new Map() }
     )
 
     expect(persisted.citations).toEqual([
@@ -88,7 +88,7 @@ describe('buildPersistedEnvelope', () => {
       ],
     }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() })
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map(), workingKnowledgeIds: new Map() })
 
     expect(persisted.links).toEqual([{ label: 'A', target: { kind: 'project', id: 'real-project' } }])
   })
@@ -97,7 +97,7 @@ describe('buildPersistedEnvelope', () => {
     resolveDocumentArtifactMock.mockResolvedValue(null)
     const parsed = { schemaVersion: '1.0' as const, message: 'Hi.', documents: [{ label: 'Doc', documentType: 'design_note', artifactId: 'fake' }] }
 
-    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() })
+    const persisted = await buildPersistedEnvelope({} as never, parsed, { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map(), workingKnowledgeIds: new Map() })
 
     expect(persisted.documents).toBeUndefined()
   })
@@ -106,7 +106,7 @@ describe('buildPersistedEnvelope', () => {
     const persisted = await buildPersistedEnvelope(
       {} as never,
       { schemaVersion: '1.0', message: 'Hi.' },
-      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map() }
+      { wikiArticleSlugs: new Map(), knowledgeSourceIds: new Map(), workingKnowledgeIds: new Map() }
     )
     expect(persisted).toEqual({ message: 'Hi.' })
   })

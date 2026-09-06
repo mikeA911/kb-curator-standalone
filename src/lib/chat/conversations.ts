@@ -214,6 +214,9 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   approve_project: 'Approving the project…',
   create_workstream: 'Creating the workstream…',
   attach_workstream_artifact: 'Attaching the artifact…',
+  search_my_working_knowledge: 'Checking your Working Knowledge…',
+  search_shared_working_knowledge: 'Checking shared Working Knowledge…',
+  save_working_knowledge: 'Saving to Working Knowledge…',
 }
 
 export async function getLatestActivityLabel(supabase: SupabaseClient<Database>, conversationId: string): Promise<string | null> {

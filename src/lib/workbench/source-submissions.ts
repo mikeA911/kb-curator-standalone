@@ -6,6 +6,7 @@ import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import { createUploadedDocument, processDocument, deleteDocumentById } from '@/lib/curator/documents'
 import { approveChunk } from '@/lib/curator/chunks'
 import { getActiveEmbeddingProvider } from '@/lib/ai'
+import { getWorkingKnowledgeItem } from '@/lib/projects/working-knowledge'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 
 // Member-submitted knowledge sources, with project-curator approval.
@@ -149,6 +150,57 @@ export async function submitArtifactSource(ctx: WorkbenchCallerContext, input: S
   return { submissionId: submission.id }
 }
 
+// KB Sandbox Builder MVP (docs/dev-request-kb-sandbox-builder-product.md):
+// the promotion bridge from a builder's own private Working Knowledge
+// notebook into curator-reviewed content -- most concretely, the operator's
+// Organization Home Project KB every builder is already auto-enrolled into
+// as a viewer (enrollInOrganizationHome, projects.ts). Mirrors
+// submitArtifactSource exactly: content is snapshotted only at approval
+// time (see approveSourceSubmission below), not here.
+export interface SubmitWorkingKnowledgeSourceInput {
+  projectId: string
+  knowledgeBaseId: string
+  workingKnowledgeItemId: string
+}
+
+export async function submitWorkingKnowledgeSource(
+  ctx: WorkbenchCallerContext,
+  input: SubmitWorkingKnowledgeSourceInput
+): Promise<{ submissionId: string }> {
+  if (ctx.profile.role === 'anonymous') throw new AuthError('Create an account to submit a source')
+  const role = await getActiveProjectRole(ctx, input.projectId)
+  if (!role) throw new AuthError('You must be an active member of this project to submit a source')
+  await requireProjectAttachedKnowledgeBase(ctx, input.projectId, input.knowledgeBaseId)
+
+  // Only the notebook's own owner may promote it -- RLS already limits what
+  // getWorkingKnowledgeItem can even find (can_view_working_knowledge_item),
+  // but ownership specifically (not merely visibility, e.g. a shared
+  // recipient) is the bar for proposing a promotion.
+  const item = await getWorkingKnowledgeItem(ctx, input.workingKnowledgeItemId)
+  if (!item || item.owner_id !== ctx.user.id) {
+    throw new ProjectValidationError('Only the notebook\'s own owner can submit it as a candidate source')
+  }
+  if (item.trust_status === 'archived') {
+    throw new ProjectValidationError('An archived notebook cannot be submitted as a candidate source')
+  }
+
+  const { data: submission, error } = await ctx.supabase
+    .from('project_source_submissions')
+    .insert({
+      project_id: input.projectId,
+      knowledge_base_id: input.knowledgeBaseId,
+      source_kind: 'working_knowledge',
+      title: item.title,
+      working_knowledge_item_id: item.id,
+      submitted_by: ctx.user.id,
+    })
+    .select('id')
+    .single()
+  if (error || !submission) throw error ?? new ProjectValidationError('Failed to create source submission')
+
+  return { submissionId: submission.id }
+}
+
 export async function listSourceSubmissions(ctx: WorkbenchCallerContext, projectId: string) {
   // RLS (project_source_submissions_select_own_or_curator) is the real gate
   // here, same convention as addProjectMember -- the caller's own client
@@ -188,6 +240,26 @@ export async function approveSourceSubmission(ctx: WorkbenchCallerContext, submi
     // the exact same createUploadedDocument/processDocument pipeline used
     // for a real upload applies unchanged -- no bespoke chunking path.
     const file = new File([artifact.content], `${artifact.title}.txt`, { type: 'text/plain' })
+    const doc = await createUploadedDocument(admin, {
+      file,
+      docType: submission.knowledge_base_id,
+      uploadedBy: submission.submitted_by,
+    })
+    documentId = doc.id
+  }
+  if (submission.source_kind === 'working_knowledge') {
+    const { data: item, error: itemError } = await admin
+      .from('working_knowledge_items')
+      .select('title, content')
+      .eq('id', submission.working_knowledge_item_id!)
+      .single()
+    if (itemError || !item?.content) throw itemError ?? new ProjectValidationError('Notebook content is missing')
+
+    // Same "wrap as a plain-text file, reuse the real upload pipeline"
+    // approach as the artifact branch above -- a promoted notebook becomes
+    // ordinary curated content from this point on, same document/chunk/
+    // embedding path as everything else in this KB.
+    const file = new File([item.content], `${item.title}.txt`, { type: 'text/plain' })
     const doc = await createUploadedDocument(admin, {
       file,
       docType: submission.knowledge_base_id,

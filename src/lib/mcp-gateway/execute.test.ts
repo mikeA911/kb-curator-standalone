@@ -19,7 +19,7 @@ vi.mock('./orderlunch-confirmation', () => ({
 const createAdminClientMock = vi.fn()
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => createAdminClientMock() }))
 
-const { runGatewayToolCall, executeConfirmedInvocation } = await import('./execute')
+const { runGatewayToolCall, executeConfirmedInvocation, cancelInvocation } = await import('./execute')
 
 beforeEach(() => {
   connectAndCallToolMock.mockReset()
@@ -223,5 +223,70 @@ describe('executeConfirmedInvocation -- OrderLunch confirm_order_placement branc
     expect(result.error).toBe('This confirmation is missing its quoteHash')
     expect(confirmApprovalMock).not.toHaveBeenCalled()
     expect(connectAndCallToolMock).not.toHaveBeenCalled()
+  })
+})
+
+// The original "awaiting_human_confirmation" tool-result message persisted
+// when the call was first proposed is otherwise frozen forever -- without
+// this, the model reloads that same stale placeholder as its own context on
+// every later turn and never learns a human already resolved it. Caught
+// live 2026-09-04: a real user stuck in a loop where Ember kept asking for
+// re-confirmation of an already-confirmed menu lookup.
+describe('confirming/cancelling a Gateway invocation syncs the persisted chat_messages row', () => {
+  function baseInvocation(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'inv-sync-1',
+      status: 'proposed',
+      project_id: 'proj-1',
+      conversation_id: 'conv-1',
+      tool_name: 'browse_menu',
+      input: { outletId: 'bento-sim' },
+      builder_integration_id: 'int-1',
+      builder_integration_version_id: 'ver-1',
+      correlated_amount: null,
+      ...overrides,
+    }
+  }
+
+  it('on successful execution, overwrites the matching chat_messages row with the real result', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
+    const admin = createFakeSupabase({
+      builder_integration_invocations: [{ data: baseInvocation(), error: null }],
+      builder_integrations: [{ data: { endpoint_url: 'https://orderlunch-mcp-showcase-production.up.railway.app/mcp' }, error: null }],
+      builder_integration_versions: [{ data: { credentials_policy: {}, auth_method: 'delegated_user_identity', spending_limits: {} }, error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+    connectAndCallToolMock.mockResolvedValue([{ id: 'bento-chicken', name: 'Chicken Bento' }])
+
+    await executeConfirmedInvocation(fakeCtx(supabase, { userId: 'owner-1' }), 'inv-sync-1')
+
+    const messageUpdate = admin._calls.find((c) => c.table === 'chat_messages' && c.method === 'update')
+    expect(messageUpdate).toBeDefined()
+    const content = JSON.parse((messageUpdate!.args as { content: string }).content)
+    expect(content).toMatchObject({ status: 'confirmed_and_executed', result: [{ id: 'bento-chicken', name: 'Chicken Bento' }] })
+    // Located by conversation_id + role 'tool' + this invocation's id embedded
+    // in the original message, never a blanket update.
+    const eqCalls = admin._calls.filter((c) => c.method === 'eq')
+    expect(eqCalls).toEqual(
+      expect.arrayContaining([
+        { table: 'chat_messages', method: 'eq', args: { column: 'conversation_id', value: 'conv-1' } },
+        { table: 'chat_messages', method: 'eq', args: { column: 'role', value: 'tool' } },
+      ])
+    )
+  })
+
+  it('on cancellation, overwrites the matching chat_messages row with cancelled_by_user', async () => {
+    const supabase = createFakeSupabase({ project_members: [{ data: { role: 'owner' }, error: null }] })
+    const admin = createFakeSupabase({
+      builder_integration_invocations: [{ data: baseInvocation({ id: 'inv-sync-2' }), error: null }],
+    })
+    createAdminClientMock.mockReturnValue(admin)
+
+    await cancelInvocation(fakeCtx(supabase, { userId: 'owner-1' }), 'inv-sync-2')
+
+    const messageUpdate = admin._calls.find((c) => c.table === 'chat_messages' && c.method === 'update')
+    expect(messageUpdate).toBeDefined()
+    const content = JSON.parse((messageUpdate!.args as { content: string }).content)
+    expect(content).toMatchObject({ status: 'cancelled_by_user' })
   })
 })

@@ -7,9 +7,16 @@ import { approveSourceSubmissionAction, rejectSourceSubmissionAction } from '@/a
 export interface SourceSubmissionRow {
   id: string
   title: string
-  sourceKind: 'file' | 'artifact'
+  sourceKind: 'file' | 'artifact' | 'working_knowledge'
   submitterEmail: string
   createdAt: string
+}
+
+const SOURCE_KIND_LABEL: Record<SourceSubmissionRow['sourceKind'], string> = {
+  file: 'File',
+  artifact: 'Workstream artifact',
+  // KB Sandbox Builder MVP -- a builder's own promoted notebook.
+  working_knowledge: 'Working Knowledge notebook',
 }
 
 // Visible only to the project's owner/curator/admin (canCurateProject on the
@@ -58,7 +65,7 @@ export function SourceSubmissionsReview({ projectId, submissions }: { projectId:
             <div>
               <div className="font-medium">{s.title}</div>
               <div className="text-xs text-zinc-500">
-                {s.sourceKind === 'file' ? 'File' : 'Workstream artifact'} · submitted by {s.submitterEmail}
+                {SOURCE_KIND_LABEL[s.sourceKind]} · submitted by {s.submitterEmail}
               </div>
             </div>
             <div className="flex shrink-0 gap-2">

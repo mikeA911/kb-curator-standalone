@@ -3,7 +3,11 @@ import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import { resolveNavigationTarget } from './navigation-resolver'
 import { resolveDocumentArtifact } from './document-resolver'
 
-export type CreatedRecordKind = 'project' | 'workstream' | 'workstream_artifact' | 'project_note'
+// working_knowledge is deliberately named to match NavigationTargetKind's own
+// 'working_knowledge' member exactly (response-envelope.ts) -- resolveCreatedRecord's
+// generic path below calls resolveNavigationTarget(ctx, { kind: ref.kind, id: ref.id }),
+// which only type-checks if the two enums share the literal value.
+export type CreatedRecordKind = 'project' | 'workstream' | 'workstream_artifact' | 'project_note' | 'working_knowledge'
 
 export interface CreatedRecordRef {
   kind: CreatedRecordKind
@@ -43,6 +47,7 @@ export function extractCreatedRecordRef(toolName: string, content: string): Crea
       return { kind: 'workstream_artifact', id: obj.artifactId }
     }
     if (toolName === 'send_project_note' && typeof obj.noteId === 'string') return { kind: 'project_note', id: obj.noteId }
+    if (toolName === 'save_working_knowledge' && typeof obj.itemId === 'string') return { kind: 'working_knowledge', id: obj.itemId }
   } catch {
     // Malformed/error JSON (e.g. a tool refusal or error result) -- not a
     // created record.

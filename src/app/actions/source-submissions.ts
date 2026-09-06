@@ -5,6 +5,7 @@ import { requireUser } from '@/lib/auth'
 import {
   submitFileSource,
   submitArtifactSource,
+  submitWorkingKnowledgeSource,
   listSourceSubmissions,
   approveSourceSubmission,
   rejectSourceSubmission,
@@ -30,6 +31,13 @@ export async function submitFileSourceAction(formData: FormData) {
 export async function submitArtifactSourceAction(input: { projectId: string; knowledgeBaseId: string; workstreamArtifactId: string }) {
   const ctx = await requireUser()
   const result = await submitArtifactSource(ctx, input)
+  revalidatePath(`/projects/${input.projectId}`)
+  return result
+}
+
+export async function submitWorkingKnowledgeSourceAction(input: { projectId: string; knowledgeBaseId: string; workingKnowledgeItemId: string }) {
+  const ctx = await requireUser()
+  const result = await submitWorkingKnowledgeSource(ctx, input)
   revalidatePath(`/projects/${input.projectId}`)
   return result
 }

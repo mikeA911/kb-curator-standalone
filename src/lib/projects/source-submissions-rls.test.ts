@@ -7,16 +7,26 @@ import path from 'node:path'
 // other *.rls.test.ts file in this repo.
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf-8').replace(/\r\n/g, '\n')
 const sql = read('supabase/migrations/20260904100001_project_source_submissions.sql')
+// KB Sandbox Builder MVP (docs/dev-request-kb-sandbox-builder-product.md)
+// fully supersedes the original source_kind/pairing CHECK constraints with a
+// third disjunct (working_knowledge/working_knowledge_item_id) -- this
+// follow-up migration, not the original file, is this suite's source of
+// truth for those two constraints.
+const wkKindSql = read('supabase/migrations/20260905110001_source_submissions_working_knowledge_kind.sql')
 
 describe('project_source_submissions schema', () => {
-  it('constrains source_kind and status to the documented value sets', () => {
-    expect(sql).toMatch(/source_kind text not null check \(source_kind in \('file', 'artifact'\)\)/)
+  it('constrains status to the documented value set (unaffected by the working_knowledge follow-up)', () => {
     expect(sql).toMatch(/status text not null default 'pending' check \(status in \('pending', 'approved', 'rejected'\)\)/)
   })
 
-  it('requires workstream_artifact_id exactly for artifact-kind submissions, never for file-kind', () => {
-    expect(sql).toMatch(/source_kind = 'file' and workstream_artifact_id is null/)
-    expect(sql).toMatch(/source_kind = 'artifact' and workstream_artifact_id is not null/)
+  it('constrains source_kind to file/artifact/working_knowledge (per the working_knowledge follow-up)', () => {
+    expect(wkKindSql).toMatch(/source_kind = any \(array\['file', 'artifact', 'working_knowledge'\]\)/)
+  })
+
+  it('requires exactly the matching id column for each source_kind, never more than one', () => {
+    expect(wkKindSql).toMatch(/source_kind = 'file' and workstream_artifact_id is null and working_knowledge_item_id is null/)
+    expect(wkKindSql).toMatch(/source_kind = 'artifact' and workstream_artifact_id is not null and working_knowledge_item_id is null/)
+    expect(wkKindSql).toMatch(/source_kind = 'working_knowledge' and workstream_artifact_id is null and working_knowledge_item_id is not null/)
   })
 })
 
