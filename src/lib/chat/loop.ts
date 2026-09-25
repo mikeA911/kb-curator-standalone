@@ -7,8 +7,15 @@ import {
   AISensitivityError,
   getEffectiveSensitivity,
   assertProviderEligible,
+  withLogging,
+  withAllowanceGate,
+  getBuilderSpendSummary,
+  BuilderAllowanceError,
 } from '@/lib/ai'
-import type { ChatMessage } from '@/lib/ai'
+import type { ChatMessage, ChatProviderInfo } from '@/lib/ai'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { isOwnBuilderLabProject } from '@/lib/workbench/projects'
+import { resolveBuilderLlmProvider } from '@/lib/workbench/builder-llm-credentials'
 import { callTool, getToolSpecs } from '@/lib/mcp/tools'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 import type { Conversation } from '@/types/database'
@@ -358,17 +365,59 @@ export async function runAssistantTurn(
   history.push({ role: 'user', content: userMessage })
   await appendMessage(ctx.supabase, { conversationId: conversation.id, userId: ctx.user.id, role: 'user', content: userMessage })
 
-  const chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, { requestedBy: ctx.user.id })
-  // ChatProviderInfo.provider is the built client (has .generateChat(), not
-  // .id) -- the eligibility check needs the ai_providers row id, resolved
-  // once per turn since chatProvider.providerName is fixed for the turn.
-  const { data: chatProviderRow, error: chatProviderRowError } = await ctx.supabase
-    .from('ai_providers')
-    .select('id')
-    .eq('name', chatProvider.providerName)
-    .single()
-  if (chatProviderRowError || !chatProviderRow) throw chatProviderRowError ?? new Error(`Provider row not found: ${chatProvider.providerName}`)
-  const chatProviderId = chatProviderRow.id
+  // Builder AI Usage Metering + BYOLLM (src/lib/ai/metering.ts,
+  // src/lib/workbench/builder-llm-credentials.ts): only ever applies to a
+  // builder's own conversation on their own builder_lab Project, in a
+  // Builder-mode deployment -- an Enterprise conversation, or a builder's
+  // conversation on any other Project, is never metered or substituted.
+  const isBuilderOwnProject =
+    env.productMode() === 'builder' && resolvedProjectId ? await isOwnBuilderLabProject(ctx, resolvedProjectId) : false
+  const byoLlm = isBuilderOwnProject ? await resolveBuilderLlmProvider(ctx.user.id) : null
+
+  let chatProvider: ChatProviderInfo
+  // null for a BYOLLM turn -- there's no ai_providers row for a builder's
+  // own credential, so the sensitivity/eligibility check below is skipped
+  // entirely rather than looked up against a row that doesn't exist.
+  let chatProviderId: string | null = null
+
+  if (byoLlm) {
+    // A BYOLLM call costs the platform nothing -- logged for observability
+    // (isByoLlm: true) but never wrapped in withAllowanceGate, and
+    // logging.ts skips cost computation for it entirely.
+    chatProvider = {
+      provider: withLogging(byoLlm.provider, { requestedBy: ctx.user.id, projectId: resolvedProjectId ?? undefined, isByoLlm: true }),
+      providerName: byoLlm.provider.name,
+      providerDisplayName: 'Your own LLM',
+      modelId: byoLlm.modelId,
+      modelDisplayName: byoLlm.modelId,
+      maxOutputTokens: null,
+      contextWindow: null,
+    }
+  } else {
+    chatProvider = await resolveChatProvider(ctx.supabase, modelSelection, {
+      requestedBy: ctx.user.id,
+      projectId: resolvedProjectId ?? undefined,
+    })
+    // ChatProviderInfo.provider is the built client (has .generateChat(), not
+    // .id) -- the eligibility check needs the ai_providers row id, resolved
+    // once per turn since chatProvider.providerName is fixed for the turn.
+    const { data: chatProviderRow, error: chatProviderRowError } = await ctx.supabase
+      .from('ai_providers')
+      .select('id')
+      .eq('name', chatProvider.providerName)
+      .single()
+    if (chatProviderRowError || !chatProviderRow) throw chatProviderRowError ?? new Error(`Provider row not found: ${chatProvider.providerName}`)
+    chatProviderId = chatProviderRow.id
+
+    if (isBuilderOwnProject) {
+      const builderId = ctx.user.id
+      const admin = createAdminClient()
+      chatProvider = {
+        ...chatProvider,
+        provider: withAllowanceGate(() => getBuilderSpendSummary(admin, builderId), chatProvider.provider),
+      }
+    }
+  }
 
   const projectContext = resolvedProjectId ? await getProjectContext(ctx, resolvedProjectId) : null
   // Gateway tools are always Project-scoped (builder_integration_project_
@@ -529,12 +578,19 @@ export async function runAssistantTurn(
       // immediately (iteration 0) for a project-bound conversation, since
       // the project's own name/goal is already in the system prompt via
       // buildProjectPromptAddendum before any tool ever runs.
-      const sensitivity = await getEffectiveSensitivity(ctx.supabase, {
-        wikiArticleSlugs: [...retrievedWikiArticleSlugs.keys()],
-        knowledgeSourceIds: [...retrievedKnowledgeSourceIds.keys()],
-        projectSensitivity: projectContext ? projectContext.informationSensitivity : undefined,
-      })
-      await assertProviderEligible(ctx.supabase, chatProviderId, sensitivity)
+      // Skipped entirely for a BYOLLM turn (chatProviderId is null) -- there
+      // is no ai_providers row for a builder's own credential to check
+      // against, and the platform's information-sensitivity policy is about
+      // which PLATFORM providers may see what, not a builder's own private
+      // workspace content.
+      if (chatProviderId) {
+        const sensitivity = await getEffectiveSensitivity(ctx.supabase, {
+          wikiArticleSlugs: [...retrievedWikiArticleSlugs.keys()],
+          knowledgeSourceIds: [...retrievedKnowledgeSourceIds.keys()],
+          projectSensitivity: projectContext ? projectContext.informationSensitivity : undefined,
+        })
+        await assertProviderEligible(ctx.supabase, chatProviderId, sensitivity)
+      }
 
       result = await chatProvider.provider.generateChat({
         messages: working.messages,
@@ -559,6 +615,27 @@ export async function runAssistantTurn(
           createdRecords: [],
           pendingGatewayInvocations: [],
           isSensitivityBlock: true,
+        }
+      }
+      if (err instanceof BuilderAllowanceError) {
+        // Same non-throwing-result shape as the AIProviderError catch below,
+        // but the reply is the gate's own clear message directly, not run
+        // through friendlyProviderErrorMessage's generic classifier (which
+        // has no case for this and would otherwise show a vague "try again"
+        // message, losing the actionable "ask for more credit or configure
+        // your own LLM" guidance).
+        return {
+          conversationId: conversation.id,
+          reply: err.message,
+          providerName: chatProvider.providerName,
+          providerDisplayName: chatProvider.providerDisplayName,
+          modelId: chatProvider.modelId,
+          modelDisplayName: chatProvider.modelDisplayName,
+          toolsUsed: [...toolsUsed],
+          structured: null,
+          createdRecords: [],
+          pendingGatewayInvocations: [],
+          isProviderError: true,
         }
       }
       // A provider failure (rate limit, capacity, auth, ...) here must

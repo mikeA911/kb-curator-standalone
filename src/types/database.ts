@@ -234,6 +234,15 @@ export interface AIOperationLog {
   eval_case_id: string | null
   graph_run_id: string | null
   graph_step_id: string | null
+  // Builder AI Usage Metering (src/lib/ai/metering.ts). project_id attributes
+  // a call to a builder's own builder_lab Project; estimated_cost_usd is
+  // null when pricing isn't configured for that model (never a fabricated
+  // 0); is_byo_llm marks a call made through a builder's own supplied
+  // credential (src/lib/workbench/builder-llm-credentials.ts), which is
+  // never priced or counted against the platform's own allowance.
+  project_id: string | null
+  estimated_cost_usd: number | null
+  is_byo_llm: boolean
 }
 
 export interface ChunkForReview extends DocumentChunk {
@@ -1180,6 +1189,40 @@ export interface BuilderProgressUpdate {
   help_requested: string | null
   confidence: BuilderProgressConfidence
   status: BuilderProgressUpdateStatus
+  created_at: string
+  updated_at: string
+}
+
+// Builder AI Usage Metering + BYOLLM. See
+// 20260907100001_builder_ai_metering_schema.sql.
+export interface BuilderAiAllowance {
+  builder_id: string
+  monthly_allowance_usd: number
+  warning_threshold_pct: number
+  stop_at_allowance: boolean
+  current_period_start: string
+  created_at: string
+  updated_at: string
+}
+
+export interface BuilderCreditGrant {
+  id: string
+  builder_id: string
+  amount_usd: number
+  reason: string
+  granted_by: string | null
+  created_at: string
+}
+
+export type BuilderLlmProviderTypeColumn = 'openai' | 'gemini' | 'groq' | 'openai_compatible'
+
+export interface BuilderLlmCredential {
+  builder_id: string
+  provider_type: BuilderLlmProviderTypeColumn
+  base_url: string | null
+  model_id: string
+  encrypted_api_key: string | null
+  is_active: boolean
   created_at: string
   updated_at: string
 }
@@ -2181,6 +2224,17 @@ export type BuilderProgressUpdateUpdate = Partial<
   Omit<BuilderProgressUpdate, 'id' | 'workstream_id' | 'submitted_by' | 'created_at'>
 >
 
+export type BuilderAiAllowanceInsert = Omit<BuilderAiAllowance, 'created_at' | 'updated_at'> &
+  Partial<Pick<BuilderAiAllowance, 'monthly_allowance_usd' | 'warning_threshold_pct' | 'stop_at_allowance' | 'current_period_start'>>
+export type BuilderAiAllowanceUpdate = Partial<Omit<BuilderAiAllowance, 'builder_id' | 'created_at'>>
+
+export type BuilderCreditGrantInsert = Omit<BuilderCreditGrant, 'id' | 'created_at'>
+export type BuilderCreditGrantUpdate = never
+
+export type BuilderLlmCredentialInsert = Omit<BuilderLlmCredential, 'created_at' | 'updated_at' | 'is_active'> &
+  Partial<Pick<BuilderLlmCredential, 'is_active'>>
+export type BuilderLlmCredentialUpdate = Partial<Omit<BuilderLlmCredential, 'builder_id' | 'created_at'>>
+
 // Owner Roadmap and Ember Feedback Board, Phase 1 (docs/dev-request-owner-
 // roadmap-and-ember-feedback-board.md). Authorization is a hardcoded
 // two-identity allowlist (platform_owners), deliberately independent of
@@ -2511,6 +2565,24 @@ export interface Database {
         Row: BuilderProgressUpdate
         Insert: BuilderProgressUpdateInsert
         Update: BuilderProgressUpdateUpdate
+        Relationships: []
+      }
+      builder_ai_allowances: {
+        Row: BuilderAiAllowance
+        Insert: BuilderAiAllowanceInsert
+        Update: BuilderAiAllowanceUpdate
+        Relationships: []
+      }
+      builder_credit_grants: {
+        Row: BuilderCreditGrant
+        Insert: BuilderCreditGrantInsert
+        Update: BuilderCreditGrantUpdate
+        Relationships: []
+      }
+      builder_llm_credentials: {
+        Row: BuilderLlmCredential
+        Insert: BuilderLlmCredentialInsert
+        Update: BuilderLlmCredentialUpdate
         Relationships: []
       }
       ai_provider_sensitivity_eligibility: {

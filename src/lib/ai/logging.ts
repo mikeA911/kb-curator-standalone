@@ -1,6 +1,7 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { AIProviderError } from './provider'
+import { computeCost } from './metering'
 import type {
   AIProvider,
   EmbedInput,
@@ -25,6 +26,14 @@ export interface LogContext {
   evalCaseId?: string
   graphRunId?: string
   graphStepId?: string
+  // Builder AI Usage Metering (src/lib/ai/metering.ts): projectId attributes
+  // this call to a builder's own builder_lab Project for spend rollups.
+  // isByoLlm marks a call made through a builder's own supplied credential
+  // (src/lib/workbench/builder-llm-credentials.ts) -- its cost is never
+  // computed/counted against the platform's own budget, so it's recorded
+  // with estimated_cost_usd left null rather than priced.
+  projectId?: string
+  isByoLlm?: boolean
   // Fired with the new ai_operation_logs row's id right after insert -- this
   // is how a graph node wrapper (src/lib/graph/persistence.ts) links
   // graph_steps.ai_operation_log_id to the log row its own AI call produced.
@@ -50,6 +59,9 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
       | { success: false; error: string; errorCode: string | null }
   ) => {
     const admin = createAdminClient()
+    const isByoLlm = context.isByoLlm ?? false
+    const estimatedCostUsd =
+      outcome.success && !isByoLlm ? await computeCost(admin, provider.name, model, outcome.inputTokens, outcome.outputTokens) : null
     const { data } = await admin
       .from('ai_operation_logs')
       .insert({
@@ -63,6 +75,9 @@ export function withLogging(provider: AIProvider, context: LogContext = {}): AIP
         eval_case_id: context.evalCaseId ?? null,
         graph_run_id: context.graphRunId ?? null,
         graph_step_id: context.graphStepId ?? null,
+        project_id: context.projectId ?? null,
+        is_byo_llm: isByoLlm,
+        estimated_cost_usd: estimatedCostUsd,
         latency_ms: Date.now() - startedAt,
         input_tokens: outcome.success ? outcome.inputTokens : null,
         output_tokens: outcome.success ? outcome.outputTokens : null,

@@ -133,13 +133,21 @@ function resolveApiKey(provider: AIProviderRow): string | undefined {
   return env.byName(provider.api_key_env_var)
 }
 
-function buildProviderClient(provider: AIProviderRow, defaultTextModel?: string, defaultEmbedModel?: string): AIProvider {
-  const apiKey = resolveApiKey(provider)
-  if (!apiKey) {
-    throw new AIConfigError(`Provider "${provider.name}" is enabled but ${provider.api_key_env_var} is not set`)
-  }
-
-  switch (provider.provider_type) {
+// Pure instantiation switch -- takes an already-resolved API key directly
+// rather than an ai_providers DB row, so a caller with its own credential
+// (BYOLLM, src/lib/workbench/builder-llm-credentials.ts) can construct a
+// provider through this exact same switch instead of a second copy. The
+// only two DB-backed callers (buildProviderClient below) resolve the row and
+// its env-var-referenced key first, then delegate here.
+export function instantiateProvider(
+  providerType: 'openai' | 'gemini' | 'groq' | 'openai_compatible',
+  name: string,
+  apiKey: string,
+  baseUrl: string | null,
+  defaultTextModel?: string,
+  defaultEmbedModel?: string
+): AIProvider {
+  switch (providerType) {
     case 'openai':
       return defaultTextModel || defaultEmbedModel
         ? new OpenAIProvider(apiKey, defaultTextModel, defaultEmbedModel)
@@ -150,10 +158,18 @@ function buildProviderClient(provider: AIProviderRow, defaultTextModel?: string,
         : new GeminiProvider(apiKey)
     case 'groq':
     case 'openai_compatible': {
-      if (!provider.base_url) throw new AIConfigError(`Provider "${provider.name}" has no base_url configured`)
-      return new OpenAICompatibleProvider(provider.name, apiKey, provider.base_url, defaultTextModel)
+      if (!baseUrl) throw new AIConfigError(`Provider "${name}" has no base_url configured`)
+      return new OpenAICompatibleProvider(name, apiKey, baseUrl, defaultTextModel)
     }
   }
+}
+
+function buildProviderClient(provider: AIProviderRow, defaultTextModel?: string, defaultEmbedModel?: string): AIProvider {
+  const apiKey = resolveApiKey(provider)
+  if (!apiKey) {
+    throw new AIConfigError(`Provider "${provider.name}" is enabled but ${provider.api_key_env_var} is not set`)
+  }
+  return instantiateProvider(provider.provider_type, provider.name, apiKey, provider.base_url, defaultTextModel, defaultEmbedModel)
 }
 
 // The one place evaluation (and everything else) resolves a provider by

@@ -1,4 +1,5 @@
 import type { BuilderOperationsRow } from '@/lib/workbench/builder-progress-updates'
+import { BuilderMeteringActions } from './BuilderMeteringActions'
 
 const CONFIDENCE_LABELS: Record<string, string> = {
   on_track: 'On track',
@@ -41,6 +42,11 @@ export function BuilderOperationsReview({ rows }: { rows: BuilderOperationsRow[]
             {row.activeWorkstreamCount} active workstream{row.activeWorkstreamCount === 1 ? '' : 's'}
             {row.lastActivityAt ? ` · last activity ${new Date(row.lastActivityAt).toLocaleDateString()}` : ''}
           </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            ${row.spend.spentThisPeriodUsd.toFixed(2)} spent this period of ${(row.spend.allowanceUsd + row.spend.creditsUsd).toFixed(2)} available
+            {' '}(${row.spend.remainingUsd.toFixed(2)} remaining
+            {row.spend.remainingUsd <= 0 && row.spend.stopAtAllowance ? ' -- blocked' : ''})
+          </p>
           {row.latestUpdate && (
             <div className="mt-2 rounded bg-zinc-50 p-2">
               <div className="flex items-center gap-2 text-xs font-medium text-zinc-700">
@@ -62,6 +68,12 @@ export function BuilderOperationsReview({ rows }: { rows: BuilderOperationsRow[]
               {row.latestUpdate.helpRequested && <p className="mt-1 text-xs text-red-700">Help: {row.latestUpdate.helpRequested}</p>}
             </div>
           )}
+          <BuilderMeteringActions
+            builderId={row.builderId}
+            currentAllowanceUsd={row.spend.allowanceUsd}
+            currentWarningThresholdPct={row.spend.warningThresholdPct}
+            currentStopAtAllowance={row.spend.stopAtAllowance}
+          />
         </li>
       ))}
     </ul>

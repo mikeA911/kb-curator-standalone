@@ -433,6 +433,23 @@ export async function provisionBuilderProject(admin: ReturnType<typeof createAdm
   if (error) throw error
 }
 
+// Builder AI Usage Metering + BYOLLM (src/lib/ai/metering.ts,
+// src/lib/workbench/builder-llm-credentials.ts): both need to know "is this
+// conversation's project genuinely this caller's own builder workspace"
+// before metering/substituting a provider for it -- same portfolio_category
+// check listBuilderOperationsRows already uses to enumerate builder
+// workspaces, here scoped to one specific project and caller via the
+// caller's own RLS-scoped client (a caller can always see their own owned
+// project row, so no admin client is needed).
+export async function isOwnBuilderLabProject(ctx: WorkbenchCallerContext, projectId: string): Promise<boolean> {
+  const { data: project } = await ctx.supabase
+    .from('projects')
+    .select('owner_id, portfolio_category')
+    .eq('id', projectId)
+    .maybeSingle()
+  return project?.owner_id === ctx.user.id && project?.portfolio_category === 'builder_lab'
+}
+
 // Backs the Ember search_projects tool (docs/dev-request-ember-onboarding-
 // capability-gaps.md, item 1) -- lets Ember discover an existing project
 // before proposing to create a new one, closing the gap where she had no

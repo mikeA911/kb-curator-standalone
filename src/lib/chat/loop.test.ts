@@ -40,8 +40,12 @@ vi.mock('./working-knowledge-tool', () => ({
 }))
 // Only tavilyApiKey is used by loop.ts itself -- runSearchWeb's own env
 // lookup lives inside the mocked ./web-search-tool module above, so it
-// never actually runs here.
-vi.mock('@/lib/env', () => ({ env: { tavilyApiKey: () => tavilyApiKeyMock() } }))
+// never actually runs here. productMode fixed at 'enterprise' -- Builder AI
+// Usage Metering + BYOLLM (isOwnBuilderLabProject/resolveBuilderLlmProvider)
+// only ever engage in builder mode, so every existing test here stays on
+// the untouched platform-default path; that new machinery has its own
+// dedicated coverage in metering.test.ts/builder-llm-credentials.test.ts.
+vi.mock('@/lib/env', () => ({ env: { tavilyApiKey: () => tavilyApiKeyMock(), productMode: () => 'enterprise' } }))
 vi.mock('@/lib/ai', async () => {
   const actual = await vi.importActual<typeof import('@/lib/ai')>('@/lib/ai')
   return {
@@ -56,6 +60,14 @@ vi.mock('@/lib/ai', async () => {
     assertProviderEligible: actual.assertProviderEligible,
     resolveChatProvider: (...args: unknown[]) => resolveChatProviderMock(...args),
     getDefaultModel: (...args: unknown[]) => getDefaultModelMock(...args),
+    // Real class, never mocked -- loop.ts's catch block does `err instanceof
+    // BuilderAllowanceError` on every thrown error regardless of builder
+    // mode, so this must be a real constructor even though productMode is
+    // fixed at 'enterprise' here and the gate itself never actually throws
+    // in these tests. withLogging/withAllowanceGate/getBuilderSpendSummary/
+    // instantiateProvider are deliberately left out -- they're only ever
+    // called from the builder-mode-only branch these tests never take.
+    BuilderAllowanceError: actual.BuilderAllowanceError,
   }
 })
 vi.mock('@/lib/mcp/tools', () => ({

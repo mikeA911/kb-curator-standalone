@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 import type { BuilderProgressConfidence } from '@/types/database'
+import { getBuilderSpendSummary, type BuilderSpendSummary } from '@/lib/ai'
 
 // Builder Operations and Progress Updates (docs/dev-request-builder-
 // operations-and-progress-updates.md): a consent-based exception to
@@ -96,6 +97,7 @@ export interface BuilderOperationsRow {
     confidence: BuilderProgressConfidence
     updatedAt: string
   } | null
+  spend: BuilderSpendSummary
 }
 
 // curator/admin only. Scoped to Projects tagged portfolio_category =
@@ -105,9 +107,11 @@ export interface BuilderOperationsRow {
 // tab in builder mode. Admin client throughout: a platform curator/admin
 // reviewing this is deliberately NOT expected to be a member of any
 // individual Builder's private Project -- same "safe metadata query"
-// posture as listPendingWorkstreamPromotions. Omits credits/allowance and
-// milestone-evidence-status entirely (no metering/milestone
-// infrastructure exists yet) rather than showing fabricated data.
+// posture as listPendingWorkstreamPromotions. `spend` (allowance/credits/
+// spent/remaining) now comes from src/lib/ai/metering.ts's own
+// getBuilderSpendSummary -- this is the field that used to be omitted here
+// pending that infrastructure; milestone-evidence-status remains omitted
+// (no milestone infrastructure exists yet).
 export async function listBuilderOperationsRows(ctx: WorkbenchCallerContext): Promise<BuilderOperationsRow[]> {
   if (ctx.profile.role !== 'curator' && ctx.profile.role !== 'admin') {
     throw new AuthError('Requires curator or admin role to view Builder Operations')
@@ -138,39 +142,45 @@ export async function listBuilderOperationsRows(ctx: WorkbenchCallerContext): Pr
       : { data: [] }
   const updateByWorkstreamId = new Map((updates ?? []).map((u) => [u.workstream_id, u]))
 
-  return builderProjects.map((project) => {
-    const projectWorkstreams = workstreamsByProject.get(project.id) ?? []
-    const activeWorkstreamCount = projectWorkstreams.filter((w) => w.status === 'active').length
-    const lastActivityAt = projectWorkstreams.reduce<string | null>(
-      (latest, w) => (!latest || w.updated_at > latest ? w.updated_at : latest),
-      null
-    )
+  return Promise.all(
+    builderProjects.map(async (project) => {
+      const projectWorkstreams = workstreamsByProject.get(project.id) ?? []
+      const activeWorkstreamCount = projectWorkstreams.filter((w) => w.status === 'active').length
+      const lastActivityAt = projectWorkstreams.reduce<string | null>(
+        (latest, w) => (!latest || w.updated_at > latest ? w.updated_at : latest),
+        null
+      )
 
-    let latestUpdate: BuilderOperationsRow['latestUpdate'] = null
-    for (const w of projectWorkstreams) {
-      const u = updateByWorkstreamId.get(w.id)
-      if (u && (!latestUpdate || u.updated_at > latestUpdate.updatedAt)) {
-        latestUpdate = {
-          workstreamName: w.name,
-          currentStage: u.current_stage,
-          opportunityLabel: u.opportunity_label,
-          progress: u.progress,
-          nextStep: u.next_step,
-          helpRequested: u.help_requested,
-          confidence: u.confidence,
-          updatedAt: u.updated_at,
+      let latestUpdate: BuilderOperationsRow['latestUpdate'] = null
+      for (const w of projectWorkstreams) {
+        const u = updateByWorkstreamId.get(w.id)
+        if (u && (!latestUpdate || u.updated_at > latestUpdate.updatedAt)) {
+          latestUpdate = {
+            workstreamName: w.name,
+            currentStage: u.current_stage,
+            opportunityLabel: u.opportunity_label,
+            progress: u.progress,
+            nextStep: u.next_step,
+            helpRequested: u.help_requested,
+            confidence: u.confidence,
+            updatedAt: u.updated_at,
+          }
         }
       }
-    }
 
-    const profile = project.owner_id ? profileById.get(project.owner_id) : undefined
-    return {
-      builderId: project.owner_id ?? '',
-      builderEmail: profile?.email ?? null,
-      isActive: profile?.is_active ?? false,
-      lastActivityAt,
-      activeWorkstreamCount,
-      latestUpdate,
-    }
-  })
+      const profile = project.owner_id ? profileById.get(project.owner_id) : undefined
+      const spend = project.owner_id
+        ? await getBuilderSpendSummary(admin, project.owner_id)
+        : { allowanceUsd: 0, creditsUsd: 0, spentThisPeriodUsd: 0, remainingUsd: 0, warningThresholdPct: 0, stopAtAllowance: true }
+      return {
+        builderId: project.owner_id ?? '',
+        builderEmail: profile?.email ?? null,
+        isActive: profile?.is_active ?? false,
+        lastActivityAt,
+        activeWorkstreamCount,
+        latestUpdate,
+        spend,
+      }
+    })
+  )
 }

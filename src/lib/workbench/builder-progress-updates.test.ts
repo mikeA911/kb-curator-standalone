@@ -158,7 +158,7 @@ describe('listBuilderOperationsRows', () => {
     expect(result).toEqual([])
   })
 
-  it('shapes a row with account state, activity, workstream count, and the latest active update -- omitting credits/milestone fields', async () => {
+  it('shapes a row with account state, activity, workstream count, latest active update, and per-builder spend -- still omitting milestone fields', async () => {
     const supabase = createFakeSupabase({})
     const admin = createFakeSupabase({
       projects: [{ data: [{ id: 'proj-1', owner_id: 'builder-1' }], error: null }],
@@ -189,6 +189,12 @@ describe('listBuilderOperationsRows', () => {
           error: null,
         },
       ],
+      // getBuilderSpendSummary's own three lookups -- all empty, so this
+      // builder falls back to the platform default allowance with nothing
+      // spent yet.
+      builder_ai_allowances: [{ data: null, error: null }],
+      builder_credit_grants: [{ data: [], error: null }],
+      ai_operation_logs: [{ data: [], error: null }],
     })
     createAdminClientMock.mockReturnValue(admin)
 
@@ -211,9 +217,16 @@ describe('listBuilderOperationsRows', () => {
           confidence: 'on_track',
           updatedAt: '2026-09-05T00:00:00Z',
         },
+        spend: {
+          allowanceUsd: 20,
+          creditsUsd: 0,
+          spentThisPeriodUsd: 0,
+          remainingUsd: 20,
+          warningThresholdPct: 80,
+          stopAtAllowance: true,
+        },
       },
     ])
-    expect(result[0]).not.toHaveProperty('creditsRemaining')
     expect(result[0]).not.toHaveProperty('milestoneEvidenceStatus')
   })
 })
