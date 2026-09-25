@@ -14,6 +14,12 @@ import { WorkstreamPromotionForm } from '@/components/projects/WorkstreamPromoti
 import { CloneWorkstreamButton } from '@/components/projects/CloneWorkstreamButton'
 import { PromoteToMethodForm } from '@/components/projects/PromoteToMethodForm'
 import { ShareBuilderUpdateForm, type ExistingBuilderUpdate } from '@/components/projects/ShareBuilderUpdateForm'
+import {
+  WorkstreamKnowledgeBaseAttachManager,
+  WorkstreamKnowledgeBaseDetachButton,
+} from '@/components/projects/WorkstreamKnowledgeBaseAttachManager'
+import { listKnowledgeBasesForWorkstream } from '@/lib/projects/queries'
+import { listAttachableKnowledgeBasesForWorkstream } from '@/lib/knowledge-bases'
 import { Markdown } from '@/components/shared/Markdown'
 import { env } from '@/lib/env'
 
@@ -40,9 +46,10 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
   const workstream = workstreamRow as ProjectWorkstream | null
   if (!project || !workstream) notFound()
 
-  const [artifacts, assessmentSummaries] = await Promise.all([
+  const [artifacts, assessmentSummaries, workstreamKnowledgeBases] = await Promise.all([
     listArtifacts(supabase, workstreamId),
     listAssessmentSummariesForProject(supabase, id),
+    listKnowledgeBasesForWorkstream(supabase, workstreamId),
   ])
 
   const {
@@ -64,6 +71,8 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
     canEdit = isAdmin || viewerMembership?.role === 'owner' || viewerMembership?.role === 'curator'
     canAttach = isAdmin || canEdit || viewerMembership?.role === 'consultant'
   }
+
+  const attachableKnowledgeBases = canEdit ? await listAttachableKnowledgeBasesForWorkstream(supabase, workstreamId) : []
 
   // Offer promotion only when it would actually be accepted by
   // submitWorkstreamForPromotion -- an active member, completed, at least
@@ -181,6 +190,29 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Deliverables</h2>
           <DeliverableChecklist workstreamId={workstream.id} deliverables={workstream.deliverables} canEdit={canEdit} />
         </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Knowledge</h2>
+        <p className="text-xs text-zinc-500">
+          Scoped to this workstream only -- distinct from the project&apos;s own knowledge, and not automatically visible
+          to any other workstream in this project.
+        </p>
+        {workstreamKnowledgeBases.length > 0 ? (
+          <ul className="flex flex-col gap-1 text-sm">
+            {workstreamKnowledgeBases.map((kb) => (
+              <li key={kb.id} className="flex items-center gap-2">
+                {kb.name}
+                {canEdit && <WorkstreamKnowledgeBaseDetachButton projectId={id} workstreamId={workstream.id} knowledgeBaseId={kb.id} />}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-zinc-500">No workstream-specific knowledge base attached yet.</p>
+        )}
+        {canEdit && (
+          <WorkstreamKnowledgeBaseAttachManager projectId={id} workstreamId={workstream.id} availableKnowledgeBases={attachableKnowledgeBases} />
+        )}
       </section>
 
       <SystemUnderstandingCard projectId={id} summaries={assessmentSummaries} canCreate={canEdit} />

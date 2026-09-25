@@ -337,6 +337,18 @@ export interface ProjectKnowledgeBase {
   attached_at: string
 }
 
+// Builder Ontology, Part D (docs/kbs-ontology-dev-req-3.md): a Workstream's
+// own scoped KB, distinct from its Project's -- exact structural mirror of
+// ProjectKnowledgeBase above. See 20260928100001_workstream_knowledge_bases.sql.
+export interface WorkstreamKnowledgeBase {
+  id: string
+  workstream_id: string
+  knowledge_base_id: string
+  purpose: string | null
+  attached_by: string | null
+  attached_at: string
+}
+
 export interface WikiVersion {
   id: string
   wiki_article_id: string
@@ -2185,6 +2197,10 @@ export type ProjectKnowledgeBaseInsert = Omit<ProjectKnowledgeBase, 'id' | 'atta
   Partial<Pick<ProjectKnowledgeBase, 'attached_at'>>
 export type ProjectKnowledgeBaseUpdate = Partial<Omit<ProjectKnowledgeBase, 'id' | 'project_id' | 'knowledge_base_id'>>
 
+export type WorkstreamKnowledgeBaseInsert = Omit<WorkstreamKnowledgeBase, 'id' | 'attached_at'> &
+  Partial<Pick<WorkstreamKnowledgeBase, 'attached_at'>>
+export type WorkstreamKnowledgeBaseUpdate = never
+
 export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at' | 'promoted_from_trending_item_id'> &
   Partial<Pick<WikiVersion, 'promoted_from_trending_item_id'>>
 export type WikiVersionUpdate = Partial<Pick<WikiVersion, 'approved_by' | 'approved_at'>>
@@ -2621,6 +2637,12 @@ export interface Database {
         Row: ProjectKnowledgeBase
         Insert: ProjectKnowledgeBaseInsert
         Update: ProjectKnowledgeBaseUpdate
+        Relationships: []
+      }
+      workstream_knowledge_bases: {
+        Row: WorkstreamKnowledgeBase
+        Insert: WorkstreamKnowledgeBaseInsert
+        Update: WorkstreamKnowledgeBaseUpdate
         Relationships: []
       }
       wiki_versions: { Row: WikiVersion; Insert: WikiVersionInsert; Update: WikiVersionUpdate; Relationships: [] }
