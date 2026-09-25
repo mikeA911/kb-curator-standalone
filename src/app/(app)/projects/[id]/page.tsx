@@ -585,7 +585,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             This project&apos;s domain objects and workstreams -- their nesting, pipeline order, and which objects
             each workstream reads, writes, or creates.
           </p>
-          <OntologyMapDiagram layout={ontologyMapLayout} projectId={project.id} />
+          <OntologyMapDiagram layout={ontologyMapLayout} projectId={project.id} projectName={project.name} />
         </section>
       )}
 
