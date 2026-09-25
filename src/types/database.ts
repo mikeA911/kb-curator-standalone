@@ -243,6 +243,11 @@ export interface AIOperationLog {
   project_id: string | null
   estimated_cost_usd: number | null
   is_byo_llm: boolean
+  // Builder Ontology, Part C: runtime evidence that this call was made
+  // while executing an instantiated Method -- foundational column for a
+  // deferred design-time integration (see methods.ts's own header comment),
+  // nothing populates it in this pass.
+  applied_method_id: string | null
 }
 
 export interface ChunkForReview extends DocumentChunk {
@@ -326,6 +331,18 @@ export interface ProjectWikiArticle {
 export interface ProjectKnowledgeBase {
   id: string
   project_id: string
+  knowledge_base_id: string
+  purpose: string | null
+  attached_by: string | null
+  attached_at: string
+}
+
+// Builder Ontology, Part D (docs/kbs-ontology-dev-req-3.md): a Workstream's
+// own scoped KB, distinct from its Project's -- exact structural mirror of
+// ProjectKnowledgeBase above. See 20260928100001_workstream_knowledge_bases.sql.
+export interface WorkstreamKnowledgeBase {
+  id: string
+  workstream_id: string
   knowledge_base_id: string
   purpose: string | null
   attached_by: string | null
@@ -1132,7 +1149,42 @@ export interface ProjectWorkstream {
   // for comparison, sharing the project's project_objects but starting with
   // its own fresh run history. null for every ordinarily-created Workstream.
   cloned_from_workstream_id: string | null
+  // Builder Ontology, Part C: set when this Workstream was created by
+  // instantiateMethodAsWorkstream (methods.ts) from a published Method --
+  // distinct from cloned_from_workstream_id (a direct copy of another
+  // Workstream) since a Method is reusable process reference, not a
+  // specific prior run. null for every Workstream not instantiated this way.
+  derived_from_method_id: string | null
 }
+
+// A reusable process a builder promotes from a Workstream that worked --
+// other builders can browse (once published) and instantiate into a fresh
+// Workstream of their own. requirements/evidence/deliverables/guardrails/
+// review_points are plain free-text, not jsonb -- this codebase's own
+// "no template engine" convention (see Project.details' own comment),
+// rendered as Markdown like ProjectWorkstream.guardrail/summary/goal. See
+// 20260927100001_methods_schema.sql.
+export interface Method {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  derived_from_workstream_id: string
+  derived_from_wiki_article_id: string | null
+  requirements: string | null
+  evidence: string | null
+  deliverables: string | null
+  guardrails: string | null
+  review_points: string | null
+  status: MethodStatus
+  published_by: string | null
+  published_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type MethodStatus = 'draft' | 'published'
 
 export type WorkstreamObjectAccessMode = 'reads' | 'writes' | 'creates'
 
@@ -2145,6 +2197,10 @@ export type ProjectKnowledgeBaseInsert = Omit<ProjectKnowledgeBase, 'id' | 'atta
   Partial<Pick<ProjectKnowledgeBase, 'attached_at'>>
 export type ProjectKnowledgeBaseUpdate = Partial<Omit<ProjectKnowledgeBase, 'id' | 'project_id' | 'knowledge_base_id'>>
 
+export type WorkstreamKnowledgeBaseInsert = Omit<WorkstreamKnowledgeBase, 'id' | 'attached_at'> &
+  Partial<Pick<WorkstreamKnowledgeBase, 'attached_at'>>
+export type WorkstreamKnowledgeBaseUpdate = never
+
 export type WikiVersionInsert = Omit<WikiVersion, 'id' | 'created_at' | 'promoted_from_trending_item_id'> &
   Partial<Pick<WikiVersion, 'promoted_from_trending_item_id'>>
 export type WikiVersionUpdate = Partial<Pick<WikiVersion, 'approved_by' | 'approved_at'>>
@@ -2410,11 +2466,17 @@ export type ProjectWorkstreamInsert = Omit<
   | 'assistant_conversation_id'
   | 'operational_status'
   | 'cloned_from_workstream_id'
+  | 'derived_from_method_id'
 > &
   Partial<
     Pick<
       ProjectWorkstream,
-      'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status' | 'cloned_from_workstream_id'
+      | 'created_via'
+      | 'assistant_prompt_version'
+      | 'assistant_conversation_id'
+      | 'operational_status'
+      | 'cloned_from_workstream_id'
+      | 'derived_from_method_id'
     >
   >
 export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
@@ -2427,6 +2489,13 @@ export type WorkstreamObjectLinkUpdate = Partial<Omit<WorkstreamObjectLink, 'id'
 
 export type WorkstreamFlowEdgeInsert = Omit<WorkstreamFlowEdge, 'id' | 'created_at'>
 export type WorkstreamFlowEdgeUpdate = never
+
+export type MethodInsert = Omit<
+  Method,
+  'id' | 'created_at' | 'updated_at' | 'status' | 'published_by' | 'published_at' | 'derived_from_wiki_article_id'
+> &
+  Partial<Pick<Method, 'status' | 'published_by' | 'published_at' | 'derived_from_wiki_article_id'>>
+export type MethodUpdate = Partial<Omit<Method, 'id' | 'derived_from_workstream_id' | 'created_by' | 'created_at'>>
 
 // Every descriptive field stays immutable (still an evidence trail) -- OL-010
 // added exactly one narrow update path, reviewArtifact(), which only ever
@@ -2547,7 +2616,7 @@ export interface Database {
       settings: { Row: Setting; Insert: Setting; Update: Partial<Setting>; Relationships: [] }
       ai_operation_logs: {
         Row: AIOperationLog
-        Insert: Omit<AIOperationLog, 'id' | 'created_at'>
+        Insert: Omit<AIOperationLog, 'id' | 'created_at' | 'applied_method_id'> & Partial<Pick<AIOperationLog, 'applied_method_id'>>
         Update: Partial<AIOperationLog>
         Relationships: []
       }
@@ -2568,6 +2637,12 @@ export interface Database {
         Row: ProjectKnowledgeBase
         Insert: ProjectKnowledgeBaseInsert
         Update: ProjectKnowledgeBaseUpdate
+        Relationships: []
+      }
+      workstream_knowledge_bases: {
+        Row: WorkstreamKnowledgeBase
+        Insert: WorkstreamKnowledgeBaseInsert
+        Update: WorkstreamKnowledgeBaseUpdate
         Relationships: []
       }
       wiki_versions: { Row: WikiVersion; Insert: WikiVersionInsert; Update: WikiVersionUpdate; Relationships: [] }
@@ -2705,6 +2780,7 @@ export interface Database {
         Relationships: []
       }
       workstream_flow: { Row: WorkstreamFlowEdge; Insert: WorkstreamFlowEdgeInsert; Update: WorkstreamFlowEdgeUpdate; Relationships: [] }
+      methods: { Row: Method; Insert: MethodInsert; Update: MethodUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: WorkstreamArtifactUpdate; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
       system_assessment_versions: { Row: SystemAssessmentVersion; Insert: SystemAssessmentVersionInsert; Update: Partial<SystemAssessmentVersion>; Relationships: [] }

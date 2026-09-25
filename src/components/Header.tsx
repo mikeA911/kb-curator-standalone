@@ -13,6 +13,7 @@ const EXPLORE_ITEMS = [
   { href: '/graphs', label: 'Graphs' },
   { href: '/agents', label: 'Agents' },
   { href: '/agent-registry', label: 'Agent Registry (external)' },
+  { href: '/methods', label: 'Methods' },
 ]
 
 // Ember Role-Directed Product Experience (docs/dev-request-ember-role-

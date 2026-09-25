@@ -124,6 +124,26 @@ export async function listKnowledgeBasesForProject(
   return kbs ?? []
 }
 
+// Builder Ontology, Part D: same shape as listKnowledgeBasesForProject
+// above, joined through workstream_knowledge_bases instead -- a Workstream's
+// own scoped KB, distinct from its Project's.
+export async function listKnowledgeBasesForWorkstream(
+  supabase: SupabaseClient<Database>,
+  workstreamId: string
+): Promise<LinkedKnowledgeBase[]> {
+  const { data: links, error: linkError } = await supabase
+    .from('workstream_knowledge_bases')
+    .select('knowledge_base_id')
+    .eq('workstream_id', workstreamId)
+  if (linkError) throw linkError
+  const kbIds = (links ?? []).map((l) => l.knowledge_base_id)
+  if (kbIds.length === 0) return []
+
+  const { data: kbs, error: kbError } = await supabase.from('knowledge_bases').select('id, name').in('id', kbIds)
+  if (kbError) throw kbError
+  return kbs ?? []
+}
+
 export interface ProjectKnowledgeSource {
   id: string
   knowledgeBaseId: string

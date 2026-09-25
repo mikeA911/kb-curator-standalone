@@ -20,6 +20,8 @@ import { WorkstreamPromotionsReview } from '@/components/projects/WorkstreamProm
 import { listPendingWorkstreamPromotions } from '@/lib/workbench/workstream-promotions'
 import { BuilderOperationsReview } from '@/components/admin/BuilderOperationsReview'
 import { listBuilderOperationsRows } from '@/lib/workbench/builder-progress-updates'
+import { MethodsReview } from '@/components/admin/MethodsReview'
+import { listPendingMethods } from '@/lib/workbench/methods'
 import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
 export default async function AdminPage() {
@@ -69,6 +71,7 @@ export default async function AdminPage() {
   // WorkbenchCallerContext for it.
   const callerCtx = { user, profile, supabase } as unknown as WorkbenchCallerContext
   const pendingWorkstreamPromotions = await listPendingWorkstreamPromotions(callerCtx)
+  const pendingMethods = await listPendingMethods(callerCtx)
 
   // Builder Operations only makes sense in a builder-mode deployment --
   // there's no "builder_lab" Project category to review in Enterprise mode.
@@ -128,6 +131,7 @@ export default async function AdminPage() {
             label: 'Workstream Promotions',
             content: <WorkstreamPromotionsReview promotions={pendingWorkstreamPromotions} />,
           },
+          { id: 'methods', label: 'Methods', content: <MethodsReview methods={pendingMethods} /> },
           ...(isBuilderMode
             ? [
                 {

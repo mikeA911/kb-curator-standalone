@@ -69,6 +69,36 @@ export async function listAttachableKnowledgeBases(
   return data ?? []
 }
 
+// Builder Ontology, Part D: same picker shape as listAttachableKnowledgeBases
+// above, scoped to a Workstream's own workstream_knowledge_bases instead of
+// its Project's project_knowledge_bases -- a KB already attached at the
+// project level (or to a different workstream) is still a valid,
+// intentional pick here, same "many-to-many, already-attached-elsewhere is
+// fine" reasoning as the project-level picker.
+export async function listAttachableKnowledgeBasesForWorkstream(
+  supabase: SupabaseClient<Database>,
+  workstreamId: string
+): Promise<KnowledgeBase[]> {
+  const { data: linked, error: linkedError } = await supabase
+    .from('workstream_knowledge_bases')
+    .select('knowledge_base_id')
+    .eq('workstream_id', workstreamId)
+  if (linkedError) throw linkedError
+  const attachedIds = (linked ?? []).map((l) => l.knowledge_base_id)
+
+  let query = supabase
+    .from('knowledge_bases')
+    .select('*')
+    .eq('lifecycle_status', 'active')
+    .eq('status', 'approved')
+    .in('visibility_scope', ['platform', 'public'])
+    .order('name')
+  if (attachedIds.length > 0) query = query.not('id', 'in', `(${attachedIds.join(',')})`)
+  const { data, error } = await query
+  if (error) throw error
+  return data ?? []
+}
+
 // Public-facing synopsis list for the Wiki page (any signed-in user, not
 // just curator/admin) -- per Mike, 2026-08-28: users should be able to see
 // what knowledge bases exist and what each is used for, without seeing the
