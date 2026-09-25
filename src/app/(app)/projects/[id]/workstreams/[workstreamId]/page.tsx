@@ -12,6 +12,7 @@ import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
 import { ArtifactStatusBadge, ArtifactReviewActions } from '@/components/projects/ArtifactReviewActions'
 import { WorkstreamPromotionForm } from '@/components/projects/WorkstreamPromotionForm'
 import { CloneWorkstreamButton } from '@/components/projects/CloneWorkstreamButton'
+import { PromoteToMethodForm } from '@/components/projects/PromoteToMethodForm'
 import { ShareBuilderUpdateForm, type ExistingBuilderUpdate } from '@/components/projects/ShareBuilderUpdateForm'
 import { Markdown } from '@/components/shared/Markdown'
 import { env } from '@/lib/env'
@@ -271,6 +272,8 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
       )}
 
       {canOfferPromotion && <WorkstreamPromotionForm projectId={id} workstreamId={workstream.id} />}
+
+      {canEdit && <PromoteToMethodForm projectId={id} workstreamId={workstream.id} defaultGuardrail={workstream.guardrail} />}
     </div>
   )
 }
