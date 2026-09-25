@@ -15,37 +15,42 @@ beforeEach(() => {
 
 describe('extractCreatedRecordRef', () => {
   it('extracts a project ref from a create_project tool result', () => {
-    expect(extractCreatedRecordRef('create_project', JSON.stringify({ projectId: 'p1' }))).toEqual({ kind: 'project', id: 'p1' })
+    expect(extractCreatedRecordRef('create_project', JSON.stringify({ projectId: 'p1' }))).toEqual([{ kind: 'project', id: 'p1' }])
   })
 
   it('extracts a workstream ref from a create_workstream tool result', () => {
-    expect(extractCreatedRecordRef('create_workstream', JSON.stringify({ workstreamId: 'w1' }))).toEqual({ kind: 'workstream', id: 'w1' })
+    expect(extractCreatedRecordRef('create_workstream', JSON.stringify({ workstreamId: 'w1' }))).toEqual([{ kind: 'workstream', id: 'w1' }])
   })
 
   it('extracts a workstream_artifact ref from a successful attach_workstream_artifact tool result', () => {
-    expect(extractCreatedRecordRef('attach_workstream_artifact', JSON.stringify({ attached: true, artifactId: 'art1' }))).toEqual({
-      kind: 'workstream_artifact',
-      id: 'art1',
-    })
+    expect(extractCreatedRecordRef('attach_workstream_artifact', JSON.stringify({ attached: true, artifactId: 'art1' }))).toEqual([
+      { kind: 'workstream_artifact', id: 'art1' },
+    ])
   })
 
   it('extracts a working_knowledge ref from a successful save_working_knowledge tool result', () => {
-    expect(extractCreatedRecordRef('save_working_knowledge', JSON.stringify({ itemId: 'wk1' }))).toEqual({
-      kind: 'working_knowledge',
-      id: 'wk1',
-    })
+    expect(extractCreatedRecordRef('save_working_knowledge', JSON.stringify({ itemId: 'wk1' }))).toEqual([
+      { kind: 'working_knowledge', id: 'wk1' },
+    ])
   })
 
-  it('returns null for a tool error result', () => {
-    expect(extractCreatedRecordRef('create_project', JSON.stringify({ error: 'refused' }))).toBeNull()
+  it('extracts one workstream ref per id from a create_project_ontology tool result', () => {
+    expect(extractCreatedRecordRef('create_project_ontology', JSON.stringify({ workstreamIds: ['w1', 'w2'] }))).toEqual([
+      { kind: 'workstream', id: 'w1' },
+      { kind: 'workstream', id: 'w2' },
+    ])
   })
 
-  it('returns null for an unrelated tool', () => {
-    expect(extractCreatedRecordRef('search_wiki', JSON.stringify({ articles: [] }))).toBeNull()
+  it('returns an empty array for a tool error result', () => {
+    expect(extractCreatedRecordRef('create_project', JSON.stringify({ error: 'refused' }))).toEqual([])
   })
 
-  it('returns null for malformed JSON rather than throwing', () => {
-    expect(extractCreatedRecordRef('create_project', 'not json')).toBeNull()
+  it('returns an empty array for an unrelated tool', () => {
+    expect(extractCreatedRecordRef('search_wiki', JSON.stringify({ articles: [] }))).toEqual([])
+  })
+
+  it('returns an empty array for malformed JSON rather than throwing', () => {
+    expect(extractCreatedRecordRef('create_project', 'not json')).toEqual([])
   })
 })
 

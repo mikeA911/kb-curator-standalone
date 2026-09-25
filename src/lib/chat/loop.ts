@@ -45,6 +45,14 @@ import { SEND_PROJECT_NOTE_TOOL, SEND_PROJECT_NOTE_TOOL_NAME, runSendProjectNote
 import { SEARCH_WEB_TOOL, SEARCH_WEB_TOOL_NAME, runSearchWeb } from './web-search-tool'
 import { LIST_WORKSTREAMS_TOOL, LIST_WORKSTREAMS_TOOL_NAME, runListWorkstreams } from './workstream-list-tool'
 import {
+  SUGGEST_PROJECT_ONTOLOGY_TOOL,
+  SUGGEST_PROJECT_ONTOLOGY_TOOL_NAME,
+  CREATE_PROJECT_ONTOLOGY_TOOL,
+  CREATE_PROJECT_ONTOLOGY_TOOL_NAME,
+  runSuggestProjectOntology,
+  runCreateProjectOntology,
+} from './project-ontology-tool'
+import {
   SEARCH_MY_WORKING_KNOWLEDGE_TOOL,
   SEARCH_MY_WORKING_KNOWLEDGE_TOOL_NAME,
   SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL,
@@ -121,6 +129,8 @@ You also have list_project_members (no Project ID needed) for questions like who
 If the user asks you to send someone a Project Note (e.g. "send Maria a note about X"), first call list_project_members to find the exact person. Then state the exact recipient, subject and body you're about to send in your reply and wait for the user's explicit confirmation in their next message -- only call send_project_note once they've clearly agreed to that exact content, never in the same turn you proposed it.
 
 You also have list_workstreams (no Project ID needed) for this project's existing workstreams with their real ids. Call it before attach_workstream_artifact whenever you need to reference an existing workstream -- a workstream's display name (e.g. "Phase 1 -- Showcase") is never a valid workstreamId, and guessing one will fail.
+
+If the user asks you to sketch, suggest, or "produce" a domain-object ontology for this project (the business's own noun types, e.g. Plane/Route -- not instances), call suggest_project_ontology. Present what it suggests in your own words -- don't just dump the raw tool output -- and wait for the user's explicit confirmation, or their requested changes, in their next message. Only once they've clearly agreed to a specific set of objects and workstreams, call create_project_ontology with exactly that tree (keeping each item's tempId/parentTempId links intact, or adjusted consistently if they asked for changes) -- never in the same turn you proposed it. After it succeeds, tell the user their new project's Ontology Map -- a visual diagram of what you just created -- is on the project page, and give them the ontologyMapUrl the tool returned.
 
 You also have search_my_working_knowledge and search_shared_working_knowledge (no Project ID needed) -- Working Knowledge is the current user's own private research notebooks and working notes in this project (plus, for the "shared" tool, notebooks other members have explicitly shared with them), used for continuity across conversations (e.g. "continue my research from yesterday"). It is NOT approved organizational knowledge and must never be presented as such -- always call it out as working/unverified material when you use it, and if it conflicts with search_project_knowledge's approved evidence, disclose the conflict explicitly rather than silently preferring one. A working-knowledge result CAN be cited (sourceType 'working_knowledge', sourceId is that result's id) -- it just renders with a distinct "working" badge, never the approved-evidence one.
 
@@ -199,6 +209,12 @@ async function stampProvenance(
     await ctx.supabase.from('conversations').update({ project_id: projectId }).eq('id', conversationId).is('project_id', null)
   } else if (toolName === 'create_workstream' && output && typeof output === 'object' && 'workstreamId' in output) {
     await ctx.supabase.from('project_workstreams').update(stamp).eq('id', (output as { workstreamId: string }).workstreamId)
+  } else if (toolName === CREATE_PROJECT_ONTOLOGY_TOOL_NAME && output && typeof output === 'object' && 'workstreamIds' in output) {
+    const workstreamIds = (output as { workstreamIds: string[] }).workstreamIds
+    // project_objects has no created_via/assistant_* columns at all (it
+    // predates that provenance convention and nothing else stamps it
+    // either) -- only the workstreams this call created get stamped.
+    if (workstreamIds.length > 0) await ctx.supabase.from('project_workstreams').update(stamp).in('id', workstreamIds)
   } else if (toolName === 'attach_workstream_artifact' && output && typeof output === 'object' && 'artifactId' in output) {
     await ctx.supabase.from('workstream_artifacts').update(stamp).eq('id', (output as { artifactId: string }).artifactId)
   }
@@ -450,6 +466,8 @@ export async function runAssistantTurn(
           LIST_PROJECT_MEMBERS_TOOL,
           SEND_PROJECT_NOTE_TOOL,
           LIST_WORKSTREAMS_TOOL,
+          SUGGEST_PROJECT_ONTOLOGY_TOOL,
+          CREATE_PROJECT_ONTOLOGY_TOOL,
           SEARCH_MY_WORKING_KNOWLEDGE_TOOL,
           SEARCH_SHARED_WORKING_KNOWLEDGE_TOOL,
           SAVE_WORKING_KNOWLEDGE_TOOL,
@@ -764,6 +782,44 @@ export async function runAssistantTurn(
           try {
             const output = await runListWorkstreams(ctx, resolvedProjectId)
             toolResultText = JSON.stringify(output)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === SUGGEST_PROJECT_ONTOLOGY_TOOL_NAME) {
+        // Read-only -- nothing written until create_project_ontology is
+        // separately called and confirmed (see that tool's own comment).
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'suggest_project_ontology is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runSuggestProjectOntology(ctx, resolvedProjectId, toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+          } catch (err) {
+            toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
+          }
+        }
+      } else if (toolCall.name === CREATE_PROJECT_ONTOLOGY_TOOL_NAME) {
+        if (!resolvedProjectId) {
+          toolResultText = JSON.stringify({ error: 'create_project_ontology is only available in a project-bound conversation.' })
+        } else {
+          try {
+            const output = await runCreateProjectOntology(ctx, resolvedProjectId, toolCall.arguments)
+            toolResultText = JSON.stringify(output)
+            // This tool is intercepted here, before the generic callTool
+            // dispatch (the only place stampProvenance is otherwise called
+            // from, line ~962 below) -- call it explicitly so the created
+            // workstreams get the same created_via='assistant' provenance
+            // create_workstream's own single-id case gets.
+            await stampProvenance(ctx, CREATE_PROJECT_ONTOLOGY_TOOL_NAME, output, conversation.id)
+            // Each created workstream gets its own real page (project_objects
+            // don't -- see ontology-map.ts's own header comment, nothing
+            // renders them individually yet), so only workstreams surface in
+            // the Artifacts panel's "Created records" group, same as
+            // create_workstream's own single-id case below.
+            for (const workstreamId of output.workstreamIds) {
+              createdRecordRefs.push({ kind: 'workstream', id: workstreamId })
+            }
           } catch (err) {
             toolResultText = JSON.stringify({ error: toolErrorMessage(err) })
           }

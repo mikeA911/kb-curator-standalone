@@ -32,25 +32,32 @@ export async function resolveCreatedRecord(ctx: WorkbenchCallerContext, ref: Cre
   return resolved ? { ...ref, label: resolved.label } : null
 }
 
-// Pulls a created-record reference out of a persisted tool-result row's
-// JSON content, matching the exact output shapes those three tools return
-// (src/lib/mcp/tools.ts). Used when replaying history, where the live
-// turn's in-memory tool output isn't available -- only what was persisted.
-export function extractCreatedRecordRef(toolName: string, content: string): CreatedRecordRef | null {
+// Pulls created-record references out of a persisted tool-result row's JSON
+// content, matching the exact output shapes those tools return
+// (src/lib/mcp/tools.ts, plus create_project_ontology in
+// src/lib/chat/project-ontology-tool.ts). Used when replaying history,
+// where the live turn's in-memory tool output isn't available -- only what
+// was persisted. Returns an array (possibly empty), not a single-or-null
+// ref, since create_project_ontology can create several workstreams in one
+// call -- every other tool here just returns a one-element array.
+export function extractCreatedRecordRef(toolName: string, content: string): CreatedRecordRef[] {
   try {
     const parsed: unknown = JSON.parse(content)
-    if (!parsed || typeof parsed !== 'object') return null
+    if (!parsed || typeof parsed !== 'object') return []
     const obj = parsed as Record<string, unknown>
-    if (toolName === 'create_project' && typeof obj.projectId === 'string') return { kind: 'project', id: obj.projectId }
-    if (toolName === 'create_workstream' && typeof obj.workstreamId === 'string') return { kind: 'workstream', id: obj.workstreamId }
+    if (toolName === 'create_project' && typeof obj.projectId === 'string') return [{ kind: 'project', id: obj.projectId }]
+    if (toolName === 'create_workstream' && typeof obj.workstreamId === 'string') return [{ kind: 'workstream', id: obj.workstreamId }]
     if (toolName === 'attach_workstream_artifact' && obj.attached === true && typeof obj.artifactId === 'string') {
-      return { kind: 'workstream_artifact', id: obj.artifactId }
+      return [{ kind: 'workstream_artifact', id: obj.artifactId }]
     }
-    if (toolName === 'send_project_note' && typeof obj.noteId === 'string') return { kind: 'project_note', id: obj.noteId }
-    if (toolName === 'save_working_knowledge' && typeof obj.itemId === 'string') return { kind: 'working_knowledge', id: obj.itemId }
+    if (toolName === 'send_project_note' && typeof obj.noteId === 'string') return [{ kind: 'project_note', id: obj.noteId }]
+    if (toolName === 'save_working_knowledge' && typeof obj.itemId === 'string') return [{ kind: 'working_knowledge', id: obj.itemId }]
+    if (toolName === 'create_project_ontology' && Array.isArray(obj.workstreamIds)) {
+      return obj.workstreamIds.filter((id): id is string => typeof id === 'string').map((id) => ({ kind: 'workstream', id }))
+    }
   } catch {
     // Malformed/error JSON (e.g. a tool refusal or error result) -- not a
     // created record.
   }
-  return null
+  return []
 }

@@ -94,8 +94,7 @@ export async function toDisplayMessages(
 
     if (row.role === 'tool') {
       if (row.tool_name && row.content) {
-        const ref = extractCreatedRecordRef(row.tool_name, row.content)
-        if (ref) pendingCreatedRefs.push(ref)
+        pendingCreatedRefs.push(...extractCreatedRecordRef(row.tool_name, row.content))
         if (row.tool_name.startsWith(GATEWAY_TOOL_PREFIX)) {
           try {
             const parsed = JSON.parse(row.content) as { status?: string; invocationId?: string }

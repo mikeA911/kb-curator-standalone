@@ -579,7 +579,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </section>
 
       {ontologyMapLayout.nodes.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section id="ontology-map" className="flex flex-col gap-3 scroll-mt-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Ontology Map</h2>
           <p className="text-xs text-zinc-500">
             This project&apos;s domain objects and workstreams -- their nesting, pipeline order, and which objects
