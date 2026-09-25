@@ -1088,6 +1088,9 @@ export interface WorkstreamDeliverable {
   completed: boolean
 }
 
+export type WorkstreamLifecycleStage = 'presales' | 'deployment' | 'management_maintenance'
+export type WorkstreamOperationalStatus = 'open' | 'concluded'
+
 export interface ProjectWorkstream {
   id: string
   project_id: string
@@ -1107,6 +1110,61 @@ export interface ProjectWorkstream {
   assistant_conversation_id: string | null
   created_at: string
   updated_at: string
+  // Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md). parent_
+  // workstream_id nests a granular task under a broader interface-level
+  // workstream -- self-referencing, cycle-guarded by a DB trigger
+  // (prevent_workstream_cycle), not declaratively enforceable. lifecycle_
+  // stage is the commercial/engagement axis, a different concern than
+  // `status` above (which tracks draft/active/completed/archived).
+  parent_workstream_id: string | null
+  lifecycle_stage: WorkstreamLifecycleStage | null
+  operational_status: WorkstreamOperationalStatus
+  // Postgres interval comes back through supabase-js as a string (e.g. "3 days").
+  planned_duration: string | null
+  actual_duration: string | null
+}
+
+export type WorkstreamObjectAccessMode = 'reads' | 'writes' | 'creates'
+
+// Per-project domain-object ontology -- a self-referencing tree of the
+// domain object TYPES that matter for this specific builder's business
+// (e.g. Plane/Route for an airline client), not instances of those types
+// and not a platform-wide taxonomy. See 20260925100001_project_objects_and_
+// workstream_structure.sql.
+export interface ProjectObject {
+  id: string
+  project_id: string
+  parent_object_id: string | null
+  name: string
+  slug: string
+  description: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Which objects a workstream reads/writes/creates -- one row per
+// (workstream_id, object_id) pair with an access_modes array, reusing the
+// repository_scope text[] precedent on ProjectWorkstream itself rather than
+// one row per relation type.
+export interface WorkstreamObjectLink {
+  id: string
+  workstream_id: string
+  object_id: string
+  access_modes: WorkstreamObjectAccessMode[]
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Pipeline ordering between workstreams -- a DAG (a workstream can have
+// multiple upstream/downstream neighbors), not a simple tree.
+export interface WorkstreamFlowEdge {
+  id: string
+  upstream_workstream_id: string
+  downstream_workstream_id: string
+  created_by: string | null
+  created_at: string
 }
 
 export type ArtifactType =
@@ -1617,6 +1675,10 @@ export interface EvalRun {
   error_message: string | null
   created_by: string | null
   created_at: string
+  // Builder Ontology, Part A: connects a run back to the Workstream it was
+  // evaluating, for the Evals-section workstream list (docs/kbs-ontology-
+  // dev-req-3.md §9) and the workstream-clone comparison view (§11/Part B).
+  workstream_id: string | null
 }
 
 export interface EvalError {
@@ -2089,7 +2151,7 @@ export type EvalDatasetUpdate = Partial<Omit<EvalDataset, 'id' | 'created_at'>>
 export type EvalCaseInsert = Omit<EvalCase, 'id' | 'created_at' | 'updated_at'>
 export type EvalCaseUpdate = Partial<Omit<EvalCase, 'id' | 'dataset_id' | 'created_at'>>
 
-export type EvalRunInsert = Omit<EvalRun, 'id' | 'created_at'>
+export type EvalRunInsert = Omit<EvalRun, 'id' | 'created_at' | 'workstream_id'> & Partial<Pick<EvalRun, 'workstream_id'>>
 export type EvalRunUpdate = Partial<Omit<EvalRun, 'id' | 'dataset_id' | 'created_at'>>
 
 export type EvalResultInsert = Omit<EvalResult, 'id' | 'created_at'>
@@ -2328,10 +2390,19 @@ export type RoadmapItemUpdate = Partial<Omit<RoadmapItem, 'id' | 'item_ref' | 'c
 
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
-  'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'
+  'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status'
 > &
-  Partial<Pick<ProjectWorkstream, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id'>>
+  Partial<Pick<ProjectWorkstream, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status'>>
 export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
+
+export type ProjectObjectInsert = Omit<ProjectObject, 'id' | 'created_at' | 'updated_at'>
+export type ProjectObjectUpdate = Partial<Omit<ProjectObject, 'id' | 'project_id' | 'created_at'>>
+
+export type WorkstreamObjectLinkInsert = Omit<WorkstreamObjectLink, 'id' | 'created_at' | 'updated_at'>
+export type WorkstreamObjectLinkUpdate = Partial<Omit<WorkstreamObjectLink, 'id' | 'workstream_id' | 'object_id' | 'created_at'>>
+
+export type WorkstreamFlowEdgeInsert = Omit<WorkstreamFlowEdge, 'id' | 'created_at'>
+export type WorkstreamFlowEdgeUpdate = never
 
 // Every descriptive field stays immutable (still an evidence trail) -- OL-010
 // added exactly one narrow update path, reviewArtifact(), which only ever
@@ -2602,6 +2673,14 @@ export interface Database {
       }
       roadmap_items: { Row: RoadmapItem; Insert: RoadmapItemInsert; Update: RoadmapItemUpdate; Relationships: [] }
       project_workstreams: { Row: ProjectWorkstream; Insert: ProjectWorkstreamInsert; Update: ProjectWorkstreamUpdate; Relationships: [] }
+      project_objects: { Row: ProjectObject; Insert: ProjectObjectInsert; Update: ProjectObjectUpdate; Relationships: [] }
+      workstream_object_links: {
+        Row: WorkstreamObjectLink
+        Insert: WorkstreamObjectLinkInsert
+        Update: WorkstreamObjectLinkUpdate
+        Relationships: []
+      }
+      workstream_flow: { Row: WorkstreamFlowEdge; Insert: WorkstreamFlowEdgeInsert; Update: WorkstreamFlowEdgeUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: WorkstreamArtifactUpdate; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
       system_assessment_versions: { Row: SystemAssessmentVersion; Insert: SystemAssessmentVersionInsert; Update: Partial<SystemAssessmentVersion>; Relationships: [] }

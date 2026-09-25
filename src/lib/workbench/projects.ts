@@ -10,11 +10,42 @@ import type {
   PublicProjectProfile,
   PortfolioCategory,
   ProjectDiscoverability,
+  WorkstreamLifecycleStage,
 } from '@/types/database'
 import { ProjectValidationError } from '@/lib/projects/errors'
 import { requireActiveKnowledgeBase } from '@/lib/knowledge-bases'
 import { env } from '@/lib/env'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
+
+// Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md): a wizard-staged
+// object/workstream tree has parent->child pointers the wizard only knows as
+// client-generated tempIds -- nothing has a real DB id until it's inserted,
+// so a single bulk insert can't satisfy a child's FK to a parent that
+// doesn't exist yet. Inserts one "level" at a time -- every item whose
+// parent is null or already resolved -- capturing Supabase's returned ids to
+// map tempId -> real id for the next level. Throws if a level makes no
+// progress (a cycle or a dangling parentTempId in the staged data).
+async function insertStagedTree<T extends { tempId: string; parentTempId: string | null }>(
+  supabase: WorkbenchCallerContext['supabase'],
+  table: string,
+  items: T[],
+  toRow: (item: T, resolvedParentId: string | null) => Record<string, unknown>
+): Promise<Map<string, string>> {
+  const idByTempId = new Map<string, string>()
+  let pending = items
+  while (pending.length > 0) {
+    const ready = pending.filter((item) => item.parentTempId === null || idByTempId.has(item.parentTempId))
+    if (ready.length === 0) {
+      throw new ProjectValidationError(`Invalid ${table} hierarchy: a parent reference is missing or forms a cycle`)
+    }
+    const rows = ready.map((item) => toRow(item, item.parentTempId ? (idByTempId.get(item.parentTempId) ?? null) : null))
+    const { data, error } = await supabase.from(table).insert(rows).select('id')
+    if (error || !data) throw error ?? new ProjectValidationError(`Failed to create ${table}`)
+    ready.forEach((item, i) => idByTempId.set(item.tempId, data[i].id))
+    pending = pending.filter((item) => !ready.includes(item))
+  }
+  return idByTempId
+}
 
 // profiles RLS (profiles_select_own_or_staff) only lets a caller see their
 // own row or staff see everyone -- a plain consultant creating/managing a
@@ -57,6 +88,19 @@ export async function createProject(
     // member's email, or null for an intentionally unassigned "Authority
     // needed" gap -- never a fabricated identity.
     approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
+    // Builder Ontology, Part A: staged from the wizard's "Domain objects &
+    // workstreams" step, single-shot Ember-suggested or hand-entered, fully
+    // editable before this call -- nothing is written until here. Items
+    // reference each other by client-generated tempId (see insertStagedTree).
+    projectObjects?: { tempId: string; parentTempId: string | null; name: string; slug: string; description?: string }[]
+    workstreams?: {
+      tempId: string
+      parentTempId: string | null
+      name: string
+      slug: string
+      goal?: string
+      lifecycleStage?: WorkstreamLifecycleStage
+    }[]
   }
 ) {
   const { user, profile, supabase } = ctx
@@ -98,6 +142,37 @@ export async function createProject(
     .single()
   if (error || !project) throw error ?? new Error('Failed to create project')
   await logStatusChange(project.id, null, 'draft', user.id)
+
+  // No separate role/cycle preflight needed here -- the caller is always the
+  // brand-new project's owner (create_owner_membership's trigger already
+  // fired on the projects insert immediately above), and both trees are
+  // built fresh from null roots, so there's no pre-existing cycle to guard
+  // against; insertStagedTree's own "no progress" check already catches a
+  // malformed staged tree.
+  if (input.projectObjects && input.projectObjects.length > 0) {
+    await insertStagedTree(supabase, 'project_objects', input.projectObjects, (item, parentId) => ({
+      project_id: project.id,
+      parent_object_id: parentId,
+      name: item.name,
+      slug: item.slug,
+      description: item.description || null,
+      created_by: user.id,
+    }))
+  }
+  if (input.workstreams && input.workstreams.length > 0) {
+    await insertStagedTree(supabase, 'project_workstreams', input.workstreams, (item, parentId) => ({
+      project_id: project.id,
+      parent_workstream_id: parentId,
+      name: item.name,
+      slug: item.slug,
+      status: 'draft',
+      repository_scope: [],
+      deliverables: [],
+      goal: item.goal || null,
+      lifecycle_stage: item.lifecycleStage || null,
+      created_by: user.id,
+    }))
+  }
 
   if (input.knowledgeBaseId) {
     await supabase

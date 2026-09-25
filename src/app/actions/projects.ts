@@ -3,7 +3,17 @@
 import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/projects'
-import type { ApprovalType, ProjectRole, ProjectType, ProjectMemberStatus, PublicProjectProfile, PortfolioCategory, ProjectDiscoverability } from '@/types/database'
+import { suggestProjectOntology } from '@/lib/workbench/project-ontology-suggestions'
+import type {
+  ApprovalType,
+  ProjectRole,
+  ProjectType,
+  ProjectMemberStatus,
+  PublicProjectProfile,
+  PortfolioCategory,
+  ProjectDiscoverability,
+  WorkstreamLifecycleStage,
+} from '@/types/database'
 
 export async function createProjectAction(input: {
   name: string
@@ -14,11 +24,29 @@ export async function createProjectAction(input: {
   evalDatasetId: string | null
   members: { email: string; role: ProjectRole }[]
   approvals?: { approvalType: ApprovalType; requirementStatus: 'required' | 'optional'; assigneeEmail: string | null }[]
+  projectObjects?: { tempId: string; parentTempId: string | null; name: string; slug: string; description?: string }[]
+  workstreams?: {
+    tempId: string
+    parentTempId: string | null
+    name: string
+    slug: string
+    goal?: string
+    lifecycleStage?: WorkstreamLifecycleStage
+  }[]
 }) {
   const ctx = await requireUser()
   const result = await workbench.createProject(ctx, input)
   revalidatePath('/projects')
   return { projectId: result.projectId }
+}
+
+// Builder Ontology, Part A: a one-shot "Ask Ember to suggest" call from the
+// wizard's own "Domain objects & workstreams" step -- not a chat tool call,
+// no confirmation gate needed beyond the wizard's own fully-editable staged
+// state (see suggestProjectOntology's own comment for why).
+export async function suggestProjectOntologyAction(input: { projectType: ProjectType; objective: string; details: Record<string, string> }) {
+  const ctx = await requireUser()
+  return suggestProjectOntology(ctx, input)
 }
 
 export async function attachKnowledgeBaseAction(projectId: string, knowledgeBaseId: string) {

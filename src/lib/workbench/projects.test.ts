@@ -304,6 +304,95 @@ describe('createAndAddProjectMember', () => {
   })
 })
 
+// Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md): staged
+// project_objects/project_workstreams trees reference each other by
+// client-generated tempId, not a real DB id -- insertStagedTree resolves
+// them level by level (parents before children).
+describe('createProject -- Builder Ontology staged trees (insertStagedTree)', () => {
+  beforeEach(() => {
+    productModeMock.mockReturnValue('enterprise')
+  })
+
+  it('inserts project_objects parent-before-child, resolving a child parent_object_id to the parent\'s real returned id, not its tempId', async () => {
+    const supabase = createFakeSupabase({
+      projects: [{ data: { id: 'project-1' }, error: null }],
+      project_objects: [
+        { data: [{ id: 'obj-real-1' }], error: null }, // level 1: the root
+        { data: [{ id: 'obj-real-2' }], error: null }, // level 2: the child
+      ],
+    })
+
+    await createProject(ctxWith(supabase), {
+      name: 'Riverbank Monitoring',
+      projectType: 'consulting',
+      objective: '',
+      details: {},
+      knowledgeBaseId: null,
+      evalDatasetId: null,
+      members: [],
+      projectObjects: [
+        { tempId: 'o1', parentTempId: null, name: 'Sensor', slug: 'sensor' },
+        { tempId: 'o2', parentTempId: 'o1', name: 'AnomalyEvent', slug: 'anomaly-event' },
+      ],
+    })
+
+    const inserts = supabase._calls.filter((c) => c.table === 'project_objects' && c.method === 'insert')
+    expect(inserts).toHaveLength(2)
+    expect(inserts[0].args).toEqual([expect.objectContaining({ name: 'Sensor', parent_object_id: null })])
+    expect(inserts[1].args).toEqual([expect.objectContaining({ name: 'AnomalyEvent', parent_object_id: 'obj-real-1' })])
+  })
+
+  it('inserts project_workstreams parent-before-child, resolving a child parent_workstream_id to the parent\'s real returned id', async () => {
+    const supabase = createFakeSupabase({
+      projects: [{ data: { id: 'project-1' }, error: null }],
+      project_workstreams: [
+        { data: [{ id: 'ws-real-1' }], error: null },
+        { data: [{ id: 'ws-real-2' }], error: null },
+      ],
+    })
+
+    await createProject(ctxWith(supabase), {
+      name: 'Sandz-KabatOne',
+      projectType: 'consulting',
+      objective: '',
+      details: {},
+      knowledgeBaseId: null,
+      evalDatasetId: null,
+      members: [],
+      workstreams: [
+        { tempId: 'w1', parentTempId: null, name: 'Sandz-KabatOne Interface', slug: 'sandz-kabatone-interface' },
+        { tempId: 'w2', parentTempId: 'w1', name: 'GetTestDataForTraining', slug: 'get-test-data-for-training' },
+      ],
+    })
+
+    const inserts = supabase._calls.filter((c) => c.table === 'project_workstreams' && c.method === 'insert')
+    expect(inserts).toHaveLength(2)
+    expect(inserts[0].args).toEqual([expect.objectContaining({ name: 'Sandz-KabatOne Interface', parent_workstream_id: null })])
+    expect(inserts[1].args).toEqual([expect.objectContaining({ name: 'GetTestDataForTraining', parent_workstream_id: 'ws-real-1' })])
+  })
+
+  it('throws before any row is written when a staged tree has a dangling/cyclic parentTempId', async () => {
+    const supabase = createFakeSupabase({
+      projects: [{ data: { id: 'project-1' }, error: null }],
+    })
+
+    await expect(
+      createProject(ctxWith(supabase), {
+        name: 'Broken Tree',
+        projectType: 'consulting',
+        objective: '',
+        details: {},
+        knowledgeBaseId: null,
+        evalDatasetId: null,
+        members: [],
+        projectObjects: [{ tempId: 'o1', parentTempId: 'does-not-exist', name: 'Orphan', slug: 'orphan' }],
+      })
+    ).rejects.toThrow('Invalid project_objects hierarchy')
+
+    expect(supabase._calls.find((c) => c.table === 'project_objects' && c.method === 'insert')).toBeUndefined()
+  })
+})
+
 // 2026-09-04: the Sandz Pilot Meeting Brief's onboarding pattern calls for
 // a per-project starter prompt Ember offers -- deliberately curator-
 // inclusive (owner/curator/admin), not projects_update_managers' owner-only

@@ -2,8 +2,32 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ApprovalType, ProjectRole, ProjectType } from '@/types/database'
-import { createProjectAction } from '@/app/actions/projects'
+import type { ApprovalType, ProjectRole, ProjectType, WorkstreamLifecycleStage } from '@/types/database'
+import { createProjectAction, suggestProjectOntologyAction } from '@/app/actions/projects'
+
+function slugify(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
+const LIFECYCLE_STAGE_LABELS: Record<WorkstreamLifecycleStage, string> = {
+  presales: 'Presales',
+  deployment: 'Deployment',
+  management_maintenance: 'Management & Maintenance',
+}
+
+const WIZARD_STEPS = [
+  'What are you doing?',
+  'Define the problem',
+  'Domain objects & workstreams',
+  'Knowledge scope',
+  'Evaluation',
+  'Team',
+  'Governance & Approvals',
+]
 
 const TEAM_ROLES: ProjectRole[] = ['curator', 'consultant', 'viewer']
 
@@ -52,6 +76,24 @@ interface Option {
   label: string
 }
 
+// Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md): staged items
+// reference each other by a client-generated tempId, not a real DB id --
+// nothing has one until createProject's own insertStagedTree resolves them
+// on submit.
+interface StagedNode {
+  tempId: string
+  parentTempId: string | null
+  name: string
+  description: string
+}
+interface StagedWorkstream {
+  tempId: string
+  parentTempId: string | null
+  name: string
+  goal: string
+  lifecycleStage: WorkstreamLifecycleStage | ''
+}
+
 export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases: Option[]; evalDatasets: Option[] }) {
   const router = useRouter()
   const [step, setStep] = useState(1)
@@ -61,6 +103,21 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
   const [details, setDetails] = useState<Record<string, string>>({})
   const [knowledgeBaseId, setKnowledgeBaseId] = useState('')
   const [evalDatasetId, setEvalDatasetId] = useState('')
+
+  // Builder Ontology, Part A -- "Domain objects & workstreams" step (step 3).
+  // Fully editable local state; nothing writes to project_objects/
+  // project_workstreams until final submit (same "suggest then let the user
+  // edit" shape as the approvals step below).
+  const [projectObjects, setProjectObjects] = useState<StagedNode[]>([])
+  const [stagedWorkstreams, setStagedWorkstreams] = useState<StagedWorkstream[]>([])
+  const [objectName, setObjectName] = useState('')
+  const [objectParentTempId, setObjectParentTempId] = useState('')
+  const [objectDescription, setObjectDescription] = useState('')
+  const [workstreamName, setWorkstreamName] = useState('')
+  const [workstreamParentTempId, setWorkstreamParentTempId] = useState('')
+  const [workstreamGoal, setWorkstreamGoal] = useState('')
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestError, setSuggestError] = useState<string | null>(null)
   const [members, setMembers] = useState<{ email: string; role: ProjectRole }[]>([])
   const [memberEmail, setMemberEmail] = useState('')
   const [memberRole, setMemberRole] = useState<ProjectRole>('consultant')
@@ -106,6 +163,77 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
     setDetails((prev) => ({ ...prev, [key]: value }))
   }
 
+  function addProjectObject() {
+    if (!objectName.trim()) return
+    setProjectObjects((prev) => [
+      ...prev,
+      { tempId: crypto.randomUUID(), parentTempId: objectParentTempId || null, name: objectName.trim(), description: objectDescription.trim() },
+    ])
+    setObjectName('')
+    setObjectParentTempId('')
+    setObjectDescription('')
+  }
+
+  // Removing a staged node also clears any staged children's parentTempId
+  // back to null (top-level), rather than leaving a dangling reference.
+  function removeProjectObject(tempId: string) {
+    setProjectObjects((prev) => prev.filter((n) => n.tempId !== tempId).map((n) => (n.parentTempId === tempId ? { ...n, parentTempId: null } : n)))
+  }
+
+  function addStagedWorkstream() {
+    if (!workstreamName.trim()) return
+    setStagedWorkstreams((prev) => [
+      ...prev,
+      {
+        tempId: crypto.randomUUID(),
+        parentTempId: workstreamParentTempId || null,
+        name: workstreamName.trim(),
+        goal: workstreamGoal.trim(),
+        lifecycleStage: '',
+      },
+    ])
+    setWorkstreamName('')
+    setWorkstreamParentTempId('')
+    setWorkstreamGoal('')
+  }
+
+  function removeStagedWorkstream(tempId: string) {
+    setStagedWorkstreams((prev) =>
+      prev.filter((w) => w.tempId !== tempId).map((w) => (w.parentTempId === tempId ? { ...w, parentTempId: null } : w))
+    )
+  }
+
+  // Single-shot suggestion, appended into the same editable state as the
+  // manual add-forms above -- no separate "accept" step, nothing written to
+  // the DB here. Deliberately skips iterative clarifying Q&A for v1; the
+  // user resolves ambiguity by hand in this same list.
+  async function askEmberToSuggest() {
+    if (!projectType) return
+    setSuggesting(true)
+    setSuggestError(null)
+    try {
+      const result = await suggestProjectOntologyAction({ projectType, objective, details })
+      setProjectObjects((prev) => [
+        ...prev,
+        ...result.objects.map((o) => ({ tempId: o.tempId, parentTempId: o.parentTempId ?? null, name: o.name, description: o.description })),
+      ])
+      setStagedWorkstreams((prev) => [
+        ...prev,
+        ...result.workstreams.map((w) => ({
+          tempId: w.tempId,
+          parentTempId: w.parentTempId ?? null,
+          name: w.name,
+          goal: w.goal,
+          lifecycleStage: '' as const,
+        })),
+      ])
+    } catch (err) {
+      setSuggestError(err instanceof Error ? err.message : 'Failed to get suggestions')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   async function handleSubmit() {
     if (!projectType || !name) return
     setSubmitting(true)
@@ -124,6 +252,21 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
           requirementStatus: a.requirementStatus,
           assigneeEmail: a.assigneeEmail || null,
         })),
+        projectObjects: projectObjects.map((o) => ({
+          tempId: o.tempId,
+          parentTempId: o.parentTempId,
+          name: o.name,
+          slug: slugify(o.name),
+          description: o.description || undefined,
+        })),
+        workstreams: stagedWorkstreams.map((w) => ({
+          tempId: w.tempId,
+          parentTempId: w.parentTempId,
+          name: w.name,
+          slug: slugify(w.name),
+          goal: w.goal || undefined,
+          lifecycleStage: w.lifecycleStage || undefined,
+        })),
       })
       router.push(`/projects/${result.projectId}`)
     } catch (err) {
@@ -135,7 +278,7 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
   return (
     <div className="flex max-w-xl flex-col gap-6">
       <div className="flex gap-1 text-xs text-zinc-500">
-        {['What are you doing?', 'Define the problem', 'Knowledge scope', 'Evaluation', 'Team', 'Governance & Approvals'].map((label, i) => (
+        {WIZARD_STEPS.map((label, i) => (
           <div key={label} className={`flex-1 border-b-2 pb-2 ${step === i + 1 ? 'border-zinc-900 font-medium text-zinc-900' : 'border-zinc-200'}`}>
             {i + 1}. {label}
           </div>
@@ -223,6 +366,142 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
 
       {step === 3 && (
         <div className="flex flex-col gap-4">
+          <p className="text-sm text-zinc-600">
+            The domain object types and starting workstreams for this project -- e.g. &ldquo;Plane&rdquo;/&ldquo;Route&rdquo; for an
+            airline client, or &ldquo;Sensor&rdquo;/&ldquo;AnomalyEvent&rdquo; for a monitoring client. Optional -- skip if it doesn&apos;t
+            fit this project.
+          </p>
+          <button
+            type="button"
+            disabled={suggesting}
+            onClick={askEmberToSuggest}
+            className="self-start rounded border border-zinc-300 px-4 py-2 text-sm disabled:opacity-50"
+          >
+            {suggesting ? 'Asking Ember…' : 'Ask Ember to suggest'}
+          </button>
+          {suggestError && <p className="text-sm text-red-600">{suggestError}</p>}
+
+          <div>
+            <span className="text-sm font-medium">Objects</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <input
+                value={objectName}
+                onChange={(e) => setObjectName(e.target.value)}
+                placeholder="Name (e.g. Sensor)"
+                className="rounded border border-zinc-300 px-3 py-2 text-sm"
+              />
+              <select value={objectParentTempId} onChange={(e) => setObjectParentTempId(e.target.value)} className="rounded border border-zinc-300 px-3 py-2 text-sm">
+                <option value="">No parent (top-level)</option>
+                {projectObjects.map((o) => (
+                  <option key={o.tempId} value={o.tempId}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={objectDescription}
+                onChange={(e) => setObjectDescription(e.target.value)}
+                placeholder="Description (optional)"
+                className="rounded border border-zinc-300 px-3 py-2 text-sm"
+              />
+              <button type="button" onClick={addProjectObject} className="rounded border border-zinc-300 px-4 py-2 text-sm">
+                Add
+              </button>
+            </div>
+            {projectObjects.length > 0 && (
+              <ul className="mt-2 flex flex-col gap-1 text-sm">
+                {projectObjects.map((o) => (
+                  <li key={o.tempId} className="flex items-center justify-between rounded border border-zinc-200 px-3 py-1.5">
+                    <span>
+                      {o.parentTempId && <span className="text-zinc-400">↳ </span>}
+                      {o.name}
+                      {o.description && <span className="text-zinc-500"> — {o.description}</span>}
+                    </span>
+                    <button type="button" onClick={() => removeProjectObject(o.tempId)} className="text-xs text-red-600 underline">
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div>
+            <span className="text-sm font-medium">Workstreams</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <input
+                value={workstreamName}
+                onChange={(e) => setWorkstreamName(e.target.value)}
+                placeholder="Name (e.g. Edge Inference)"
+                className="rounded border border-zinc-300 px-3 py-2 text-sm"
+              />
+              <select
+                value={workstreamParentTempId}
+                onChange={(e) => setWorkstreamParentTempId(e.target.value)}
+                className="rounded border border-zinc-300 px-3 py-2 text-sm"
+              >
+                <option value="">No parent (top-level)</option>
+                {stagedWorkstreams.map((w) => (
+                  <option key={w.tempId} value={w.tempId}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={workstreamGoal}
+                onChange={(e) => setWorkstreamGoal(e.target.value)}
+                placeholder="Goal (optional)"
+                className="rounded border border-zinc-300 px-3 py-2 text-sm"
+              />
+              <button type="button" onClick={addStagedWorkstream} className="rounded border border-zinc-300 px-4 py-2 text-sm">
+                Add
+              </button>
+            </div>
+            {stagedWorkstreams.length > 0 && (
+              <ul className="mt-2 flex flex-col gap-1 text-sm">
+                {stagedWorkstreams.map((w) => (
+                  <li key={w.tempId} className="flex items-center justify-between rounded border border-zinc-200 px-3 py-1.5">
+                    <span>
+                      {w.parentTempId && <span className="text-zinc-400">↳ </span>}
+                      {w.name}
+                      {w.goal && <span className="text-zinc-500"> — {w.goal}</span>}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={w.lifecycleStage}
+                        onChange={(e) =>
+                          setStagedWorkstreams((prev) =>
+                            prev.map((x) => (x.tempId === w.tempId ? { ...x, lifecycleStage: e.target.value as WorkstreamLifecycleStage | '' } : x))
+                          )
+                        }
+                        className="rounded border border-zinc-300 px-1.5 py-1 text-xs"
+                      >
+                        <option value="">Lifecycle stage…</option>
+                        {(Object.keys(LIFECYCLE_STAGE_LABELS) as WorkstreamLifecycleStage[]).map((s) => (
+                          <option key={s} value={s}>
+                            {LIFECYCLE_STAGE_LABELS[s]}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" onClick={() => removeStagedWorkstream(w.tempId)} className="text-xs text-red-600 underline">
+                        Remove
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => setStep(2)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(4)} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">Next</button>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div className="flex flex-col gap-4">
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked readOnly />
             Use Platform Knowledge (AI Engineering Wiki)
@@ -237,13 +516,13 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
             </select>
           </label>
           <div className="flex gap-2">
-            <button onClick={() => setStep(2)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
-            <button onClick={() => setStep(4)} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">Next</button>
+            <button onClick={() => setStep(3)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(5)} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">Next</button>
           </div>
         </div>
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <div className="flex flex-col gap-4">
           <label className="flex flex-col gap-1">
             <span className="text-sm font-medium">Benchmark (optional)</span>
@@ -255,13 +534,13 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
             </select>
           </label>
           <div className="flex gap-2">
-            <button onClick={() => setStep(3)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
-            <button onClick={() => setStep(5)} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">Next</button>
+            <button onClick={() => setStep(4)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(6)} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white">Next</button>
           </div>
         </div>
       )}
 
-      {step === 5 && (
+      {step === 6 && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-zinc-600">You become the project Owner automatically. Add anyone else who needs access.</p>
           <div className="flex gap-2">
@@ -301,11 +580,11 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
             </ul>
           )}
           <div className="flex gap-2">
-            <button onClick={() => setStep(4)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(5)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
             <button
               onClick={() => {
                 seedApprovalsIfNeeded()
-                setStep(6)
+                setStep(7)
               }}
               className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
             >
@@ -315,7 +594,7 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
         </div>
       )}
 
-      {step === 6 && (
+      {step === 7 && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-zinc-600">
             Based on the project type, these approvals are likely relevant. Remove any that don&apos;t apply, or add more. Assigning an
@@ -385,7 +664,7 @@ export function ProjectWizard({ knowledgeBases, evalDatasets }: { knowledgeBases
 
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2">
-            <button onClick={() => setStep(5)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
+            <button onClick={() => setStep(6)} className="rounded border border-zinc-300 px-4 py-2 text-sm">Back</button>
             <button disabled={submitting} onClick={handleSubmit} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               {submitting ? 'Creating…' : 'Create project'}
             </button>
