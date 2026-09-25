@@ -25,8 +25,22 @@ export {
   resolveChatProvider,
   listChatCapableModels,
   listStructuredOutputCapableModels,
+  instantiateProvider,
 } from './registry'
 export type { ChatProviderInfo, ChatModelOption } from './registry'
 
 export { AISensitivityError, SENSITIVITY_RANK, getEffectiveSensitivity, assertProviderEligible, evaluatePolicy, withPolicyGate } from './sensitivity'
 export type { ContextManifest, ContextManifestEntry, PolicySubject, PolicyDecision } from './sensitivity'
+
+export { withLogging } from './logging'
+export type { LogContext } from './logging'
+
+export {
+  BuilderAllowanceError,
+  computeCost,
+  getBuilderSpendSummary,
+  withAllowanceGate,
+  grantBuilderCredit,
+  setBuilderAllowance,
+} from './metering'
+export type { BuilderSpendSummary, SetBuilderAllowanceInput } from './metering'

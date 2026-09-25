@@ -1,7 +1,13 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ProfileForm } from '@/components/ProfileForm'
+import { BuilderLlmCredentialForm } from '@/components/profile/BuilderLlmCredentialForm'
+import { getBuilderSpendSummary } from '@/lib/ai'
+import { getBuilderLlmCredentialStatus } from '@/lib/workbench/builder-llm-credentials'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
+import { env } from '@/lib/env'
 import type { Profile, UserRole } from '@/types/database'
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -22,6 +28,20 @@ export default async function ProfilePage() {
   const { data: profileRow } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profileRow) redirect('/login')
   const profile = profileRow as Profile
+
+  // Builder AI Usage Metering + BYOLLM: only ever relevant to a builder
+  // (consultant role, builder-mode deployment) -- an Enterprise account or
+  // platform staff never sees either card.
+  const isBuilder = env.productMode() === 'builder' && profile.role === 'consultant'
+  let spendSummary: Awaited<ReturnType<typeof getBuilderSpendSummary>> | null = null
+  let llmCredentialStatus: Awaited<ReturnType<typeof getBuilderLlmCredentialStatus>> = null
+  if (isBuilder) {
+    const ctx = { user, profile, supabase } as unknown as WorkbenchCallerContext
+    ;[spendSummary, llmCredentialStatus] = await Promise.all([
+      getBuilderSpendSummary(createAdminClient(), user.id),
+      getBuilderLlmCredentialStatus(ctx),
+    ])
+  }
 
   return (
     <div className="flex max-w-lg flex-col gap-8">
@@ -62,6 +82,34 @@ export default async function ProfilePage() {
             Open my journal
           </Link>
         </div>
+      )}
+
+      {isBuilder && spendSummary && (
+        <div className="rounded border border-zinc-200 bg-white p-4 text-sm">
+          <span className="font-medium">AI usage</span>
+          <p className="mt-1 text-zinc-500">
+            You have <span className="font-medium text-zinc-700">${Math.max(spendSummary.remainingUsd, 0).toFixed(2)}</span> of AI credit
+            remaining this month. {spendSummary.remainingUsd <= 0 && spendSummary.stopAtAllowance
+              ? 'Ember replies are paused until your operator adds more credit, or you configure your own LLM below.'
+              : 'Ask your operator if you need more.'}
+          </p>
+        </div>
+      )}
+
+      {isBuilder && (
+        <BuilderLlmCredentialForm
+          initialStatus={
+            llmCredentialStatus
+              ? {
+                  configured: true,
+                  providerType: llmCredentialStatus.providerType,
+                  baseUrl: llmCredentialStatus.baseUrl,
+                  modelId: llmCredentialStatus.modelId,
+                  isActive: llmCredentialStatus.isActive,
+                }
+              : null
+          }
+        />
       )}
 
       {profile.role === 'admin' && (

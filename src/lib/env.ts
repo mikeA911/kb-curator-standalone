@@ -36,4 +36,11 @@ export const env = {
   // runs in exactly one mode for its whole lifetime; this is not a per-
   // request or per-user toggle.
   productMode: () => (optional('KB_SANDBOX_PRODUCT_MODE') === 'builder' ? 'builder' : 'enterprise') as 'enterprise' | 'builder',
+  // Builder AI Usage Metering + BYOLLM: encrypts a builder-supplied provider
+  // credential (builder_llm_credentials.encrypted_api_key) at rest -- the
+  // first real secret value this app stores. Optional because a deployment
+  // that never enables BYOLLM doesn't need it; src/lib/ai/credential-crypto.ts
+  // throws a clear error only when encryption/decryption is actually attempted
+  // without it set.
+  builderCredentialKey: () => optional('BUILDER_CREDENTIAL_ENCRYPTION_KEY'),
 }
