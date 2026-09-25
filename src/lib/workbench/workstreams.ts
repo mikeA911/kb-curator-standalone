@@ -1,9 +1,36 @@
 import 'server-only'
 import { AuthError } from '@/lib/auth'
 import { ProjectValidationError } from '@/lib/projects/errors'
-import type { WorkstreamDeliverable, ArtifactType, WorkstreamArtifactStatus } from '@/types/database'
+import type {
+  WorkstreamDeliverable,
+  ArtifactType,
+  WorkstreamArtifactStatus,
+  WorkstreamLifecycleStage,
+  WorkstreamOperationalStatus,
+} from '@/types/database'
 import { validateOpenApiContent } from './openapi-validation'
 import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
+
+// Friendly pre-check mirroring the DB trigger (prevent_workstream_cycle,
+// 20260925100001_project_objects_and_workstream_structure.sql) -- the
+// trigger is the real enforcement (fires for every writer); this just turns
+// a raw trigger exception into an actionable message before the round trip,
+// same defense-in-depth shape as this file's own OL-002 role preflight.
+async function assertNoWorkstreamCycle(ctx: WorkbenchCallerContext, candidateParentId: string, workstreamId: string | null) {
+  let cursorId: string | null = candidateParentId
+  const seen = new Set<string>()
+  while (cursorId) {
+    if (workstreamId && cursorId === workstreamId) throw new ProjectValidationError('That parent would create a cycle in the workstream tree')
+    if (seen.has(cursorId)) break
+    seen.add(cursorId)
+    const { data }: { data: { parent_workstream_id: string | null } | null } = await ctx.supabase
+      .from('project_workstreams')
+      .select('parent_workstream_id')
+      .eq('id', cursorId)
+      .maybeSingle()
+    cursorId = data?.parent_workstream_id ?? null
+  }
+}
 
 // A generic repo URL (or a local filesystem path) drifts or breaks -- a
 // PR/commit link is durable. This is the authoritative check; the form has
@@ -43,6 +70,12 @@ export async function createWorkstream(
     goal?: string
     guardrail?: string
     deliverables: string[]
+    // Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md).
+    parentWorkstreamId?: string | null
+    lifecycleStage?: WorkstreamLifecycleStage | null
+    operationalStatus?: WorkstreamOperationalStatus
+    plannedDuration?: string | null
+    actualDuration?: string | null
   }
 ) {
   const { profile, supabase } = ctx
@@ -59,6 +92,8 @@ export async function createWorkstream(
     }
   }
 
+  if (input.parentWorkstreamId) await assertNoWorkstreamCycle(ctx, input.parentWorkstreamId, null)
+
   const deliverables: WorkstreamDeliverable[] = input.deliverables.filter((label) => label.trim()).map((label) => ({ label, completed: false }))
 
   const { data, error } = await supabase
@@ -73,6 +108,11 @@ export async function createWorkstream(
       guardrail: input.guardrail || null,
       deliverables,
       created_by: profile.id,
+      parent_workstream_id: input.parentWorkstreamId || null,
+      lifecycle_stage: input.lifecycleStage || null,
+      operational_status: input.operationalStatus || 'open',
+      planned_duration: input.plannedDuration || null,
+      actual_duration: input.actualDuration || null,
     })
     .select('id')
     .single()

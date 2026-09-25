@@ -101,3 +101,55 @@ describe('createWorkstream -- permission preflight (OL-002 fix)', () => {
     expect(fakeSupabase._calls.find((c) => c.table === 'project_members')).toBeUndefined()
   })
 })
+
+// Builder Ontology, Part A (docs/kbs-ontology-dev-req-3.md): nesting +
+// lifecycle/duration fields, all optional, defaulting to the same values
+// createWorkstream already used before this pass.
+describe('createWorkstream -- Builder Ontology fields (Part A)', () => {
+  it('passes parent_workstream_id/lifecycle_stage/operational_status/durations through to the insert', async () => {
+    const fakeSupabase = createFakeSupabase({
+      project_members: [{ data: { role: 'owner' }, error: null }],
+      // First queued result is the cycle pre-check's own walk (assertNoWorkstreamCycle);
+      // a null parent_workstream_id ends the walk immediately (no cycle). The
+      // second is the actual insert.
+      project_workstreams: [
+        { data: null, error: null },
+        { data: { id: 'ws-2' }, error: null },
+      ],
+    })
+
+    await createWorkstream(ctxWithProfile(fakeSupabase, 'consultant'), {
+      ...baseWorkstreamInput,
+      parentWorkstreamId: 'ws-parent-1',
+      lifecycleStage: 'deployment',
+      operationalStatus: 'open',
+      plannedDuration: '1 week',
+      actualDuration: null,
+    })
+
+    const insert = fakeSupabase._calls.find((c) => c.table === 'project_workstreams' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({
+      parent_workstream_id: 'ws-parent-1',
+      lifecycle_stage: 'deployment',
+      operational_status: 'open',
+      planned_duration: '1 week',
+      actual_duration: null,
+    })
+  })
+
+  it('defaults to no parent, no lifecycle stage, and operational_status open when omitted', async () => {
+    const fakeSupabase = createFakeSupabase({
+      project_members: [{ data: { role: 'owner' }, error: null }],
+      project_workstreams: [{ data: { id: 'ws-3' }, error: null }],
+    })
+
+    await createWorkstream(ctxWithProfile(fakeSupabase, 'consultant'), baseWorkstreamInput)
+
+    const insert = fakeSupabase._calls.find((c) => c.table === 'project_workstreams' && c.method === 'insert')
+    expect(insert?.args).toMatchObject({
+      parent_workstream_id: null,
+      lifecycle_stage: null,
+      operational_status: 'open',
+    })
+  })
+})
