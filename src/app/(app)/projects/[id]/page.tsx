@@ -29,6 +29,7 @@ import { listDiscoverableProjects } from '@/lib/projects/directory'
 import { requireUser } from '@/lib/auth'
 import { listMyWorkingKnowledge, listSharedWorkingKnowledge } from '@/lib/projects/working-knowledge'
 import { WorkingKnowledgePanel } from '@/components/projects/WorkingKnowledgePanel'
+import { CloneProjectButton } from '@/components/projects/CloneProjectButton'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -215,6 +216,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     businessFunction: m.business_function,
   }))
 
+  // Builder Ontology, Part B: cheap provenance display -- only ever fetched
+  // for a genuinely cloned project, and only the name (same narrow-columns
+  // convention as every other cross-row display lookup on this page).
+  let clonedFromProjectName: string | null = null
+  if (project.cloned_from_project_id) {
+    const { data: source } = await supabase.from('projects').select('name').eq('id', project.cloned_from_project_id).maybeSingle()
+    clonedFromProjectName = source?.name ?? null
+  }
+
   const canManage = viewerProfile?.role === 'admin' || viewerMembership?.role === 'owner'
   // Workstreams are curator+ manageable, not just owner -- matches
   // project_workstreams_manage_curator's can_curate_project RLS bar exactly.
@@ -325,6 +335,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               <Link href={`/projects/${project.id}/publish`} className="text-sm underline">
                 Publish
               </Link>
+              <CloneProjectButton projectId={project.id} />
             </div>
           )}
           {project.visibility === 'public' && project.public_slug && (
@@ -340,6 +351,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <span className="text-zinc-300">·</span>
           <ProjectDiscoverabilitySelector projectId={project.id} discoverability={project.discoverability} canEdit={canCurateWorkstreams} />
         </div>
+        {clonedFromProjectName && (
+          <p className="mt-1 text-xs text-zinc-500">
+            Cloned from{' '}
+            <Link href={`/projects/${project.cloned_from_project_id}`} className="underline">
+              {clonedFromProjectName}
+            </Link>
+          </p>
+        )}
         {project.objective && <p className="mt-2 text-sm text-zinc-600">{project.objective}</p>}
         {Object.keys(project.details ?? {}).length > 0 && (
           <dl className="mt-3 flex flex-col gap-1 text-sm">

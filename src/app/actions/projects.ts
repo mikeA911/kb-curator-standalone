@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireUser, requireRole } from '@/lib/auth'
 import * as workbench from '@/lib/workbench/projects'
 import { suggestProjectOntology } from '@/lib/workbench/project-ontology-suggestions'
+import { cloneProject } from '@/lib/workbench/project-cloning'
 import type {
   ApprovalType,
   ProjectRole,
@@ -47,6 +48,17 @@ export async function createProjectAction(input: {
 export async function suggestProjectOntologyAction(input: { projectType: ProjectType; objective: string; details: Record<string, string> }) {
   const ctx = await requireUser()
   return suggestProjectOntology(ctx, input)
+}
+
+// Builder Ontology, Part B: duplicates a Project (its own project_objects/
+// project_workstreams trees, none of its run history) so a builder can
+// compare two options side by side. Same owner/curator/admin bar as every
+// other structural write in this file (cloneProject's own check).
+export async function cloneProjectAction(projectId: string) {
+  const ctx = await requireUser()
+  const result = await cloneProject(ctx, projectId)
+  revalidatePath('/projects')
+  return { projectId: result.projectId }
 }
 
 export async function attachKnowledgeBaseAction(projectId: string, knowledgeBaseId: string) {

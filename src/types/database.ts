@@ -781,6 +781,11 @@ export interface Project {
   assistant_conversation_id: string | null
   created_at: string
   updated_at: string
+  // Builder Ontology, Part B (docs/kbs-ontology-dev-req-3.md): set when this
+  // Project was created by cloneProject (project-cloning.ts), for
+  // side-by-side comparison of two options under otherwise-identical
+  // conditions. null for every ordinarily-created Project.
+  cloned_from_project_id: string | null
 }
 
 // Project role (owner/curator/consultant/viewer) is deliberately a separate
@@ -1122,6 +1127,11 @@ export interface ProjectWorkstream {
   // Postgres interval comes back through supabase-js as a string (e.g. "3 days").
   planned_duration: string | null
   actual_duration: string | null
+  // Builder Ontology, Part B: set when this Workstream was created by
+  // cloneWorkstream (project-cloning.ts) -- a same-project sibling subtree
+  // for comparison, sharing the project's project_objects but starting with
+  // its own fresh run history. null for every ordinarily-created Workstream.
+  cloned_from_workstream_id: string | null
 }
 
 export type WorkstreamObjectAccessMode = 'reads' | 'writes' | 'creates'
@@ -2180,6 +2190,7 @@ export type ProjectInsert = Omit<
   | 'created_via'
   | 'assistant_prompt_version'
   | 'assistant_conversation_id'
+  | 'cloned_from_project_id'
 > &
   Partial<
     Pick<
@@ -2197,6 +2208,7 @@ export type ProjectInsert = Omit<
       | 'created_via'
       | 'assistant_prompt_version'
       | 'assistant_conversation_id'
+      | 'cloned_from_project_id'
     >
   >
 export type ProjectUpdate = Partial<Omit<Project, 'id' | 'created_at'>>
@@ -2390,9 +2402,21 @@ export type RoadmapItemUpdate = Partial<Omit<RoadmapItem, 'id' | 'item_ref' | 'c
 
 export type ProjectWorkstreamInsert = Omit<
   ProjectWorkstream,
-  'id' | 'created_at' | 'updated_at' | 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'created_via'
+  | 'assistant_prompt_version'
+  | 'assistant_conversation_id'
+  | 'operational_status'
+  | 'cloned_from_workstream_id'
 > &
-  Partial<Pick<ProjectWorkstream, 'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status'>>
+  Partial<
+    Pick<
+      ProjectWorkstream,
+      'created_via' | 'assistant_prompt_version' | 'assistant_conversation_id' | 'operational_status' | 'cloned_from_workstream_id'
+    >
+  >
 export type ProjectWorkstreamUpdate = Partial<Omit<ProjectWorkstream, 'id' | 'project_id' | 'created_at'>>
 
 export type ProjectObjectInsert = Omit<ProjectObject, 'id' | 'created_at' | 'updated_at'>
