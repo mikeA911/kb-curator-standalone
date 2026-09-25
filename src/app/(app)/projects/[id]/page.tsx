@@ -30,6 +30,8 @@ import { requireUser } from '@/lib/auth'
 import { listMyWorkingKnowledge, listSharedWorkingKnowledge } from '@/lib/projects/working-knowledge'
 import { WorkingKnowledgePanel } from '@/components/projects/WorkingKnowledgePanel'
 import { CloneProjectButton } from '@/components/projects/CloneProjectButton'
+import { getOntologyMapData, computeOntologyMapLayout } from '@/lib/projects/ontology-map'
+import { OntologyMapDiagram } from '@/components/projects/OntologyMapDiagram'
 
 const TYPE_LABELS: Record<string, string> = {
   learning: 'Learning',
@@ -137,6 +139,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     { data: submittableArtifacts },
     { data: sourceSubmissions },
     { data: joinRequests },
+    ontologyMapData,
   ] = await Promise.all([
     listKnowledgeBasesForProject(supabase, id),
     supabase.from('eval_datasets').select('id, name, status').eq('project_id', id),
@@ -187,6 +190,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     // curate this project -- same ungated-fetch convention as
     // sourceSubmissions above.
     user ? supabase.from('project_join_requests').select('*').eq('project_id', id).order('created_at', { ascending: false }) : Promise.resolve({ data: null }),
+    getOntologyMapData(supabase, id),
   ])
   const statusHistoryActorIds = [...new Set((statusHistory ?? []).map((h) => h.actor_id).filter((x): x is string => !!x))]
   const { data: statusHistoryActors } =
@@ -310,6 +314,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       sourcesByKbId.set(source.knowledgeBaseId, [...(sourcesByKbId.get(source.knowledgeBaseId) ?? []), source])
     }
   }
+
+  const ontologyMapLayout = computeOntologyMapLayout(ontologyMapData)
 
   return (
     <div className="flex flex-col gap-8">
@@ -571,6 +577,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-zinc-500">No workstreams defined yet.</p>
         )}
       </section>
+
+      {ontologyMapLayout.nodes.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Ontology Map</h2>
+          <p className="text-xs text-zinc-500">
+            This project&apos;s domain objects and workstreams -- their nesting, pipeline order, and which objects
+            each workstream reads, writes, or creates.
+          </p>
+          <OntologyMapDiagram layout={ontologyMapLayout} projectId={project.id} />
+        </section>
+      )}
 
       {canCurateWorkstreams && pendingWorkstreamPromotions.length > 0 && (
         <section className="flex flex-col gap-3">
