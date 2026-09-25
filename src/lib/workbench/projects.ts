@@ -25,7 +25,9 @@ import { getActiveProjectRole, type WorkbenchCallerContext } from './context'
 // parent is null or already resolved -- capturing Supabase's returned ids to
 // map tempId -> real id for the next level. Throws if a level makes no
 // progress (a cycle or a dangling parentTempId in the staged data).
-async function insertStagedTree<T extends { tempId: string; parentTempId: string | null }>(
+// Exported for reuse by Part B's project-cloning.ts, which stages a deep
+// copy of an existing tree the same way (tempId = the source row's own id).
+export async function insertStagedTree<T extends { tempId: string; parentTempId: string | null }>(
   supabase: WorkbenchCallerContext['supabase'],
   table: string,
   items: T[],

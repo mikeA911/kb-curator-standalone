@@ -11,6 +11,7 @@ import { SystemUnderstandingCard } from '@/components/projects/SystemUnderstandi
 import { CopyArtifactButton } from '@/components/projects/CopyArtifactButton'
 import { ArtifactStatusBadge, ArtifactReviewActions } from '@/components/projects/ArtifactReviewActions'
 import { WorkstreamPromotionForm } from '@/components/projects/WorkstreamPromotionForm'
+import { CloneWorkstreamButton } from '@/components/projects/CloneWorkstreamButton'
 import { ShareBuilderUpdateForm, type ExistingBuilderUpdate } from '@/components/projects/ShareBuilderUpdateForm'
 import { Markdown } from '@/components/shared/Markdown'
 import { env } from '@/lib/env'
@@ -102,6 +103,18 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
       : null
   }
 
+  // Builder Ontology, Part B: cheap provenance display, same narrow-columns
+  // convention as the Project page's own clonedFromProjectName lookup.
+  let clonedFromWorkstreamName: string | null = null
+  if (workstream.cloned_from_workstream_id) {
+    const { data: source } = await supabase
+      .from('project_workstreams')
+      .select('name')
+      .eq('id', workstream.cloned_from_workstream_id)
+      .maybeSingle()
+    clonedFromWorkstreamName = source?.name ?? null
+  }
+
   const completedCount = workstream.deliverables.filter((d) => d.completed).length
 
   return (
@@ -110,13 +123,24 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
         <Link href={`/projects/${id}`} className="text-sm underline">
           &larr; {project.name}
         </Link>
-        <div className="mt-2 flex items-center gap-2">
-          <h1 className="text-xl font-semibold">{workstream.name}</h1>
-          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{workstream.status}</span>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">{workstream.name}</h1>
+            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{workstream.status}</span>
+          </div>
+          {canEdit && <CloneWorkstreamButton workstreamId={workstream.id} />}
         </div>
         <p className="mt-1 text-xs text-zinc-500">
           {completedCount}/{workstream.deliverables.length} deliverables complete
         </p>
+        {clonedFromWorkstreamName && (
+          <p className="mt-1 text-xs text-zinc-500">
+            Cloned from{' '}
+            <Link href={`/projects/${id}/workstreams/${workstream.cloned_from_workstream_id}`} className="underline">
+              {clonedFromWorkstreamName}
+            </Link>
+          </p>
+        )}
       </div>
 
       <WorkstreamSummaryForm workstreamId={workstream.id} summary={workstream.summary} canEdit={canEdit} />
