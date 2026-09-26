@@ -1,6 +1,6 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
+import type { Database, OntologyMapData } from '@/types/database'
 
 // Ontology Map: a visual node-link diagram of a Project's Builder Ontology
 // (Parts A-D) -- project_objects (domain-object tree), project_workstreams
@@ -8,13 +8,11 @@ import type { Database } from '@/types/database'
 // workstream_object_links connecting the two. Split into a data-fetch step
 // and a pure layout-computation step (no React, no DOM) so the layout math
 // is unit-testable on its own.
-
-export interface OntologyMapData {
-  objects: { id: string; name: string; parentId: string | null }[]
-  workstreams: { id: string; name: string; parentId: string | null }[]
-  flowEdges: { upstreamId: string; downstreamId: string }[]
-  linkEdges: { workstreamId: string; objectId: string; accessModes: string[] }[]
-}
+//
+// OntologyMapData itself is declared in src/types/database.ts (not here) so
+// PresentationSlide.diagramData (Workstream Presentation & Review) can
+// reference it without that leaf types file importing application code.
+export type { OntologyMapData }
 
 // project_objects/project_workstreams/workstream_flow/workstream_object_links
 // were all added by the Builder Ontology work this session -- a project
