@@ -29,6 +29,7 @@ describe('getNeedsAttention', () => {
     const supabase = createFakeSupabase({
       documents: [{ data: [{ id: 'd1' }], error: null }],
       eval_runs: [{ data: [{ id: 'r1' }, { id: 'r2' }], error: null }],
+      presentation_slide_comments: [{ data: [{ id: 'c1' }], error: null }],
     }) as never
 
     const result = await getNeedsAttention(supabase)
@@ -40,6 +41,7 @@ describe('getNeedsAttention', () => {
       { label: 'unpublished project updates', count: 0, href: '/projects' },
       { label: 'Trending items under review', count: 1, href: '/trending' },
       { label: 'projects with a governance authority needed', count: 0, href: '/projects' },
+      { label: 'presentation comments awaiting classification', count: 1, href: '/projects' },
     ])
   })
 })

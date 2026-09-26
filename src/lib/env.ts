@@ -43,4 +43,10 @@ export const env = {
   // throws a clear error only when encryption/decryption is actually attempted
   // without it set.
   builderCredentialKey: () => optional('BUILDER_CREDENTIAL_ENCRYPTION_KEY'),
+  // Workstream Presentation & Review's scheduled-open cron
+  // (src/app/api/cron/presentations/route.ts). Vercel Cron auto-injects
+  // `Authorization: Bearer <value>` on requests it sends to a cron path
+  // whenever an env var literally named CRON_SECRET is set -- naming it
+  // exactly this is what makes that automatic, not a convention we chose.
+  cronSecret: () => required('CRON_SECRET'),
 }

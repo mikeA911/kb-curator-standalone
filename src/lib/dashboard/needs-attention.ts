@@ -17,15 +17,25 @@ export interface NeedsAttentionItem {
 // different meanings of "pending." Items with count 0 are still returned
 // (not filtered here) so the UI decides how to render an all-clear state.
 export async function getNeedsAttention(supabase: SupabaseClient<Database>): Promise<NeedsAttentionItem[]> {
-  const [{ data: submittedDocs }, unpublishedArticles, { data: failedRuns }, draftProjects, trendingUnderReview, projectsMissingAuthorities] =
-    await Promise.all([
-      supabase.from('documents').select('id').eq('processing_status', 'submitted'),
-      listUnpublishedArticles(supabase),
-      supabase.from('eval_runs').select('id').eq('status', 'failed'),
-      listProjectsWithDraftUpdates(supabase),
-      listTrendingUnderReview(supabase),
-      listProjectsWithMissingAuthorities(supabase),
-    ])
+  const [
+    { data: submittedDocs },
+    unpublishedArticles,
+    { data: failedRuns },
+    draftProjects,
+    trendingUnderReview,
+    projectsMissingAuthorities,
+    { data: unclassifiedComments },
+  ] = await Promise.all([
+    supabase.from('documents').select('id').eq('processing_status', 'submitted'),
+    listUnpublishedArticles(supabase),
+    supabase.from('eval_runs').select('id').eq('status', 'failed'),
+    listProjectsWithDraftUpdates(supabase),
+    listTrendingUnderReview(supabase),
+    listProjectsWithMissingAuthorities(supabase),
+    // Naturally scoped by the viewer's own project-membership RLS, same as
+    // every other line here -- not a true platform-wide count.
+    supabase.from('presentation_slide_comments').select('id').is('classification', null),
+  ])
 
   return [
     { label: 'documents awaiting curation', count: (submittedDocs ?? []).length, href: '/upload' },
@@ -34,5 +44,6 @@ export async function getNeedsAttention(supabase: SupabaseClient<Database>): Pro
     { label: 'unpublished project updates', count: draftProjects.length, href: '/projects' },
     { label: 'Trending items under review', count: trendingUnderReview.length, href: '/trending' },
     { label: 'projects with a governance authority needed', count: projectsMissingAuthorities.length, href: '/projects' },
+    { label: 'presentation comments awaiting classification', count: (unclassifiedComments ?? []).length, href: '/projects' },
   ]
 }

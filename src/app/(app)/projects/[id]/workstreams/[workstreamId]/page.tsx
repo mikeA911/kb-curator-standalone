@@ -20,8 +20,11 @@ import {
 } from '@/components/projects/WorkstreamKnowledgeBaseAttachManager'
 import { listKnowledgeBasesForWorkstream } from '@/lib/projects/queries'
 import { listAttachableKnowledgeBasesForWorkstream } from '@/lib/knowledge-bases'
+import { GeneratePresentationButton } from '@/components/projects/GeneratePresentationButton'
+import { getPresentation } from '@/lib/workbench/presentations'
 import { Markdown } from '@/components/shared/Markdown'
 import { env } from '@/lib/env'
+import type { WorkbenchCallerContext } from '@/lib/workbench/context'
 
 const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
   capability_inventory: 'Capability Inventory',
@@ -60,6 +63,7 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
   let canAttach = false // consultant+ -- attach evidence
   let isActiveMember = false // Workstream Promotion: any active member of this workstream's Project may submit it for promotion
   let isProjectOwner = false // Builder Operations: Share Builder Update is owner-only (can_manage_project), no curator branch
+  let presentation = null as Awaited<ReturnType<typeof getPresentation>>
   if (user) {
     const [{ data: viewerProfile }, { data: viewerMembership }] = await Promise.all([
       supabase.from('profiles').select('role').eq('id', user.id).single(),
@@ -70,6 +74,10 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
     isProjectOwner = isAdmin || viewerMembership?.role === 'owner'
     canEdit = isAdmin || viewerMembership?.role === 'owner' || viewerMembership?.role === 'curator'
     canAttach = isAdmin || canEdit || viewerMembership?.role === 'consultant'
+
+    if (isActiveMember) {
+      presentation = await getPresentation({ user, profile: viewerProfile, supabase } as unknown as WorkbenchCallerContext, workstreamId)
+    }
   }
 
   const attachableKnowledgeBases = canEdit ? await listAttachableKnowledgeBasesForWorkstream(supabase, workstreamId) : []
@@ -292,6 +300,23 @@ export default async function WorkstreamDetailPage({ params }: { params: Promise
         </div>
 
         {canAttach && <AttachArtifactForm workstreamId={workstream.id} />}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Presentation</h2>
+        <p className="text-xs text-zinc-500">
+          A concise, slide-based proposal Ember generates from this workstream and its own attached artifacts, for
+          structured internal review before a curator approves it.
+        </p>
+        {presentation && (
+          <p className="text-sm">
+            <Link href={`/projects/${id}/workstreams/${workstreamId}/presentation`} className="underline">
+              View presentation
+            </Link>{' '}
+            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">{presentation.status}</span>
+          </p>
+        )}
+        {canEdit && <GeneratePresentationButton projectId={id} workstreamId={workstream.id} hasExisting={!!presentation} />}
       </section>
 
       {canOfferBuilderUpdate && (

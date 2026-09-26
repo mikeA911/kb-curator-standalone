@@ -11,6 +11,8 @@ import { getAgentStats } from '@/lib/agent/queries'
 import { getTrendingStats, listRecentSharedLinks } from '@/lib/trending/queries'
 import { listNotesForUser } from '@/lib/projects/notes'
 import { getNeedsAttention } from '@/lib/dashboard/needs-attention'
+import { listUpcomingScheduledPresentations } from '@/lib/workbench/presentations'
+import { ScheduledPresentationsWidget } from '@/components/dashboard/ScheduledPresentationsWidget'
 import { hasRequiredRole } from '@/lib/auth'
 import { env } from '@/lib/env'
 import { listMemberProjectOptions, listActiveProjectsForDashboard } from '@/lib/projects/queries'
@@ -51,6 +53,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     agentStats,
     trendingStats,
     needsAttention,
+    scheduledPresentations,
     notesForUser,
     sharedLinks,
     emberProjects,
@@ -64,6 +67,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     getAgentStats(supabase),
     getTrendingStats(supabase),
     canSeeWikiQueue ? getNeedsAttention(supabase) : Promise.resolve([]),
+    canSeeWikiQueue ? listUpcomingScheduledPresentations(supabase) : Promise.resolve([]),
     canSeeNotes ? listNotesForUser(supabase, user!.id) : Promise.resolve([]),
     canSeeSharedLinks ? listRecentSharedLinks(supabase) : Promise.resolve([]),
     isEmberFirst ? listMemberProjectOptions(supabase, user!.id) : Promise.resolve([]),
@@ -184,6 +188,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       )}
 
       {canSeeWikiQueue && <UnpublishedWikiWidget articles={unpublishedWikiArticles} />}
+      {canSeeWikiQueue && <ScheduledPresentationsWidget presentations={scheduledPresentations} />}
       {canSeeSharedLinks && <SharedLinksWidget links={sharedLinks} projects={sharedLinkProjects ?? []} isAdmin={isAdmin} />}
       {canSeeNotes && <NotesForYouWidget notes={notesForYou} />}
     </div>

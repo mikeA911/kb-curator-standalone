@@ -1271,6 +1271,122 @@ export interface WorkstreamArtifact {
   reviewed_at: string | null
 }
 
+// The shape src/lib/projects/ontology-map.ts's getOntologyMapData fetches
+// and computeOntologyMapLayout lays out -- declared here (this file's own
+// leaf-of-the-dependency-graph convention) rather than in that lib module,
+// so PresentationSlide.diagramData below can reference it without this
+// file importing application code.
+export interface OntologyMapData {
+  objects: { id: string; name: string; parentId: string | null }[]
+  workstreams: { id: string; name: string; parentId: string | null }[]
+  flowEdges: { upstreamId: string; downstreamId: string }[]
+  linkEdges: { workstreamId: string; objectId: string; accessModes: string[] }[]
+}
+
+// Workstream Presentation & Review, Part A (docs/Workstream Presentation &
+// Customer Review.docx): a builder turns a completed Workstream into a
+// slide-based proposal that goes through structured review before a
+// curator approval gate. See 20260930100001_workstream_presentations.sql.
+// status is the review-period state machine (doc §11) -- content itself
+// lives in PresentationVersion, never here.
+export type PresentationStatus = 'draft' | 'review_open' | 'review_closed' | 'builder_revision' | 'curator_review' | 'approved'
+
+export interface Presentation {
+  id: string
+  workstream_id: string
+  status: PresentationStatus
+  review_deadline: string | null
+  // A curator can schedule review to open automatically at a future
+  // date/time instead of clicking "Open for review" that day -- cleared
+  // (by openPresentationReview or the auto-open cron job) the moment
+  // status actually leaves 'draft', by whichever path gets there first.
+  scheduled_open_at: string | null
+  current_version_id: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 'diagram_ref' points a slide at the project's Ontology Map (diagramData
+// is a frozen snapshot taken at generation time, same as every other
+// slide's content -- not live-refreshed on later views).
+export interface PresentationSlide {
+  id: string
+  type: 'text' | 'diagram_ref'
+  title: string
+  body: string
+  items?: string[]
+  diagramData?: OntologyMapData
+}
+
+// Insert-only, immutable once written (wiki_versions' own shape) -- a new
+// "Generate Presentation" call always creates a new version, never edits
+// an existing one's slides.
+export interface PresentationVersion {
+  id: string
+  presentation_id: string
+  version_number: number
+  slides: PresentationSlide[]
+  generated_by: string | null
+  created_at: string
+}
+
+export interface PresentationStatusHistoryEntry {
+  id: string
+  presentation_id: string
+  from_status: PresentationStatus | null
+  to_status: PresentationStatus
+  actor_id: string | null
+  created_at: string
+}
+
+export type SlideCommentClassification =
+  | 'question'
+  | 'evaluation_candidate'
+  | 'action'
+  | 'security_review'
+  | 'requirement_gap'
+  | 'approval_signal'
+  | 'scope_change'
+  | 'risk_concern'
+  | 'customer_requirement'
+
+// slide_id is a polymorphic pointer into PresentationVersion.slides' own
+// array (not a real FK) -- same convention as ProjectNote.context_id.
+// builder_reply* are plain nullable columns directly on this row (not a
+// child table) so "one reply" is a structural fact of the shape, not a
+// business rule layered on an unbounded table -- see the migration's own
+// RLS comment for how this is enforced at the database layer too.
+export interface PresentationSlideComment {
+  id: string
+  presentation_version_id: string
+  slide_id: string
+  author_id: string | null
+  comment_text: string
+  classification: SlideCommentClassification | null
+  builder_reply: string | null
+  builder_reply_by: string | null
+  builder_reply_at: string | null
+  created_at: string
+}
+
+export type PresentationActionType = 'action' | 'evaluation' | 'security' | 'requirement'
+export type PresentationActionStatus = 'open' | 'in_progress' | 'complete'
+
+export interface PresentationAction {
+  id: string
+  presentation_id: string
+  source_comment_id: string | null
+  action_text: string
+  owner_id: string | null
+  type: PresentationActionType
+  status: PresentationActionStatus
+  evidence: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // KB Sandbox Builder: workstream promotion (business-process handoff,
 // docs/dev-request-builder-operations-and-progress-updates.md's own note
 // "Each Builder has one private Project"). See
@@ -2497,6 +2613,41 @@ export type MethodInsert = Omit<
   Partial<Pick<Method, 'status' | 'published_by' | 'published_at' | 'derived_from_wiki_article_id'>>
 export type MethodUpdate = Partial<Omit<Method, 'id' | 'derived_from_workstream_id' | 'created_by' | 'created_at'>>
 
+export type PresentationInsert = Omit<
+  Presentation,
+  'id' | 'created_at' | 'updated_at' | 'status' | 'review_deadline' | 'scheduled_open_at' | 'current_version_id'
+> &
+  Partial<Pick<Presentation, 'status' | 'review_deadline' | 'scheduled_open_at' | 'current_version_id'>>
+// Every transition goes through transitionPresentationStatus -- the other
+// fields ever updated in place outside that are current_version_id
+// (generatePresentation, right after inserting a new version) and
+// scheduled_open_at/review_deadline (scheduleReviewOpen/
+// cancelScheduledReviewOpen, and openPresentationReview clearing the
+// schedule when a curator opens early).
+export type PresentationUpdate = Partial<Pick<Presentation, 'status' | 'review_deadline' | 'scheduled_open_at' | 'current_version_id'>>
+
+export type PresentationVersionInsert = Omit<PresentationVersion, 'id' | 'created_at'>
+// Immutable once written -- no update path at all (matches the migration's
+// own "no update/delete policy" comment).
+export type PresentationVersionUpdate = never
+
+export type PresentationStatusHistoryEntryInsert = Omit<PresentationStatusHistoryEntry, 'id' | 'created_at'>
+
+export type PresentationSlideCommentInsert = Omit<
+  PresentationSlideComment,
+  'id' | 'created_at' | 'classification' | 'builder_reply' | 'builder_reply_by' | 'builder_reply_at'
+> &
+  Partial<Pick<PresentationSlideComment, 'classification' | 'builder_reply' | 'builder_reply_by' | 'builder_reply_at'>>
+// classifyPendingComments only ever sets classification; replyToComment
+// only ever sets the three builder_reply* fields together.
+export type PresentationSlideCommentUpdate = Partial<
+  Pick<PresentationSlideComment, 'classification' | 'builder_reply' | 'builder_reply_by' | 'builder_reply_at'>
+>
+
+export type PresentationActionInsert = Omit<PresentationAction, 'id' | 'created_at' | 'updated_at' | 'status' | 'evidence'> &
+  Partial<Pick<PresentationAction, 'status' | 'evidence'>>
+export type PresentationActionUpdate = Partial<Pick<PresentationAction, 'status' | 'evidence'>>
+
 // Every descriptive field stays immutable (still an evidence trail) -- OL-010
 // added exactly one narrow update path, reviewArtifact(), which only ever
 // touches status/validation_notes/reviewed_by/reviewed_at (see
@@ -2782,6 +2933,21 @@ export interface Database {
       workstream_flow: { Row: WorkstreamFlowEdge; Insert: WorkstreamFlowEdgeInsert; Update: WorkstreamFlowEdgeUpdate; Relationships: [] }
       methods: { Row: Method; Insert: MethodInsert; Update: MethodUpdate; Relationships: [] }
       workstream_artifacts: { Row: WorkstreamArtifact; Insert: WorkstreamArtifactInsert; Update: WorkstreamArtifactUpdate; Relationships: [] }
+      presentations: { Row: Presentation; Insert: PresentationInsert; Update: PresentationUpdate; Relationships: [] }
+      presentation_versions: { Row: PresentationVersion; Insert: PresentationVersionInsert; Update: PresentationVersionUpdate; Relationships: [] }
+      presentation_status_history: {
+        Row: PresentationStatusHistoryEntry
+        Insert: PresentationStatusHistoryEntryInsert
+        Update: never
+        Relationships: []
+      }
+      presentation_slide_comments: {
+        Row: PresentationSlideComment
+        Insert: PresentationSlideCommentInsert
+        Update: PresentationSlideCommentUpdate
+        Relationships: []
+      }
+      presentation_actions: { Row: PresentationAction; Insert: PresentationActionInsert; Update: PresentationActionUpdate; Relationships: [] }
       system_assessments: { Row: SystemAssessment; Insert: SystemAssessmentInsert; Update: SystemAssessmentUpdate; Relationships: [] }
       system_assessment_versions: { Row: SystemAssessmentVersion; Insert: SystemAssessmentVersionInsert; Update: Partial<SystemAssessmentVersion>; Relationships: [] }
       system_assessment_questions: { Row: SystemAssessmentQuestion; Insert: SystemAssessmentQuestionInsert; Update: Partial<SystemAssessmentQuestion>; Relationships: [] }
